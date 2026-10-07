@@ -6,7 +6,9 @@ Met TTS_BACKEND kies je de stemmen:
 
   edge   (standaard) Microsofts online neurale stemmen via edge-tts. Klinkt
          het best, maar heeft internet nodig. Afspelen via ffplay (of ffmpeg
-         + aplay/paplay).
+         + aplay/paplay). Gegenereerde audio wordt bewaard in EDGE_CACHE_DIR
+         (standaard ~/.cache/perudo/edge-tts), dus elke zin gaat maar één
+         keer over het netwerk.
   piper  Lokaal en offline. De stemmodellen worden bij het eerste gebruik
          gedownload naar PIPER_VOICES_DIR (standaard
          ~/.cache/perudo/piper-voices). Afspelen via aplay, paplay of ffplay.
@@ -23,6 +25,7 @@ Gebruik vanuit een bot::
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import re
 import shutil
@@ -56,7 +59,6 @@ _FACE_WORDS = {
 _BID_RE = re.compile(r"\b(\d+)x (paco|[1-6])\b", re.IGNORECASE)
 
 _voices: dict[str, object] = {}
-_edge_cache: dict[tuple[str, str, str, str], bytes] = {}  # bare bids repeat a lot
 _failed = False
 
 
@@ -92,6 +94,11 @@ def spoken(text: str, lang: str = "nl") -> str:
 def _voices_dir() -> Path:
     default = Path.home() / ".cache" / "perudo" / "piper-voices"
     return Path(os.environ.get("PIPER_VOICES_DIR", default)).expanduser()
+
+
+def _edge_cache_dir() -> Path:
+    default = Path.home() / ".cache" / "perudo" / "edge-tts"
+    return Path(os.environ.get("EDGE_CACHE_DIR", default)).expanduser()
 
 
 def _get_voice(lang: str, seed: int = 0):
@@ -170,9 +177,20 @@ def _speak_edge(text: str, lang: str, seed: int) -> None:
     rate = f"{(seed >> 8) % 26 - 5:+d}%"     # -5%..+20%
     pitch = f"{(seed >> 16) % 21 - 10:+d}Hz"  # -10Hz..+10Hz
     key = (text, voice, rate, pitch)
-    if key not in _edge_cache:
-        _edge_cache[key] = asyncio.run(_edge_mp3(text, voice, rate, pitch))
-    _play_mp3(_edge_cache[key])
+    path = _edge_cache_dir() / f"{hashlib.sha256(repr(key).encode()).hexdigest()}.mp3"
+    if path.is_file():
+        _play_mp3(path.read_bytes())
+        return
+    audio = asyncio.run(_edge_mp3(text, voice, rate, pitch))
+    if audio:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(f".{os.getpid()}.tmp")
+            tmp.write_bytes(audio)
+            tmp.replace(path)  # atomic, so a crash never leaves a half mp3
+        except OSError:
+            pass  # cache is best-effort; still play what we fetched
+    _play_mp3(audio)
 
 
 def speak(text: str, lang: str = "nl", voice_seed: str = "") -> None:

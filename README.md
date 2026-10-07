@@ -59,6 +59,7 @@ Bots can talk via `perudo.talk`. Enable it with environment variables:
 | `TTS=true`         | Also speak it out loud                                                 |
 | `TTS_BACKEND`      | `edge` (default, online Microsoft voices) or `piper` (local, offline)  |
 | `PIPER_VOICES_DIR` | Where piper voice models are cached (default `~/.cache/perudo/piper-voices`) |
+| `EDGE_CACHE_DIR`   | Where edge-tts audio is cached, so each line is fetched only once (default `~/.cache/perudo/edge-tts`) |
 
 ```sh
 TALK_TO_ME=true TTS=true uv run python run_interactive.py
