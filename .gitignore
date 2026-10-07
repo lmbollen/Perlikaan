@@ -8,3 +8,6 @@ perudo/bots/120iq.py
 perudo/bots/130iq.py
 perudo/bots/Autist.py
 perudo/bots/Believer.py
+
+.venv/
+.claude/
