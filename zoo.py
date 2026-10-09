@@ -16,7 +16,7 @@ A ZooBot plays by four knobs:
             face counts as 0.7 extra dice of it. Such bots are the ones a
             bluffer can mislead.
   calza_at  calls Calza when P(bid exactly right) is at least this (None =
-            never).
+            never), but only while a correct Calza still gains a die.
 """
 
 from __future__ import annotations
@@ -98,11 +98,20 @@ class ZooBot:
             return self._rng.choice([f for f, c in counts.items() if c == worst])
         return self._rng.randint(2, 6)
 
+    @staticmethod
+    def _calza_pays(state):
+        """
+        A correct Calza only gains a die while nobody is out yet and we have
+        fewer than 5. Otherwise it does nothing, and two bots that keep
+        calling correct Calzas would never finish the game.
+        """
+        return all(p.alive for p in state.players) and state.my_dice_count < 5
+
     def play(self, state):
         bids = [a for a in state.legal_actions if isinstance(a, Bid)]
         cur = state.current_bid
         if cur is not None:
-            if self.calza_at is not None and Calza() in state.legal_actions:
+            if self.calza_at is not None and Calza() in state.legal_actions and self._calza_pays(state):
                 if self._p(state, cur, exact=True) >= self.calza_at:
                     return Calza()
             if not bids or self._p(state, cur) < self.dudo_at:

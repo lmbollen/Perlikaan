@@ -34,6 +34,7 @@ from multiprocessing import Pool
 
 from perudo.bot_loader import discover_bot_classes_by_name
 from perudo.game import PerudoGame
+from perudo.models import RevealEvent
 from run_simulation import derive_game_seeds
 from zoo import ZooBot, random_zoo_bot
 
@@ -76,6 +77,27 @@ def build(specs, classes):
     return bots
 
 
+# A game can in principle go on forever: once someone is out, a correct
+# Calza costs nobody a die, so bots that keep calling correct Calzas never
+# finish. Such games are stopped and left out of the results.
+MAX_ROUNDS = 1000
+
+
+class TooManyRounds(Exception):
+    pass
+
+
+class RoundLimit:
+    def __init__(self):
+        self.rounds = 0
+
+    def __call__(self, event):
+        if isinstance(event, RevealEvent):
+            self.rounds += 1
+            if self.rounds > MAX_ROUNDS:
+                raise TooManyRounds
+
+
 def run_table(job):
     seed, table, n_opponents, mix, games, variant, settings = job
     classes = discover_bot_classes_by_name()
@@ -86,9 +108,13 @@ def run_table(job):
     me._rng = random.Random(table)
     bots = [me, *build(specs, classes)]
 
-    positions, wins = [], []
+    positions, wins, aborted = [], [], 0
     for game_seed in derive_game_seeds(seed * 7 + table, games):
-        result = PerudoGame(bots=bots, seed=game_seed).play()
+        try:
+            result = PerudoGame(bots=bots, seed=game_seed, listeners=[RoundLimit()]).play()
+        except TooManyRounds:
+            aborted += 1
+            continue
         positions.append(result.standings.index(me.name) + 1)
         wins.append(result.winner == me.name)
 
@@ -105,7 +131,7 @@ def run_table(job):
                 n_choice=prof.profiles[spec["name"]].excess.get("nat-choice", (0, 0))[1],
                 challenge=prof.challenge_rate(spec["name"]),
             ))
-    return table, variant, len(bots), positions, wins, learned
+    return table, variant, len(bots), positions, wins, learned, aborted
 
 
 def parse_settings(text):
@@ -145,18 +171,20 @@ def main():
     with Pool(args.jobs) as pool:
         results = pool.map(run_table, jobs)
 
-    by = {(t, a): (n, pos, win, learned) for t, a, n, pos, win, learned in results}
+    by = {(t, a): (n, pos, win, learned) for t, a, n, pos, win, learned, _ in results}
+    aborted = sum(r[-1] for r in results)
     third = max(args.games // 3, 1)
 
     def stats(v, sl=slice(None)):
-        win = [100 * sum(by[t, v][2][sl]) / len(by[t, v][2][sl]) for t in range(args.tables)]
-        pos = [sum(by[t, v][1][sl]) / len(by[t, v][1][sl]) for t in range(args.tables)]
+        win = [100 * sum(by[t, v][2][sl]) / max(len(by[t, v][2][sl]), 1) for t in range(args.tables)]
+        pos = [sum(by[t, v][1][sl]) / max(len(by[t, v][1][sl]), 1) for t in range(args.tables)]
         return win, pos
 
     seats = sum(by[t, 1][0] for t in range(args.tables)) / args.tables
     print(f"{args.tables} tafels x {args.games} games, gem. {seats:.1f} spelers "
           f"(fair winst-% {100 / seats:.1f}%), tegenstanders: {args.mix}")
-    print(f"A = {args.a}\nB = {args.b}\n")
+    print(f"A = {args.a}\nB = {args.b}")
+    print(f"Afgebroken games (> {MAX_ROUNDS} rondes, niet meegeteld): {aborted}\n")
     print(f"{'':<22}{'A':>14}{'B':>14}{'B - A':>20}")
     for label, sl in (("alle games", slice(None)),
                       (f"eerste {third}", slice(0, third)),

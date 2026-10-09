@@ -20,7 +20,7 @@ from __future__ import annotations
 import argparse
 from multiprocessing import Pool
 
-from benchmark_adaptive import mean_se, parse_settings, run_table
+from benchmark_adaptive import MAX_ROUNDS, mean_se, parse_settings, run_table
 
 DEFAULT_VARIANTS = (
     "",                     # baseline: Pokerface as it is
@@ -55,18 +55,20 @@ def main():
         results = pool.map(run_table, jobs)
 
     # results come back in job order: size -> table -> variant
+    aborted = sum(r[-1] for r in results)
     it = iter(results)
     win = {}   # (size, variant) -> per-table win %
     pos = {}   # (size, variant) -> per-table mean position
     for size in sizes:
         for t in range(args.tables):
             for v in range(len(variants)):
-                _, _, _, positions, wins, _ = next(it)
-                win.setdefault((size, v), []).append(100 * sum(wins) / len(wins))
-                pos.setdefault((size, v), []).append(sum(positions) / len(positions))
+                _, _, _, positions, wins, _, _ = next(it)
+                win.setdefault((size, v), []).append(100 * sum(wins) / max(len(wins), 1))
+                pos.setdefault((size, v), []).append(sum(positions) / max(len(positions), 1))
 
     names = ["baseline", *variants[1:]]
-    print(f"{args.tables} tafels x {args.games} games per grootte, tegenstanders: {args.mix}\n")
+    print(f"{args.tables} tafels x {args.games} games per grootte, tegenstanders: {args.mix}")
+    print(f"Afgebroken games (> {MAX_ROUNDS} rondes, niet meegeteld): {aborted}\n")
     print("Winst % per tafelgrootte (verschil met baseline ± standaardfout, gepaard):\n")
     width = max(len(n) for n in names) + 2
     header = f"{'spelers':<9}{'fair':>6}" + "".join(f"{n:>{width + 8}}" for n in names)
