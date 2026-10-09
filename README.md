@@ -59,6 +59,17 @@ uv run python analyze_losses.py dump --games 300 --out rounds.jsonl     # only s
 uv run python analyze_losses.py analyze rounds.jsonl --bot Sniper       # analyze an existing dump
 ```
 
+**Opponent profiling** — `perudo/profiler.py` learns per opponent name whether
+they bid faces they hold (honest / random / bluffer), how much they risk, at
+which odds they call Dudo, whether they jump or min-raise and whether they use
+Calza. Any bot can use it (`OpponentProfiler(self.name)`, feed it `observe()`
+events); Pokerface does. Check that it learns correctly:
+
+```sh
+uv run python verify_profiler.py --games 400 --table known   # bots with known strategies
+uv run python verify_profiler.py --games 200 --table real    # the competition bots
+```
+
 ### Trash talk and text-to-speech (optional)
 
 Bots can talk via `perudo.talk`. Enable it with environment variables:

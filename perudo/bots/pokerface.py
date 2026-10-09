@@ -24,6 +24,10 @@ and Sniper keeps raising where it should call Dudo. Pokerface counts a bid
 that only raises the quantity of the face just bid at FOLLOW_WEIGHT; a bid
 that opens or switches to a face is a real choice and counts in full.
 
+Pokerface also profiles every opponent by name (perudo.profiler): after
+each reveal it replays their choices and learns whether they bluff, how
+much they risk and when they call Dudo. See `self.profiler.report()`.
+
 Set TALK_TO_ME=true to hear it over the radio.
 """
 
@@ -32,6 +36,7 @@ import random
 from perudo.bots.sniper import QUOTES as SNIPER_QUOTES
 from perudo.bots.sniper import SniperBot
 from perudo.models import PACO, Bid, Dudo
+from perudo.profiler import OpponentProfiler
 from perudo.talk import Mouth, fmt_bid, last_bidder
 
 QUOTES = {
@@ -91,6 +96,9 @@ class PokerfaceBot(SniperBot):
         self.name = "Pokerface"
         self.mouth = Mouth(self, QUOTES)
         self._rng = random.Random()
+        # Learns per opponent name; lives as long as this instance, so
+        # across all games of a simulation.
+        self.profiler = OpponentProfiler(self.name)
 
     # -- reading the others ------------------------------------------------
 
@@ -204,3 +212,7 @@ class PokerfaceBot(SniperBot):
             key = "raise" if best_p >= self.TARGET else "raise_risky"
         self.mouth.say(key, announce=fmt_bid(best), bid=fmt_bid(best))
         return best
+
+    def observe(self, event):
+        self.profiler.observe(event)
+        super().observe(event)
