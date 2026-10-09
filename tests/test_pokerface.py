@@ -2,7 +2,7 @@
 
 from perudo.bots.pokerface import PokerfaceBot
 from perudo.bots.sniper import SniperBot
-from perudo.models import PACO, ActionRecord, Bid, Observation, PublicPlayer
+from perudo.models import PACO, ActionRecord, Bid, Dudo, Observation, PublicPlayer
 from perudo.rules import legal_actions
 
 
@@ -56,7 +56,7 @@ def test_follows_precedence_on_a_face_we_do_not_hold():
 def test_no_bluff_in_palifico():
     bot = _always_bluff()
     state = _state([2], palifico=True)
-    assert bot._bluff(state, [], 10, {f: 0.0 for f in range(1, 7)}) == (None, None)
+    assert bot._bluff(state, [], 10, {f: 0.0 for f in range(1, 7)}, 0.75) == (None, None)
 
 
 def test_bluff_bids_are_still_plausible():
@@ -71,3 +71,31 @@ def test_chain_of_raises_counts_less_than_for_sniper():
     chain = [ActionRecord("A", Bid(2, PACO)), ActionRecord("B", Bid(3, PACO))]
     state = _state([2, 3], chain, current_bid=Bid(3, PACO))
     assert PokerfaceBot()._hint(state, PACO) < SniperBot()._hint(state, PACO)
+
+
+def test_learned_hint_trusts_honest_and_ignores_bluffers():
+    bot = PokerfaceBot()
+    # Ten revealed rounds: A opens on 6 holding three of them, B opens on 6
+    # holding none.
+    dice = {"A": (6, 6, 6, 2, 3), "B": (2, 3, 4, 5, 5), "Pokerface": (2,)}
+    for _ in range(10):
+        bot.profiler.record_round(dice, [("A", Bid(1, 6)), ("Pokerface", Dudo())], False)
+        bot.profiler.record_round(dice, [("B", Bid(1, 6)), ("Pokerface", Dudo())], False)
+    honest = _state([2, 3], [ActionRecord("A", Bid(2, 6))], current_bid=Bid(2, 6))
+    liar = _state([2, 3], [ActionRecord("B", Bid(2, 6))], current_bid=Bid(2, 6))
+    assert bot._hint(honest, 6) > 1.0
+    assert bot._hint(liar, 6) < 0
+
+
+def test_target_is_bolder_against_a_player_who_never_challenges():
+    bot = PokerfaceBot()
+    for _ in range(30):
+        # A faces a false bid of 5x6 and raises; B faces one and calls Dudo.
+        bot.profiler.record_round(
+            {"A": (2,), "B": (3,), "Pokerface": (4,)},
+            [("Pokerface", Bid(2, 2)), ("A", Bid(3, 2)), ("B", Dudo())],
+            False,
+        )
+    state = _state([2, 3, 4])   # seats: Pokerface, A, B -> A is next
+    assert bot._next_player(state) == "A"
+    assert bot._target(state, bot.TARGET) < bot.TARGET

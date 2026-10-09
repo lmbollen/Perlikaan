@@ -24,9 +24,21 @@ and Sniper keeps raising where it should call Dudo. Pokerface counts a bid
 that only raises the quantity of the face just bid at FOLLOW_WEIGHT; a bid
 that opens or switches to a face is a real choice and counts in full.
 
-Pokerface also profiles every opponent by name (perudo.profiler): after
-each reveal it replays their choices and learns whether they bluff, how
-much they risk and when they call Dudo. See `self.profiler.report()`.
+Pokerface learns from every opponent by name (perudo.profiler), without
+assuming anything about who they are. After each reveal it replays their
+choices and learns:
+
+  * what their bids are worth: how many extra dice of a face they really
+    held when they opened on it, switched to it or followed it. Their bids
+    are read with those numbers, so an honest bidder is trusted and a
+    bluffer is ignored or even read in reverse;
+  * how often they call Dudo on a false bid. Against a player who rarely
+    does, our next bid may be bolder; against a sharp one, more careful.
+
+A new opponent starts as the average of everyone seen so far, and its own
+data takes over as it comes in. `self.profiler.report()` shows what it
+learned. ADAPTIVE = False switches the learning off (fixed Sniper reading
+with FOLLOW_WEIGHT).
 
 Set TALK_TO_ME=true to hear it over the radio.
 """
@@ -36,7 +48,7 @@ import random
 from perudo.bots.sniper import QUOTES as SNIPER_QUOTES
 from perudo.bots.sniper import SniperBot
 from perudo.models import PACO, Bid, Dudo
-from perudo.profiler import OpponentProfiler
+from perudo.profiler import OpponentProfiler, bid_kind
 from perudo.talk import Mouth, fmt_bid, last_bidder
 
 QUOTES = {
@@ -88,8 +100,17 @@ class PokerfaceBot(SniperBot):
     # call it "strong precedence" and join in.
     PRECEDENCE = 2
     # Weight of a bid that stays on the face of the bid before it, relative
-    # to a bid that opens or switches to a face.
+    # to a bid that opens or switches to a face. Only used while not ADAPTIVE.
     FOLLOW_WEIGHT = 0.3
+    # Learn from the opponents at the table instead of fixed assumptions:
+    #  * how much each opponent's bids say about their hand (bid_excess),
+    #  * how likely the next player is to call Dudo on a false bid, which
+    #    moves our TARGET up or down.
+    ADAPTIVE = True
+    # Part two of the learning (the bid target) can be switched off alone.
+    ADAPT_TARGET = True
+    # Bounds for the adapted TARGET.
+    TARGET_RANGE = (0.6, 0.97)
 
     def __init__(self):
         super().__init__()
@@ -103,6 +124,43 @@ class PokerfaceBot(SniperBot):
     # -- reading the others ------------------------------------------------
 
     def _hint(self, state, face):
+        """Extra dice of `face` we expect among opponents, based on their bids."""
+        if self.ADAPTIVE and not state.palifico:
+            return self._learned_hint(state, face)
+        return self._static_hint(state, face)
+
+    def _learned_hint(self, state, face):
+        """
+        Like _static_hint, but every opponent's bid is worth what their bids
+        were worth in earlier rounds (OpponentProfiler.bid_excess): a lot for
+        an honest bidder, nothing or less than nothing for a bluffer.
+        """
+        bid_faces, chosen = {}, {}
+        prev = None
+        for rec in state.history:
+            if not isinstance(rec.action, Bid):
+                continue
+            bid = rec.action
+            if rec.player != self.name:
+                bid_faces.setdefault(rec.player, set()).add(bid.face)
+                if prev is None or prev.face != bid.face:
+                    chosen.setdefault(rec.player, set()).add(bid.face)
+            prev = bid
+
+        dice_of = {p.name: p.dice_count for p in state.players}
+        p = self._p_face(face, False)
+        total = 0.0
+        for who, faces in bid_faces.items():
+            extra = 0.0
+            # Natural dice of the face itself, and Pacos (wild for any face).
+            for f in {face, PACO} & faces:
+                extra += self.profiler.bid_excess(who, bid_kind(f, f in chosen.get(who, ())))
+            n = dice_of.get(who, 0)
+            # They hold between 0 and n matches: expectation is n * p.
+            total += min(max(extra, -n * p), n * (1 - p))
+        return total
+
+    def _static_hint(self, state, face):
         """Extra dice of `face` we expect among opponents, based on their bids."""
         # In Palifico only the opener chose the face; later bids are forced.
         history = state.history[:1] if state.palifico else state.history
@@ -139,19 +197,19 @@ class PokerfaceBot(SniperBot):
         """Normal faces of which we hold no natural die."""
         return [f for f in range(2, 7) if f not in state.my_dice]
 
-    def _best_on_face(self, state, bids, face, n_unknown, hints):
-        """Strongest legal bid on `face` that clears BLUFF_TARGET, or None."""
+    def _best_on_face(self, state, bids, face, n_unknown, hints, target):
+        """Strongest legal bid on `face` that clears `target`, or None."""
         cands = [
             (self._prob_true(state, b, n_unknown, hints), b)
             for b in bids
             if b.face == face
         ]
-        cands = [(pt, b) for pt, b in cands if pt >= self.BLUFF_TARGET]
+        cands = [(pt, b) for pt, b in cands if pt >= target]
         if not cands:
             return None
         return max(cands, key=lambda s: (self._strength(s[1], state.palifico), s[0]))
 
-    def _bluff(self, state, bids, n_unknown, hints):
+    def _bluff(self, state, bids, n_unknown, hints, target):
         """A bluff bid and its quote key, or (None, None)."""
         if state.palifico or self._rng.random() >= self.BLUFF_RATE:
             return None, None
@@ -171,22 +229,48 @@ class PokerfaceBot(SniperBot):
             key = "bluff_follow"
         self._rng.shuffle(faces)
         for face in faces:
-            found = self._best_on_face(state, bids, face, n_unknown, hints)
+            found = self._best_on_face(state, bids, face, n_unknown, hints, target)
             if found is not None:
                 return found, key
         return None, None
 
     # -- decision ---------------------------------------------------------
 
+    @staticmethod
+    def _next_player(state):
+        """Name of the player who will face our bid."""
+        seats = list(state.players)
+        me = next(i for i, p in enumerate(seats) if p.id == state.my_id)
+        for step in range(1, len(seats)):
+            p = seats[(me + step) % len(seats)]
+            if p.alive:
+                return p.name
+        return None
+
+    def _target(self, state, base):
+        """
+        Minimum P(true) for our bid. A false bid only costs a die when it is
+        challenged, so in front of a player who rarely challenges false bids
+        we may bid more boldly, and in front of a sharp one more carefully:
+        we keep P(false) * P(challenged) where it is for an average player.
+        """
+        if not (self.ADAPTIVE and self.ADAPT_TARGET):
+            return base
+        rate = self.profiler.challenge_rate(self._next_player(state))
+        avg = self.profiler.challenge_rate()
+        lo, hi = self.TARGET_RANGE
+        return min(max(1 - (1 - base) * avg / max(rate, 0.05), lo), hi)
+
     def play(self, state):
         total = sum(p.dice_count for p in state.players if p.alive)
         n_unknown = total - state.my_dice_count
         hints = {face: self._hint(state, face) for face in range(1, 7)}
+        target = self._target(state, self.TARGET)
 
         bids = [a for a in state.legal_actions if isinstance(a, Bid)]
         scored = [(self._prob_true(state, b, n_unknown, hints), b) for b in bids]
 
-        safe = [(pt, b) for pt, b in scored if pt >= self.TARGET]
+        safe = [(pt, b) for pt, b in scored if pt >= target]
         if safe:
             best_p, best = max(safe, key=lambda s: (self._strength(s[1], state.palifico), s[0]))
         elif scored:
@@ -203,13 +287,13 @@ class PokerfaceBot(SniperBot):
                 return Dudo()
 
         # We are going to bid. Decide whether to lie about the face.
-        bluff, key = self._bluff(state, bids, n_unknown, hints)
+        bluff, key = self._bluff(state, bids, n_unknown, hints, self._target(state, self.BLUFF_TARGET))
         if bluff is not None:
             _, best = bluff
         elif cur is None:
             key = "open"
         else:
-            key = "raise" if best_p >= self.TARGET else "raise_risky"
+            key = "raise" if best_p >= target else "raise_risky"
         self.mouth.say(key, announce=fmt_bid(best), bid=fmt_bid(best))
         return best
 

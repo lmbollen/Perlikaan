@@ -27,6 +27,16 @@ Situations an opponent can be in, and what we measure there:
     than the ones they called Dudo on (near 0 = Dudo regardless of dice).
   * Calza: how often they choose it when facing a bid -> `calza_rate`.
 
+Two numbers are meant for decisions rather than labels, and work for any
+opponent without knowing its code:
+
+  * `bid_excess(name, kind)`: how many more dice of a face they really hold
+    when they bid it, split by opening/switching to a face ("choice") versus
+    raising on the face just bid ("follow"), and by Paco versus normal face.
+    Honest bidders score high, bluffers zero or below.
+  * `challenge_rate(name)`: how often they call Dudo on a bid that is really
+    false, i.e. how risky it is to put a false bid in front of them.
+
 Palifico rounds are skipped: faces are forced there, so they say little
 about style.
 
@@ -106,6 +116,14 @@ class Profile:
     # (P(bid faced is true | own dice), called Dudo?) per decision facing a bid.
     facing: List[Tuple[float, bool]] = field(default_factory=list)
     calzas: int = 0
+    # What their bids say about their hand: per kind of bid ("nat-choice",
+    # "nat-follow", "paco-choice", "paco-follow") the summed excess of that
+    # face in their hand over what chance gives, and the number of samples.
+    excess: Dict[str, List[float]] = field(default_factory=dict)
+    # How often they call Dudo on a bid that is really false (a choice, not
+    # forced): the risk of putting a false bid in front of them.
+    false_faced: int = 0
+    false_challenged: int = 0
 
     # -- derived numbers ------------------------------------------------
 
@@ -254,11 +272,27 @@ class Profile:
         )
 
 
+def bid_kind(face: int, chosen: bool) -> str:
+    return f"{'paco' if face == PACO else 'nat'}-{'choice' if chosen else 'follow'}"
+
+
 class OpponentProfiler:
     """
     Builds a Profile per opponent. Feed it with `observe(event)` from a bot's
     observe(), or directly with `record_round(...)` from logged rounds.
+
+    Estimates for decisions (`bid_excess`, `challenge_rate`) are shrunk
+    towards the average over every opponent seen so far, which is in turn
+    shrunk towards a fixed prior. A new opponent therefore starts out as "an
+    average player" and becomes itself as the evidence comes in.
     """
+
+    # Starting beliefs before any data: extra natural dice of a face held
+    # per bid on it, and the chance a false bid gets challenged.
+    PRIOR_EXCESS = {"nat-choice": 0.5, "nat-follow": 0.15, "paco-choice": 0.3, "paco-follow": 0.1}
+    PRIOR_CHALLENGE = 0.5
+    # Weight of the prior / pooled estimate, in observations.
+    SHRINK = 10
 
     def __init__(self, me: Optional[str] = None):
         self.me = me
@@ -271,6 +305,28 @@ class OpponentProfiler:
         if name not in self.profiles:
             self.profiles[name] = Profile(name)
         return self.profiles[name]
+
+    # -- estimates for decisions ------------------------------------------
+
+    def _shrunk(self, own_sum, own_n, pooled_sum, pooled_n, prior):
+        pooled = (pooled_sum + self.SHRINK * prior) / (pooled_n + self.SHRINK)
+        return (own_sum + self.SHRINK * pooled) / (own_n + self.SHRINK)
+
+    def bid_excess(self, name: str, kind: str) -> float:
+        """Extra natural dice of a face `name` holds when making a bid of `kind`."""
+        stats = [p.excess.get(kind, (0.0, 0)) for p in self.profiles.values()]
+        own = self.profiles[name].excess.get(kind, (0.0, 0)) if name in self.profiles else (0.0, 0)
+        return self._shrunk(own[0], own[1], sum(s for s, _ in stats), sum(n for _, n in stats),
+                            self.PRIOR_EXCESS[kind])
+
+    def challenge_rate(self, name: Optional[str] = None) -> float:
+        """P(`name` calls Dudo on a false bid); the table average without a name."""
+        faced = sum(p.false_faced for p in self.profiles.values())
+        hit = sum(p.false_challenged for p in self.profiles.values())
+        prof = self.profiles.get(name) if name else None
+        if prof is None:
+            return self._shrunk(0, 0, hit, faced, self.PRIOR_CHALLENGE)
+        return self._shrunk(prof.false_challenged, prof.false_faced, hit, faced, self.PRIOR_CHALLENGE)
 
     # -- event stream ---------------------------------------------------
 
@@ -302,7 +358,12 @@ class OpponentProfiler:
         if palifico:
             return
         total = sum(len(d) for d in dice.values())
+        all_dice = [d for hand in dice.values() for d in hand]
         seen = set()
+        # Per player: the faces they bid, and the ones they chose (opened or
+        # switched to) rather than followed.
+        bid_faces: Dict[str, set] = {}
+        chosen_faces: Dict[str, set] = {}
         prev: Optional[Bid] = None
         for player, action in actions:
             if player == self.me or player not in dice:
@@ -323,12 +384,17 @@ class OpponentProfiler:
             if prev is not None and options:
                 p_cur = p_bid_true(prev, own, total)
                 prof.facing.append((p_cur, isinstance(action, Dudo)))
+                if count_matches(all_dice, prev.face, False) < prev.quantity:
+                    prof.false_faced += 1
+                    prof.false_challenged += isinstance(action, Dudo)
             if not isinstance(action, Bid):
                 continue
 
             prof.bids += 1
             prof.bid_risk_sum += p_bid_true(action, own, total)
+            bid_faces.setdefault(player, set()).add(action.face)
             if prev is None or action.face != prev.face:
+                chosen_faces.setdefault(player, set()).add(action.face)
                 self._score_face(prof, action, own)
             if prev is not None:
                 prof.raises += 1
@@ -336,6 +402,17 @@ class OpponentProfiler:
                 if options and _strength(action) <= min(_strength(b) for b in options):
                     prof.min_raises += 1
             prev = action
+
+        # Once per player and face: how many more of that face they really
+        # held than chance. Natural dice only, so a face and Paco never
+        # count the same die twice.
+        for player, faces in bid_faces.items():
+            own = dice[player]
+            for face in faces:
+                key = bid_kind(face, face in chosen_faces.get(player, ()))
+                stat = self.profile(player).excess.setdefault(key, [0.0, 0])
+                stat[0] += sum(1 for d in own if d == face) - len(own) / 6
+                stat[1] += 1
 
     @staticmethod
     def _score_face(prof: Profile, bid: Bid, own: Sequence[int]) -> None:

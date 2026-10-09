@@ -3,7 +3,7 @@ Check that perudo.profiler learns opponents' strategies correctly.
 
 Two tables, each with Pokerface as the learner:
 
-  known    Probe bots whose strategy we set exactly (face choice and Dudo
+  known    Probe bots (zoo.py) whose strategy we set exactly (face choice and Dudo
            threshold), plus real bots with a simple, known strategy:
            100 IQ Bot (best face, Dudo below 50%), MinRaise (smallest raise,
            never Dudo) and Random Bot (random legal action).
@@ -20,50 +20,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import random
 
 from perudo.bot_loader import discover_bot_classes_by_name
 from perudo.game import PerudoGame
-from perudo.models import Bid, Dudo
-from perudo.profiler import p_bid_true
-from perudo.rules import count_matches
 from run_simulation import derive_game_seeds
-
-
-class ProbeBot:
-    """
-    A bot with an exactly known strategy:
-      * Dudo when P(current bid true | own dice) < dudo_at.
-      * Otherwise the cheapest legal bid on a face picked by `faces`:
-        "honest" = the face it holds most, "bluff" = the face it holds least,
-        "random" = any face.
-    """
-
-    def __init__(self, name, dudo_at, faces):
-        self.name = name
-        self.dudo_at = dudo_at
-        self.faces = faces
-        self._rng = random.Random(name)
-
-    def play(self, state):
-        bids = [a for a in state.legal_actions if isinstance(a, Bid)]
-        total = sum(p.dice_count for p in state.players if p.alive)
-        cur = state.current_bid
-        if cur is not None and (not bids or p_bid_true(cur, state.my_dice, total) < self.dudo_at):
-            return Dudo()
-
-        counts = {f: count_matches(state.my_dice, f, False) for f in range(2, 7)}
-        if self.faces == "honest":
-            best = max(counts.values())
-            face = self._rng.choice([f for f, c in counts.items() if c == best])
-        elif self.faces == "bluff":
-            worst = min(counts.values())
-            face = self._rng.choice([f for f, c in counts.items() if c == worst])
-        else:
-            face = self._rng.randint(2, 6)
-
-        on_face = [b for b in bids if b.face == face]
-        return min(on_face or bids, key=lambda b: (b.quantity, b.face))
+from zoo import ZooBot
 
 
 # Expected labels per axis. Axes left out are not checked (no clear truth).
@@ -88,11 +49,12 @@ TRUE_THRESHOLD = {
 
 
 def known_table(classes):
+    # Zoo bots with the cheapest bid on their face and no table reading.
     probes = [
-        ProbeBot("Probe Honest 0.5", 0.5, "honest"),
-        ProbeBot("Probe Honest 0.8", 0.8, "honest"),
-        ProbeBot("Probe Bluff 0.2", 0.2, "bluff"),
-        ProbeBot("Probe Random 0.5", 0.5, "random"),
+        ZooBot("Probe Honest 0.5", 0.5, "honest"),
+        ZooBot("Probe Honest 0.8", 0.8, "honest"),
+        ZooBot("Probe Bluff 0.2", 0.2, "bluff"),
+        ZooBot("Probe Random 0.5", 0.5, "random"),
     ]
     real = [classes[n]() for n in ("HundredIQBot", "MinRaiseBot", "RandomBot")]
     real[0].name = "100 IQ Bot"
