@@ -32,8 +32,9 @@ choices and learns:
     held when they opened on it, switched to it or followed it. Their bids
     are read with those numbers, so an honest bidder is trusted and a
     bluffer is ignored or even read in reverse;
-  * how often they call Dudo on a false bid. Against a player who rarely
-    does, our next bid may be bolder; against a sharp one, more careful.
+  * how often they call Dudo on a false bid. With ADAPT_TARGET our next bid
+    gets bolder against a player who rarely does and more careful against a
+    sharp one (off by default: it did not pay off in benchmarks).
 
 A new opponent starts as the average of everyone seen so far, and its own
 data takes over as it comes in. `self.profiler.report()` shows what it
@@ -107,8 +108,10 @@ class PokerfaceBot(SniperBot):
     #  * how likely the next player is to call Dudo on a false bid, which
     #    moves our TARGET up or down.
     ADAPTIVE = True
-    # Part two of the learning (the bid target) can be switched off alone.
-    ADAPT_TARGET = True
+    # Moving the bid target with the next player's challenge rate. Off: in
+    # benchmark_adaptive.py it was worth nothing (-0.2 +/- 0.7 pp win rate,
+    # 120 tables), while learned bid reading alone gave +2.4 +/- 0.9 pp.
+    ADAPT_TARGET = False
     # Bounds for the adapted TARGET.
     TARGET_RANGE = (0.6, 0.97)
 

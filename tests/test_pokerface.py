@@ -89,6 +89,7 @@ def test_learned_hint_trusts_honest_and_ignores_bluffers():
 
 def test_target_is_bolder_against_a_player_who_never_challenges():
     bot = PokerfaceBot()
+    bot.ADAPT_TARGET = True
     for _ in range(30):
         # A faces a false bid of 5x6 and raises; B faces one and calls Dudo.
         bot.profiler.record_round(
