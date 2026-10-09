@@ -1,7 +1,8 @@
 """Pokerface bluffs about faces it doesn't hold, but only with plausible bids."""
 
 from perudo.bots.pokerface import PokerfaceBot
-from perudo.models import ActionRecord, Bid, Observation, PublicPlayer
+from perudo.bots.sniper import SniperBot
+from perudo.models import PACO, ActionRecord, Bid, Observation, PublicPlayer
 from perudo.rules import legal_actions
 
 
@@ -43,10 +44,10 @@ def test_opening_bluff_uses_a_face_we_do_not_hold():
 def test_follows_precedence_on_a_face_we_do_not_hold():
     bot = _always_bluff()
     history = [
-        ActionRecord("A", Bid(2, 6)),
-        ActionRecord("B", Bid(3, 6)),
+        ActionRecord("A", Bid(1, 6)),
+        ActionRecord("B", Bid(2, 6)),
     ]
-    state = _state([2, 2, 3, 3, 4], history, current_bid=Bid(3, 6))
+    state = _state([2, 2, 3, 3, 4], history, current_bid=Bid(2, 6))
     action = bot.play(state)
     assert isinstance(action, Bid)
     assert action.face == 6
@@ -64,3 +65,9 @@ def test_bluff_bids_are_still_plausible():
     hints = {f: 0.0 for f in range(1, 7)}
     bid = bot.play(state)
     assert bot._prob_true(state, bid, 10, hints) >= bot.BLUFF_TARGET
+
+
+def test_chain_of_raises_counts_less_than_for_sniper():
+    chain = [ActionRecord("A", Bid(2, PACO)), ActionRecord("B", Bid(3, PACO))]
+    state = _state([2, 3], chain, current_bid=Bid(3, PACO))
+    assert PokerfaceBot()._hint(state, PACO) < SniperBot()._hint(state, PACO)

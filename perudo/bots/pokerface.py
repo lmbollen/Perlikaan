@@ -17,6 +17,13 @@ true (BLUFF_TARGET), using the same probability model as Sniper. We only lie
 about *where* the dice are, not about how many there are. Bluffing is off in
 Palifico rounds, where the face is fixed after the opener anyway.
 
+Reading the others: Sniper credits an opponent with extra dice for every bid
+they make on a face. In a chain (5xP, 6xP, 7xP ...) every player is just
+raising the previous bid, so that adds up to far more dice than are there
+and Sniper keeps raising where it should call Dudo. Pokerface counts a bid
+that only raises the quantity of the face just bid at FOLLOW_WEIGHT; a bid
+that opens or switches to a face is a real choice and counts in full.
+
 Set TALK_TO_ME=true to hear it over the radio.
 """
 
@@ -24,7 +31,7 @@ import random
 
 from perudo.bots.sniper import QUOTES as SNIPER_QUOTES
 from perudo.bots.sniper import SniperBot
-from perudo.models import Bid, Dudo
+from perudo.models import PACO, Bid, Dudo
 from perudo.talk import Mouth, fmt_bid, last_bidder
 
 QUOTES = {
@@ -72,15 +79,50 @@ class PokerfaceBot(SniperBot):
     # Minimum P(true) for a bluff bid. A bit below Sniper's TARGET: the
     # misdirection is worth some of the risk.
     BLUFF_TARGET = 0.75
-    # Opponent hint (see SniperBot._hint) on a face before we call it
-    # "strong precedence" and join in. 0.7 per bid, so 1.4 = two bids.
-    PRECEDENCE = 1.4
+    # Number of different opponents that bid a face this round before we
+    # call it "strong precedence" and join in.
+    PRECEDENCE = 2
+    # Weight of a bid that stays on the face of the bid before it, relative
+    # to a bid that opens or switches to a face.
+    FOLLOW_WEIGHT = 0.3
 
     def __init__(self):
         super().__init__()
         self.name = "Pokerface"
         self.mouth = Mouth(self, QUOTES)
         self._rng = random.Random()
+
+    # -- reading the others ------------------------------------------------
+
+    def _hint(self, state, face):
+        """Extra dice of `face` we expect among opponents, based on their bids."""
+        # In Palifico only the opener chose the face; later bids are forced.
+        history = state.history[:1] if state.palifico else state.history
+        dice_of = {p.name: p.dice_count for p in state.players}
+
+        weight_of = {}
+        prev = None
+        for rec in history:
+            if not isinstance(rec.action, Bid):
+                continue
+            bid = rec.action
+            if rec.player != self.name:
+                weight = 0.0
+                if bid.face == face:
+                    weight = 1.0
+                elif not state.palifico and bid.face == PACO and face != PACO:
+                    weight = self.PACO_HINT_WEIGHT
+                if prev is not None and prev.face == bid.face:
+                    weight *= self.FOLLOW_WEIGHT
+                weight_of[rec.player] = weight_of.get(rec.player, 0.0) + weight
+            prev = bid
+
+        total = 0.0
+        for who, weight in weight_of.items():
+            # Cap: they can't hold more than their dice beyond expectation.
+            cap = dice_of.get(who, 0) * (1 - self._p_face(face, state.palifico))
+            total += min(weight * self.HINT_PER_BID, cap)
+        return total
 
     # -- bluffing ---------------------------------------------------------
 
@@ -112,7 +154,12 @@ class PokerfaceBot(SniperBot):
         if state.current_bid is None:
             faces, key = missing, "bluff_open"
         else:
-            faces = [f for f in missing if hints[f] >= self.PRECEDENCE]
+            backers = {
+                f: {r.player for r in state.history
+                    if r.player != self.name and isinstance(r.action, Bid) and r.action.face == f}
+                for f in missing
+            }
+            faces = [f for f in missing if len(backers[f]) >= self.PRECEDENCE]
             key = "bluff_follow"
         self._rng.shuffle(faces)
         for face in faces:
