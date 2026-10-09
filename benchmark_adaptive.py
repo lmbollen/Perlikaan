@@ -16,6 +16,7 @@ It also checks what was learned against the known knobs of each zoo bot:
 Usage:
     uv run python benchmark_adaptive.py --tables 40 --games 60
     uv run python benchmark_adaptive.py --mix repo      # also seat repo bots
+    uv run python benchmark_adaptive.py --mix strong    # Sniper, Trihard, Oppa at every table
     uv run python benchmark_adaptive.py --a "BLUFF_RATE=0" --b "BLUFF_RATE=0.5"
 
 --a / --b compare any two settings of Pokerface's class attributes (default:
@@ -37,6 +38,8 @@ from run_simulation import derive_game_seeds
 from zoo import ZooBot, random_zoo_bot
 
 REPO_BOTS = ("SniperBot", "Trihard", "Fabulous", "OppaStyleBot", "SonnyBoy", "HundredIQBot")
+# The strongest bots in the repo; --mix strong seats all three at every table.
+STRONG_BOTS = ("SniperBot", "Trihard", "OppaStyleBot")
 
 
 def table_spec(seed, table, n_opponents, mix):
@@ -44,7 +47,9 @@ def table_spec(seed, table, n_opponents, mix):
     rng = random.Random(seed * 100_003 + table)
     specs = []
     for i in range(n_opponents):
-        if mix == "repo" and i < 2:
+        if mix == "strong" and i < len(STRONG_BOTS):
+            specs.append(("repo", STRONG_BOTS[i]))
+        elif mix == "repo" and i < 2:
             specs.append(("repo", rng.choice(REPO_BOTS)))
         else:
             bot = random_zoo_bot(rng, f"Zoo {i + 1}")
@@ -123,8 +128,9 @@ def main():
     parser.add_argument("--games", type=int, default=60, help="Games per table (learning carries over).")
     parser.add_argument("--opponents", type=int, default=5)
     parser.add_argument("--seed", type=int, default=1)
-    parser.add_argument("--mix", choices=("zoo", "repo"), default="zoo",
-                        help="zoo: only generated opponents; repo: 2 seats go to repo bots.")
+    parser.add_argument("--mix", choices=("zoo", "repo", "strong"), default="zoo",
+                        help="zoo: only generated opponents; repo: 2 seats go to random repo bots; "
+                             "strong: Sniper, Trihard and Oppa Style at every table, rest zoo.")
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--a", default="ADAPTIVE=False", help="Settings of variant A.")
     parser.add_argument("--b", default="ADAPTIVE=True", help="Settings of variant B.")
