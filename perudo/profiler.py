@@ -238,7 +238,7 @@ class Profile:
             out["raise"] = "jumper"
 
         cr = self.calza_rate
-        out["calza"] = "?" if cr is None else ("calza-user" if cr >= 0.03 else "no-calza")
+        out["calza"] = "?" if cr is None else ("calza-user" if self.calzas >= 5 else "no-calza")
         return out
 
     def summary(self) -> str:
