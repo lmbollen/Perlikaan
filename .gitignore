@@ -11,3 +11,7 @@ perudo/bots/Believer.py
 
 .venv/
 .claude/
+
+# analyze_losses.py output
+*.jsonl
+losses*.csv

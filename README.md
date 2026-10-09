@@ -49,6 +49,16 @@ uv run python run_interactive.py --bot RandomBot --bot ExampleBot --bot SniperBo
 
 Without `--bot`, every bot in `perudo/bots/` plays (once, or `count` times — see below).
 
+**Loss analysis** — dump every round of a simulation to JSONL and see in which
+situations one bot loses rounds (bid caught, wrong Dudo, wrong Calza; by
+players left, own dice, Palifico) plus its worst calls:
+
+```sh
+uv run python analyze_losses.py run --games 300 --bot Pokerface --show 10 --csv losses.csv
+uv run python analyze_losses.py dump --games 300 --out rounds.jsonl     # only simulate
+uv run python analyze_losses.py analyze rounds.jsonl --bot Sniper       # analyze an existing dump
+```
+
 ### Trash talk and text-to-speech (optional)
 
 Bots can talk via `perudo.talk`. Enable it with environment variables:
