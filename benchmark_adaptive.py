@@ -38,7 +38,8 @@ from run_simulation import derive_game_seeds
 from zoo import ZooBot, random_zoo_bot
 
 REPO_BOTS = ("SniperBot", "Trihard", "Fabulous", "OppaStyleBot", "SonnyBoy", "HundredIQBot")
-# The strongest bots in the repo; --mix strong seats all three at every table.
+# The strongest bots in the repo; --mix strong seats all three at every table
+# (a random subset at smaller tables).
 STRONG_BOTS = ("SniperBot", "Trihard", "OppaStyleBot")
 
 
@@ -46,9 +47,11 @@ def table_spec(seed, table, n_opponents, mix):
     """The opponents of one table, as rebuildable specs."""
     rng = random.Random(seed * 100_003 + table)
     specs = []
+    # With fewer seats than strong bots, a random subset of them.
+    strong = rng.sample(STRONG_BOTS, min(len(STRONG_BOTS), n_opponents)) if mix == "strong" else []
     for i in range(n_opponents):
-        if mix == "strong" and i < len(STRONG_BOTS):
-            specs.append(("repo", STRONG_BOTS[i]))
+        if i < len(strong):
+            specs.append(("repo", strong[i]))
         elif mix == "repo" and i < 2:
             specs.append(("repo", rng.choice(REPO_BOTS)))
         else:

@@ -70,6 +70,17 @@ uv run python verify_profiler.py --games 400 --table known   # bots with known s
 uv run python verify_profiler.py --games 200 --table real    # the competition bots
 ```
 
+**Learning and table size** — test against opponents that are not in this repo
+(`zoo.py` generates them with random, known strategies), and find the best
+settings per number of players (2 to 7):
+
+```sh
+uv run python benchmark_adaptive.py --tables 120 --games 60             # learning on vs off
+uv run python benchmark_adaptive.py --mix strong                         # + Sniper, Trihard, Oppa Style
+uv run python sweep_players.py --tables 60 --games 40                    # variants x table sizes
+uv run python sweep_players.py --mix strong --variants "TARGET=0.8"      # your own variants
+```
+
 ### Trash talk and text-to-speech (optional)
 
 Bots can talk via `perudo.talk`. Enable it with environment variables:
