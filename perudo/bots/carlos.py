@@ -183,6 +183,18 @@ class CarlosBot:
     # players raise without holding much; starting at 0 made Carlos believe
     # every follower (5x6 rated 0.96 with 3 on the table).
     FOLLOW_PRIOR_SHIFT = -3.0
+    # Factor switches (all on in play; analyze_factors.py turns them off one
+    # at a time): read opponents' bids at all, use what a chosen face says
+    # about the faces passed over, use the learned per-player Dudo model,
+    # calibrate the bid we face, calibrate the first response to our bid.
+    USE_BID_INFO = True
+    USE_PASSED_OVER = True
+    USE_DUDO_MODEL = True
+    CALIBRATE_FACING = True
+    CALIBRATE_FIRST_RESPONSE = True
+    # Learn Paco bids as their own kind: their implied count uses 1/6 and
+    # players bluff differently on them.
+    PACO_KINDS = False
     # Opening: consider every quantity at least CAND_MIN likely (not only the
     # highest ones).
     OPEN_ALL = True
@@ -314,10 +326,10 @@ class CarlosBot:
             prev = bid
         return last
 
-    @staticmethod
-    def _kind(chosen, palifico, n):
-        """Kind of bid: chosen or followed, Palifico or not, bidder's dice 1/2/3+."""
-        return ("pal-" if palifico else "") + ("choice" if chosen else "follow") + f"-{min(n, 3)}"
+    def _kind(self, chosen, palifico, n, face=None):
+        """Kind of bid: chosen or followed, Palifico or not, Paco or not, bidder's dice 1/2/3+."""
+        paco = "paco-" if (self.PACO_KINDS and face == PACO and not palifico) else ""
+        return ("pal-" if palifico else "") + paco + ("choice" if chosen else "follow") + f"-{min(n, 3)}"
 
     def _learn_hands(self, event, palifico):
         dice = event.dice_by_player()
@@ -338,7 +350,7 @@ class CarlosBot:
             k = count_matches(own, face, palifico)
             r = k - self._implied(bid, len(own), total, palifico)
             r = max(R_MIN, min(R_MAX, r))
-            self.hist[player][self._kind(chosen, palifico, len(own))][r] += 1
+            self.hist[player][self._kind(chosen, palifico, len(own), face)][r] += 1
 
     # -- how a player raises -------------------------------------------------
 
@@ -505,10 +517,13 @@ class CarlosBot:
         n_own = sum(own.values())
         return {r: (own.get(r, 0.0) + self.SHRINK * table[r]) / (n_own + self.SHRINK) for r in base}
 
-    def _calibrated(self, state, bid, p, exact):
+    def _calibrated(self, state, bid, p, exact, record=True):
         alive = sum(pl.alive for pl in state.players)
         key = (exact, min(alive, 4), state.palifico, min(int(p * 10), 9))
-        self._pending.append((key, bid, state.palifico))
+        if record:
+            self._pending.append((key, bid, state.palifico))
+        if not self.CALIBRATE_FACING:
+            return p
         hits, n = self._calibration.get(key, (0, 0))
         k = self.CALIBRATION_PRIOR
         return (hits + k * p) / (n + k)
@@ -534,6 +549,8 @@ class CarlosBot:
 
     def _dudo_model(self, name):
         """(a, b) of the logistic Dudo model, fitted on the player's history."""
+        if not self.USE_DUDO_MODEL:
+            return self.DUDO_A, self.DUDO_B
         prof = self.profiler.profiles.get(name)
         n = len(prof.facing) if prof else 0
         cached = self._fit_cache.get(name)
@@ -593,7 +610,10 @@ class CarlosBot:
             post[p.name] = {}
             for face in range(1, 7):
                 seen = last.get((p.name, face))
-                if seen is None and not pal and face != PACO and p.name in choosers:
+                if not self.USE_BID_INFO:
+                    seen = None
+                if seen is None and self.USE_BID_INFO and self.USE_PASSED_OVER \
+                        and not pal and face != PACO and p.name in choosers:
                     # They chose another face: probably fewer of this one.
                     pmf = self._other_face_pmf(p.name, p.dice_count)
                 elif seen is None:
@@ -602,7 +622,7 @@ class CarlosBot:
                     # The learned residual histogram is already the
                     # distribution of their matches given such a bid.
                     bid, chosen = seen
-                    lik = self._likelihood(p.name, self._kind(chosen, pal, p.dice_count))
+                    lik = self._likelihood(p.name, self._kind(chosen, pal, p.dice_count, face))
                     implied = self._implied(bid, p.dice_count, total, pal)
                     pmf = [lik[max(R_MIN, min(R_MAX, k - implied))] for k in range(p.dice_count + 1)]
                     z = sum(pmf)
@@ -789,7 +809,7 @@ class CarlosBot:
         gain = 1.0 if (ctx["gain_ok"] and n < 5) else 0.0
 
         rd = rc = 1.0
-        if bidder == self.name and actor == order[0]:
+        if bidder == self.name and actor == order[0] and self.CALIBRATE_FIRST_RESPONSE:
             pd0, pc0 = self._next_response(ctx, bid)
             rd = self._response_ratio(ctx, "dudo", pd0)
             rc = self._response_ratio(ctx, "calza", pc0)
@@ -845,25 +865,35 @@ class CarlosBot:
             out = [max(bids, key=lambda b: self._p_true(ctx, b))]
         return out
 
-    def play(self, state):
+    def _options(self, state, record=True):
+        """(ctx, [(value, action)], risk keys): every move we consider, valued by the chain."""
         ctx = self._setup(state)
         cur = state.current_bid
         options = []
         if cur is not None:
             bidder = last_bidder(state, default=None)
-            p_true = self._calibrated(state, cur, self._p_true(ctx, cur), exact=False)
+            p_true = self._calibrated(state, cur, self._p_true(ctx, cur), exact=False, record=record)
             if Dudo() in state.legal_actions:
                 options.append((p_true * -1.0 + (1 - p_true) * self._lose_value(ctx, bidder), Dudo()))
             if Calza() in state.legal_actions:
                 gain = self.CALZA_GAIN if (ctx["gain_ok"] and state.my_dice_count < 5) else self.CALZA_FREE_PASS
-                p_ex = self._calibrated(state, cur, self._p_exact(ctx, cur), exact=True)
+                p_ex = self._calibrated(state, cur, self._p_exact(ctx, cur), exact=True, record=record)
                 options.append((p_ex * gain - (1 - p_ex), Calza()))
         risk_keys = {}
         for b in self._candidates(ctx, state):
             value, key = self._calibrated_bid_value(ctx, cur is None, self._chain(ctx, b, self.name, 0, 0))
             risk_keys[b] = key
             options.append((value, b))
+        return ctx, options, risk_keys
 
+    def decide(self, state):
+        """The move the chain rates best, without side effects (ties: lowest quantity)."""
+        _, options, _ = self._options(state, record=False)
+        return max(options, key=lambda o: (o[0], -getattr(o[1], "quantity", 0)))[1]
+
+    def play(self, state):
+        ctx, options, risk_keys = self._options(state)
+        cur = state.current_bid
         best = max(v for v, _ in options)
         value, action = self._rng.choice([o for o in options if o[0] >= best - self.TIE_EPS])
         if isinstance(action, Bid):
