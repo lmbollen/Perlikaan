@@ -19,11 +19,16 @@ from perudo.models import (
     Bid,
     BidEvent,
     Calza,
-    DieGainedEvent,
-    DieLostEvent,
     Dudo,
     RevealEvent,
 )
+
+
+# Only types the platform is known to have are imported (the same ones as
+# Trihard). Other events are recognised by their class name, so a missing
+# class can never break the import.
+def _is(event, *names):
+    return type(event).__name__ in names
 
 PACO = 1
 BOT_NAME = "Oppa Style"
@@ -226,9 +231,9 @@ class OppaStyleBot:
             self.last_bidder = None
             return
 
-        if isinstance(event, DieLostEvent) and event.player == self.name:
+        if _is(event, "DieLostEvent") and event.player == self.name:
             self.my_dice_count = event.dice_count
-        elif isinstance(event, DieGainedEvent) and event.player == self.name:
+        elif _is(event, "DieGainedEvent") and event.player == self.name:
             self.my_dice_count = event.dice_count
 
     def _learn(self, event):

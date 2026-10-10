@@ -53,14 +53,21 @@ from perudo.models import (
     Bid,
     BidEvent,
     Calza,
-    CalzaEvent,
     Dudo,
-    DudoEvent,
     GameEndedEvent,
-    NORMAL_FACES,
     RevealEvent,
     RoundEndedEvent,
 )
+
+
+# Only types the platform is known to have are imported (the same ones as
+# Trihard). Other events are recognised by their class name, so a missing
+# class can never break the import.
+def _is(event, *names):
+    return type(event).__name__ in names
+
+
+_NORMAL_FACES = (2, 3, 4, 5, 6)
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +95,7 @@ def _legal_bids(
 
     if current_bid is None:
         # Opening bid of the round.
-        faces = range(1, 7) if palifico else NORMAL_FACES
+        faces = range(1, 7) if palifico else _NORMAL_FACES
         for face in faces:
             for q in range(1, max_q + 1):
                 bids.append(Bid(q, face))
@@ -111,7 +118,7 @@ def _legal_bids(
         # Paco -> normal face, quantity must at least double (+1).
         min_q_normal = 2 * q0 + 1
         for q in range(min_q_normal, max_q + 1):
-            for face in NORMAL_FACES:
+            for face in _NORMAL_FACES:
                 bids.append(Bid(q, face))
     else:
         # Same quantity, strictly higher normal face.
@@ -119,7 +126,7 @@ def _legal_bids(
             bids.append(Bid(q0, face))
         # Higher quantity, any normal face (including the same one).
         for q in range(q0 + 1, max_q + 1):
-            for face in NORMAL_FACES:
+            for face in _NORMAL_FACES:
                 bids.append(Bid(q, face))
         # Normal -> Paco, quantity at least ceil(q0 / 2).
         min_q_paco = math.ceil(q0 / 2)
@@ -412,11 +419,15 @@ class OpponentProfiler:
     def observe(self, event):
         if isinstance(event, BidEvent):
             self._actions.append((event.player, event.bid))
-        elif isinstance(event, DudoEvent):
+        elif _is(event, "DudoEvent"):
             self._actions.append((event.player, Dudo()))
-        elif isinstance(event, CalzaEvent):
+        elif _is(event, "CalzaEvent"):
             self._actions.append((event.player, Calza()))
         elif isinstance(event, RevealEvent):
+            if not self._actions or isinstance(self._actions[-1][1], Bid):
+                # No Dudo/Calza event seen: the reveal says who called.
+                call = Dudo() if event.challenge_type == "dudo" else Calza()
+                self._actions.append((event.challenger, call))
             self.record_round(event.dice_by_player(), self._actions, self._palifico)
             self._actions = []
         elif isinstance(event, RoundEndedEvent):

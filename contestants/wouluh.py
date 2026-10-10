@@ -19,7 +19,14 @@ import math
 import random
 import sys
 
-from perudo.models import PACO, Bid, BidEvent, CalzaEvent, Dudo, DudoEvent
+from perudo.models import PACO, Bid, BidEvent, Dudo
+
+
+# Only types the platform is known to have are imported (the same ones as
+# Trihard). Other events are recognised by their class name, so a missing
+# class can never break the import.
+def _is(event, *names):
+    return type(event).__name__ in names
 
 
 def _count_matches(dice_values, face, palifico):
@@ -51,7 +58,7 @@ class WouluhBot:
     def observe(self, event):
         # Ook cheaten als we niet aan de beurt komen voordat er Dudo valt:
         # deze events komen allemaal binnen vóórdat de engine gaat tellen.
-        if isinstance(event, (BidEvent, DudoEvent, CalzaEvent)):
+        if isinstance(event, BidEvent) or _is(event, "DudoEvent", "CalzaEvent"):
             self._cheat()
 
     def on_game_end(self, result):

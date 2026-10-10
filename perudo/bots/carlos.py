@@ -50,16 +50,28 @@ from perudo.models import (
     Bid,
     BidEvent,
     Calza,
-    CalzaEvent,
-    DieLostEvent,
     Dudo,
-    DudoEvent,
     GameEndedEvent,
-    NORMAL_FACES,
-    PublicPlayer,
     RevealEvent,
     RoundEndedEvent,
 )
+
+
+# Only types the platform is known to have are imported (the same ones as
+# Trihard). Other events are recognised by their class name, so a missing
+# class can never break the import.
+def _is(event, *names):
+    return type(event).__name__ in names
+
+
+_NORMAL_FACES = (2, 3, 4, 5, 6)
+
+
+class _Snapshot:
+    """Plain record (players, history, state) for replaying a round ourselves."""
+
+    def __init__(self, **fields):
+        self.__dict__.update(fields)
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +99,7 @@ def _legal_bids(
 
     if current_bid is None:
         # Opening bid of the round.
-        faces = range(1, 7) if palifico else NORMAL_FACES
+        faces = range(1, 7) if palifico else _NORMAL_FACES
         for face in faces:
             for q in range(1, max_q + 1):
                 bids.append(Bid(q, face))
@@ -110,7 +122,7 @@ def _legal_bids(
         # Paco -> normal face, quantity must at least double (+1).
         min_q_normal = 2 * q0 + 1
         for q in range(min_q_normal, max_q + 1):
-            for face in NORMAL_FACES:
+            for face in _NORMAL_FACES:
                 bids.append(Bid(q, face))
     else:
         # Same quantity, strictly higher normal face.
@@ -118,7 +130,7 @@ def _legal_bids(
             bids.append(Bid(q0, face))
         # Higher quantity, any normal face (including the same one).
         for q in range(q0 + 1, max_q + 1):
-            for face in NORMAL_FACES:
+            for face in _NORMAL_FACES:
                 bids.append(Bid(q, face))
         # Normal -> Paco, quantity at least ceil(q0 / 2).
         min_q_paco = math.ceil(q0 / 2)
@@ -419,11 +431,15 @@ class OpponentProfiler:
     def observe(self, event):
         if isinstance(event, BidEvent):
             self._actions.append((event.player, event.bid))
-        elif isinstance(event, DudoEvent):
+        elif _is(event, "DudoEvent"):
             self._actions.append((event.player, Dudo()))
-        elif isinstance(event, CalzaEvent):
+        elif _is(event, "CalzaEvent"):
             self._actions.append((event.player, Calza()))
         elif isinstance(event, RevealEvent):
+            if not self._actions or isinstance(self._actions[-1][1], Bid):
+                # No Dudo/Calza event seen: the reveal says who called.
+                call = Dudo() if event.challenge_type == "dudo" else Calza()
+                self._actions.append((event.challenger, call))
             self.record_round(event.dice_by_player(), self._actions, self._palifico)
             self._actions = []
         elif isinstance(event, RoundEndedEvent):
@@ -787,18 +803,23 @@ class CarlosBot:
     def observe(self, event):
         self._ensure_memory()
         self.profiler.observe(event)
-        if self._awaiting is not None and isinstance(event, (BidEvent, DudoEvent, CalzaEvent)) \
-                and event.player != self.name:
+        if self._awaiting is not None and isinstance(event, RevealEvent) and event.bidder == self.name:
+            # No Dudo/Calza event seen: the next player challenged our bid.
+            event_kind = "DudoEvent" if event.challenge_type == "dudo" else "CalzaEvent"
+        else:
+            event_kind = type(event).__name__
+        if self._awaiting is not None and event_kind in ("BidEvent", "DudoEvent", "CalzaEvent") \
+                and (isinstance(event, RevealEvent) or event.player != self.name):
             size, pd, pc = self._awaiting
-            for kind, p, hit in (("dudo", pd, isinstance(event, DudoEvent)),
-                                 ("calza", pc, isinstance(event, CalzaEvent))):
+            for kind, p, hit in (("dudo", pd, event_kind == "DudoEvent"),
+                                 ("calza", pc, event_kind == "CalzaEvent")):
                 stat = self._response.setdefault((kind, size, self._resp_bucket(p)), [0, 0])
                 stat[0] += hit
                 stat[1] += 1
             self._awaiting = None
         elif isinstance(event, (RevealEvent, GameEndedEvent)):
             self._awaiting = None
-        if isinstance(event, DieLostEvent) and event.player == self.name:
+        if _is(event, "DieLostEvent") and event.player == self.name:
             self._lost_this_round = True
         if isinstance(event, (RoundEndedEvent, GameEndedEvent)):
             for key in self._risk_pending:
@@ -809,10 +830,14 @@ class CarlosBot:
             self._lost_this_round = False
         if isinstance(event, BidEvent):
             self._round.append((event.player, event.bid))
-        elif isinstance(event, (DudoEvent, CalzaEvent)):
+        elif _is(event, "DudoEvent", "CalzaEvent"):
             self._round.append((event.player, None))
-            self._round_end = (event.player, "dudo" if isinstance(event, DudoEvent) else "calza")
+            self._round_end = (event.player, "dudo" if _is(event, "DudoEvent") else "calza")
         elif isinstance(event, RevealEvent):
+            if not self._round or self._round[-1][1] is not None:
+                # No Dudo/Calza event seen: the reveal says who called.
+                self._round.append((event.challenger, None))
+                self._round_end = (event.challenger, event.challenge_type)
             if self.CALIBRATE_ALL_RESPONSES:
                 self._learn_responses(event)
             self._learn_hands(event, self._palifico)
@@ -981,16 +1006,15 @@ class CarlosBot:
         """Replay this round's opponent decisions with what we knew back then."""
         if self._seats is None or self.name not in event.dice_by_player():
             return
-        from perudo.models import ActionRecord, Observation
         dice = event.dice_by_player()
-        players = tuple(PublicPlayer(id=p.id, name=p.name, dice_count=len(dice.get(p.name, ())),
+        players = tuple(_Snapshot(id=p.id, name=p.name, dice_count=len(dice.get(p.name, ())),
                                      alive=p.name in dice) for p in self._seats)
         mine = tuple(dice[self.name])
         history = []
         for player, bid in self._round:
             current = history[-1].action if history else None
             if current is not None and player != self.name and player in dice:
-                state = Observation(my_id=self._my_id, my_dice=mine, my_dice_count=len(mine),
+                state = _Snapshot(my_id=self._my_id, my_dice=mine, my_dice_count=len(mine),
                                     players=players, current_bid=current, palifico=self._palifico,
                                     round_number=0, history=tuple(history), legal_actions=())
                 ctx = self._setup(state)
@@ -1004,7 +1028,7 @@ class CarlosBot:
                         stat[1] += 1
             if bid is None:
                 break
-            history.append(ActionRecord(player=player, action=bid))
+            history.append(_Snapshot(player=player, action=bid))
 
     def _was_dudo(self, player):
         return self._round_end == (player, "dudo")
