@@ -70,16 +70,31 @@ uv run python verify_profiler.py --games 400 --table known   # bots with known s
 uv run python verify_profiler.py --games 200 --table real    # the competition bots
 ```
 
-**Learning and table size** — test against opponents that are not in this repo
-(`zoo.py` generates them with random, known strategies), and find the best
-settings per number of players (2 to 7):
+**Benchmarks and tuning** — the same tables and seeds are played by two (or
+more) settings of a bot, so differences are paired. Opponents default to
+Sonny Boy, Oppa Style, Fabulous and Trihard (`--mix core`, numbered copies at
+big tables); `--mix zoo` uses random generated opponents from `zoo.py`.
 
 ```sh
-uv run python benchmark_adaptive.py --tables 120 --games 60             # learning on vs off
-uv run python benchmark_adaptive.py --mix strong                         # + Sniper, Trihard, Oppa Style
-uv run python sweep_players.py --tables 60 --games 40                    # variants x table sizes
-uv run python sweep_players.py --mix strong --variants "TARGET=0.8"      # your own variants
+uv run python benchmark_adaptive.py --opponents 1 --a "" --b "CALZA=False"            # Pokerface variants
+uv run python benchmark_adaptive.py --a "BOT=PokerfaceBot" --b "BOT=CarlosBot"         # bot vs bot in our seat
+uv run python sweep_players.py --tables 40 --games 40                                  # variants x 2-7 players
+uv run python sweep_players.py --base BOT=CarlosBot --variants "CAND_MIN=0.35"         # tune Carlos
+uv run python analyze_endgame.py --start-players 2 --show 10                           # why Pokerface loses head-to-head
+uv run python diagnose_bluff.py --rates 0 0.5 1                                        # do our bluffs mislead them?
 ```
+
+### Pokerface and Carlos
+
+* **Pokerface** (`perudo/bots/pokerface.py`) plays like Sniper, bluffs about
+  faces, reads each opponent's bids with what their bids were worth before
+  (learned per name), and once two players are left switches to an endgame
+  mode: odds calibrated online, its own Calzas, bids that are hard to Calza
+  and a one-step lookahead on how the next player will react.
+* **Carlos** (`perudo/bots/carlos.py`) evaluates every move with a Markov
+  chain over the rest of the round, filled with per-player models learned
+  from the reveals: the distribution of a player's hand given their bids,
+  their Dudo response, Calza rate and raise style.
 
 ### Trash talk and text-to-speech (optional)
 
@@ -126,8 +141,12 @@ perudo/
   bot_loader.py   bot discovery and instantiation
   talk.py         optional bot chatter
   tts.py          optional text-to-speech
+  profiler.py     per-opponent learning (OpponentProfiler)
   bots/           all participating bots
+contestants/      bots that are not at the table (Hakaman, Wouluh)
 run_simulation.py
 run_interactive.py
+analyze_losses.py, analyze_endgame.py, diagnose_bluff.py   loss and bluff analysis
+benchmark_adaptive.py, sweep_players.py, verify_profiler.py, zoo.py   benchmarks
 tests/
 ```
