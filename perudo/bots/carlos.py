@@ -194,7 +194,7 @@ class CarlosBot:
     CALIBRATE_FIRST_RESPONSE = True
     # Learn Paco bids as their own kind: their implied count uses 1/6 and
     # players bluff differently on them.
-    PACO_KINDS = False
+    PACO_KINDS = True
     # Opening: consider every quantity at least CAND_MIN likely (not only the
     # highest ones).
     OPEN_ALL = True
