@@ -778,6 +778,14 @@ class PokerfaceBot(SharedMemory, _SniperCore):
     # In Palifico a follower could have called Dudo instead of raising, so
     # their raise says something about their hand too (Sniper ignores it).
     PALIFICO_FOLLOWERS = True
+    # Starting values, measured with measure_defaults.py over many games at
+    # tables of 2-7 players (static bots and The Don): a single game leaves no
+    # time to warm up. Learning in the game starts from these.
+    TUNED_DEFAULTS = True
+    TUNED_EXCESS = {"nat-choice": 0.80, "nat-follow": 0.67, "paco-choice": 0.39, "paco-follow": 0.43}
+    TUNED_CHALLENGE = 0.37
+    TUNED_CALZA = 0.025
+    TUNED_DUDO_AT = 0.20
     # Set to a list to record every decision with what we believed at the
     # time (see analyze_endgame.py). None = no logging.
     decision_log = None
@@ -939,6 +947,17 @@ class PokerfaceBot(SharedMemory, _SniperCore):
         avg = self.profiler.challenge_rate()
         lo, hi = self.TARGET_RANGE
         return min(max(1 - (1 - base) * avg / max(rate, 0.05), lo), hi)
+
+    def _ensure_memory(self):
+        """Apply the starting values once, then bind to the shared memory."""
+        if not getattr(self, "_defaults_applied", False):
+            self._defaults_applied = True
+            if self.TUNED_DEFAULTS:
+                self.profiler.PRIOR_EXCESS = dict(self.TUNED_EXCESS)
+                self.profiler.PRIOR_CHALLENGE = self.TUNED_CHALLENGE
+                self.profiler.PRIOR_CALZA = self.TUNED_CALZA
+                self.DEFAULT_DUDO_AT = self.TUNED_DUDO_AT
+        SharedMemory._ensure_memory(self)
 
     def play(self, state):
         self._ensure_memory()

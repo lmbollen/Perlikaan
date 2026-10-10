@@ -620,6 +620,20 @@ class CarlosBot(SharedMemory):
     # players raise without holding much; starting at 0 made Carlos believe
     # every follower (5x6 rated 0.96 with 3 on the table).
     FOLLOW_PRIOR_SHIFT = -3.0
+    # Starting values, measured with measure_defaults.py over many games at
+    # tables of 2-7 players (static bots and The Don): a single game leaves no
+    # time to warm up. Learning in the game starts from these.
+    TUNED_DEFAULTS = True
+    # Residual (held - implied) per kind of bid: (centre, spread).
+    TUNED_RESIDUAL = {"choice": (1, 1.0), "follow": (0, 1.0), "paco-choice": (0, 0.64),
+                      "paco-follow": (-1, 0.75), "pal-choice": (1, 0.3), "pal-follow": (-1, 0.63)}
+    # Matches per die of a face a player passed over, by their dice count.
+    TUNED_PASSED_OVER = {1: 0.263, 2: 0.257, 3: 0.287, 4: 0.295, 5: 0.306}
+    TUNED_DUDO = (2.84, -12.72)
+    TUNED_RAISE_P = 0.67
+    TUNED_RAISE_PRIOR = (4.12, 1.23, -1.66, -0.15, 1.2, 1.4, 1.97, 1.18)
+    TUNED_CALZA = 0.021
+    TUNED_CHALLENGE = 0.42
     # Factor switches (all on in play; analyze_factors.py turns them off one
     # at a time): read opponents' bids at all, use what a chosen face says
     # about the faces passed over, use the learned per-player Dudo model,
@@ -701,6 +715,18 @@ class CarlosBot(SharedMemory):
     # ------------------------------------------------------------------
     # learning
     # ------------------------------------------------------------------
+
+    def _ensure_memory(self):
+        """Apply the starting values once, then bind to the shared memory."""
+        if not getattr(self, "_defaults_applied", False):
+            self._defaults_applied = True
+            if self.TUNED_DEFAULTS:
+                self.DUDO_A, self.DUDO_B = self.TUNED_DUDO
+                self.DEFAULT_RAISE_P = self.TUNED_RAISE_P
+                self._beta_table[:] = self.TUNED_RAISE_PRIOR
+                self.profiler.PRIOR_CALZA = self.TUNED_CALZA
+                self.profiler.PRIOR_CHALLENGE = self.TUNED_CHALLENGE
+        SharedMemory._ensure_memory(self)
 
     def on_game_start(self, info):
         self._ensure_memory()
@@ -941,8 +967,13 @@ class CarlosBot(SharedMemory):
 
     def _likelihood(self, player, kind):
         """r -> P(residual r) for this player and kind, shrunk to the table."""
-        centre = self.FOLLOW_PRIOR_SHIFT if "follow" in kind else 0.0
-        base = {r: math.exp(-abs(r - centre)) for r in range(R_MIN, R_MAX + 1)}
+        tuned = self.TUNED_RESIDUAL.get(kind.rsplit("-", 1)[0]) if self.TUNED_DEFAULTS else None
+        if tuned:
+            centre, spread = tuned
+            base = {r: math.exp(-abs(r - centre) / spread) for r in range(R_MIN, R_MAX + 1)}
+        else:
+            centre = self.FOLLOW_PRIOR_SHIFT if "follow" in kind else 0.0
+            base = {r: math.exp(-abs(r - centre)) for r in range(R_MIN, R_MAX + 1)}
         z = sum(base.values())
         base = {r: v / z for r, v in base.items()}
         pooled = defaultdict(float)
@@ -978,7 +1009,7 @@ class CarlosBot(SharedMemory):
 
     def _other_face_pmf(self, player, n):
         """Matches of a face `player` passed over for another face (n dice)."""
-        base = binom_pmf(n, 1 / 3)
+        base = binom_pmf(n, self.TUNED_PASSED_OVER.get(n, 1 / 3) if self.TUNED_DEFAULTS else 1 / 3)
         pooled = [sum(self.other[who][n].get(k, 0.0) for who in self.other) for k in range(n + 1)]
         n_pool = sum(pooled)
         table = [(pooled[k] + self.SHRINK * base[k]) / (n_pool + self.SHRINK) for k in range(n + 1)]
