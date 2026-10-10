@@ -178,7 +178,7 @@ class CarlosBot:
     # follows the face just bid is centred this far below zero. In chains
     # players raise without holding much; starting at 0 made Carlos believe
     # every follower (5x6 rated 0.96 with 3 on the table).
-    FOLLOW_PRIOR_SHIFT = -2.0
+    FOLLOW_PRIOR_SHIFT = -3.0
     # Opening: consider every quantity at least CAND_MIN likely (not only the
     # highest ones).
     OPEN_ALL = True
