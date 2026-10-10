@@ -1,0 +1,193 @@
+"""
+Learn the starting knowledge (priors) of Pokerface and Carlos.
+
+Our bots learn per opponent during a game, but in a single game there is no
+time to warm up. This script plays many games with Pokerface and Carlos at
+tables of every size (2-7 players) against the static bots and our own bots,
+then pools what they learned about all opponents and writes it to
+perudo/priors.json. Both bots start every new game from those values; within
+the game they keep learning per opponent as before.
+
+Usage:
+    uv run python learn_priors.py --tables 24 --games 30
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import random
+from collections import defaultdict
+from multiprocessing import Pool
+from pathlib import Path
+
+from benchmark_adaptive import STATIC_BOTS, RoundLimit, TooManyRounds, build, fresh_seed
+from perudo.bot_loader import discover_bot_classes_by_name
+from perudo.game import PerudoGame
+from perudo.profiler import Profile
+from run_simulation import derive_game_seeds
+
+OUT = Path(__file__).parent / "perudo" / "priors.json"
+POOL = STATIC_BOTS + ("TheDonBot",)
+
+
+def table(job):
+    seed, t, games = job
+    rng = random.Random(seed * 1009 + t)
+    classes = discover_bot_classes_by_name()
+    size = rng.choice([2, 3, 4, 5, 6, 7])
+    ours = [classes["PokerfaceBot"](), classes["CarlosBot"]()]
+    for bot in ours:
+        bot.USE_PRIORS = False          # learn from scratch
+        bot.__init__()
+    if size == 2:
+        ours = [rng.choice(ours)]
+    opponents = rng.sample(POOL, min(len(POOL), size - len(ours)))
+    opponents += rng.choices(POOL, k=size - len(ours) - len(opponents))
+    bots = [*ours, *build([("repo", n) for n in opponents], classes, taken={b.name for b in ours})]
+    for s in derive_game_seeds(seed * 31 + t, games):
+        try:
+            PerudoGame(bots=bots, seed=s, listeners=[RoundLimit()]).play()
+        except TooManyRounds:
+            pass
+    return {type(b).__name__: extract(b) for b in ours}
+
+
+def extract_profiler(prof):
+    out = {"excess": defaultdict(lambda: [0.0, 0]), "false_faced": 0, "false_challenged": 0,
+           "calzas": 0, "facing_n": 0, "facing": [], "bid_risk_sum": 0.0, "bids": 0}
+    for p in prof.profiles.values():
+        for kind, (total, n) in p.excess.items():
+            out["excess"][kind][0] += total
+            out["excess"][kind][1] += n
+        out["false_faced"] += p.false_faced
+        out["false_challenged"] += p.false_challenged
+        out["calzas"] += p.calzas
+        out["facing_n"] += len(p.facing)
+        out["facing"] += p.facing[-500:]
+        out["bid_risk_sum"] += p.bid_risk_sum
+        out["bids"] += p.bids
+    out["excess"] = dict(out["excess"])
+    return out
+
+
+def extract(bot):
+    data = {"profiler": extract_profiler(bot.profiler),
+            "calibration": [[*k, v[0], v[1]] for k, v in bot._calibration.items()]}
+    if type(bot).__name__ == "CarlosBot":
+        hist = defaultdict(lambda: defaultdict(float))
+        for kinds in bot.hist.values():
+            for kind, rs in kinds.items():
+                for r, c in rs.items():
+                    hist[kind][r] += c
+        other = defaultdict(lambda: defaultdict(float))
+        for ns in bot.other.values():
+            for n, ks in ns.items():
+                for k, c in ks.items():
+                    other[n][k] += c
+        data.update(
+            hist={k: dict(v) for k, v in hist.items()},
+            other={n: dict(v) for n, v in other.items()},
+            beta=list(bot._beta_table),
+            response=[[*k, v[0], v[1]] for k, v in bot._response.items()],
+        )
+    return data
+
+
+def fit_logistic(points, a=2.0, b=-7.0):
+    """P(Dudo) = sigmoid(a + b x), Newton steps on (x, called Dudo?) points."""
+    for _ in range(25):
+        ga = gb = haa = hab = hbb = 0.0
+        for x, y in points:
+            s = 1 / (1 + math.exp(-(a + b * x)))
+            e = (1.0 if y else 0.0) - s
+            w = s * (1 - s)
+            ga += e
+            gb += e * x
+            haa += w
+            hab += w * x
+            hbb += w * x * x
+        det = haa * hbb - hab * hab
+        if det <= 1e-9:
+            break
+        a += (hbb * ga - hab * gb) / det
+        b += (haa * gb - hab * ga) / det
+    return a, b
+
+
+def merge(parts, name):
+    parts = [p[name] for p in parts if name in p]
+    prof = defaultdict(float)
+    excess = defaultdict(lambda: [0.0, 0])
+    facing = []
+    for p in parts:
+        pr = p["profiler"]
+        for key in ("false_faced", "false_challenged", "calzas", "facing_n", "bid_risk_sum", "bids"):
+            prof[key] += pr[key]
+        for kind, (total, n) in pr["excess"].items():
+            excess[kind][0] += total
+            excess[kind][1] += n
+        facing += [tuple(x) for x in pr["facing"]]
+    calibration = defaultdict(lambda: [0, 0])
+    for p in parts:
+        for *key, hits, n in p["calibration"]:
+            calibration[tuple(key)][0] += hits
+            calibration[tuple(key)][1] += n
+    out = {
+        "games_tables": len(parts),
+        "excess": {k: t / n for k, (t, n) in excess.items() if n},
+        "challenge_rate": prof["false_challenged"] / max(prof["false_faced"], 1),
+        "calza_rate": prof["calzas"] / max(prof["calzas"] + prof["facing_n"], 1),
+        "raise_p": prof["bid_risk_sum"] / max(prof["bids"], 1),
+        "calibration": [[*k, v[0], v[1]] for k, v in calibration.items()],
+    }
+    sample = random.Random(0).sample(facing, min(len(facing), 20000))
+    profile = Profile("table")
+    profile.facing = sample
+    out["dudo_at"], _ = profile.dudo_threshold()
+    out["dudo_logistic"] = fit_logistic(sample)
+    if name == "CarlosBot":
+        hist = defaultdict(lambda: defaultdict(float))
+        other = defaultdict(lambda: defaultdict(float))
+        response = defaultdict(lambda: [0, 0])
+        for p in parts:
+            for kind, rs in p["hist"].items():
+                for r, c in rs.items():
+                    hist[kind][int(r)] += c
+            for n, ks in p["other"].items():
+                for k, c in ks.items():
+                    other[int(n)][int(k)] += c
+            for *key, hits, n in p["response"]:
+                response[tuple(key)][0] += hits
+                response[tuple(key)][1] += n
+        out["hist"] = {k: dict(v) for k, v in hist.items()}
+        out["other"] = {n: dict(v) for n, v in other.items()}
+        out["beta"] = [sum(p["beta"][i] for p in parts) / len(parts) for i in range(len(parts[0]["beta"]))]
+        out["response"] = [[*k, v[0], v[1]] for k, v in response.items()]
+    return out
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Learn starting knowledge for Pokerface and Carlos.")
+    parser.add_argument("--tables", type=int, default=24)
+    parser.add_argument("--games", type=int, default=30, help="Games per table.")
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--jobs", type=int, default=4)
+    args = parser.parse_args()
+    seed = fresh_seed(args.seed)
+    with Pool(args.jobs) as pool:
+        parts = pool.map(table, [(seed, t, args.games) for t in range(args.tables)])
+    priors = {"seed": seed, "tables": args.tables, "games_per_table": args.games,
+              "pokerface": merge(parts, "PokerfaceBot"), "carlos": merge(parts, "CarlosBot")}
+    OUT.write_text(json.dumps(priors, indent=1, sort_keys=True))
+    for name in ("pokerface", "carlos"):
+        p = priors[name]
+        print(f"{name}: {p['games_tables']} tables, challenge rate {p['challenge_rate']:.2f}, "
+              f"calza rate {p['calza_rate']:.3f}, Dudo below {p['dudo_at']:.2f}, "
+              f"excess {', '.join(f'{k} {v:+.2f}' for k, v in sorted(p['excess'].items()))}")
+    print(f"written to {OUT}")
+
+
+if __name__ == "__main__":
+    main()
