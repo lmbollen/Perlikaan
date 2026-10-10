@@ -173,11 +173,15 @@ class CarlosBot:
     # equally good; Carlos picks one of them at random, so he is harder to
     # read.
     TIE_EPS = 0.01
-    # How many times the chain runs up to our turn. 1: stop when it is our
+    # How many times the chain runs up to our turn (with 3+ players). 1: stop when it is our
     # turn again and value that with a rule of thumb. 2: at our next turn
     # weigh our real options (Dudo, Calza, raises) and follow each raise
     # around the table once more.
-    LAPS = 2
+    LAPS = 1
+    # Head-to-head the chain is short and stays accurate, so look further.
+    # Benchmarked against the core bots: 2 laps +2.0 +/- 1.1 pp head-to-head,
+    # but -1.5 (2 laps) / -2.5 (3 laps) pp at 5 players.
+    LAPS_HEADS_UP = 2
     # Raises per face we consider at a later turn of ours (keeps it fast).
     CAND_INNER = 2
     # When the chain comes back to us, raising is valued as
@@ -596,7 +600,7 @@ class CarlosBot:
     def _chain(self, ctx, bid, bidder, pos, depth, laps=None):
         """Expected value for us of the state (bid, order[pos] to act)."""
         if laps is None:
-            laps = self.LAPS
+            laps = self.LAPS_HEADS_UP if len(ctx["dice"]) == 2 else self.LAPS
         key = (bid, bidder, pos, depth, laps)
         if key in ctx["memo"]:
             return ctx["memo"][key]
@@ -609,7 +613,7 @@ class CarlosBot:
                 value = self._our_turn_value(ctx, bid, bidder)
             ctx["memo"][key] = value
             return value
-        if depth >= len(order) * self.LAPS + 1:
+        if depth >= len(order) * max(self.LAPS, self.LAPS_HEADS_UP) + 1:
             ctx["memo"][key] = 0.0
             return 0.0
 
