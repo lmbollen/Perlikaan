@@ -49,31 +49,6 @@ from perudo.models import (
 # per game (same process) keeps what was learned. No disk access.
 # ---------------------------------------------------------------------------
 
-class SharedMemory:
-    SHARED_MEMORY = True
-    _LEARNED: tuple = ()
-
-    @classmethod
-    def reset_memory(cls) -> None:
-        """Forget everything instances of this class learned (benchmarks use this)."""
-        cls._MEMORY = {}
-
-    def _ensure_memory(self) -> None:
-        if getattr(self, "_memory_bound", False):
-            return
-        self._memory_bound = True
-        if not self.SHARED_MEMORY:
-            return
-        cls = type(self)
-        if "_MEMORY" not in cls.__dict__:
-            cls._MEMORY = {}
-        store = cls._MEMORY.setdefault(self.name, {})
-        for attr in self._LEARNED:
-            if attr in store:
-                setattr(self, attr, store[attr])
-            else:
-                store[attr] = getattr(self, attr)
-
 
 # ---------------------------------------------------------------------------
 # Trihard's engine (self-contained copy of perudo/bots/trihard.py, without play())
@@ -120,11 +95,43 @@ def _sigmoid(x: float) -> float:
 # ---------------------------------------------------------------------------
 
 
-class _TrihardCore:
-    """Trihard's engine (no play(): not a bot of its own)."""
-    name = "Trihard core"
+# ---------------------------------------------------------------------------
+# The Don
+# ---------------------------------------------------------------------------
 
-    def __init__(self) -> None:
+class TheDonBot:
+    name = "The Don"
+    count = 1
+
+    # -- shared memory: learned state per bot name, kept at class level --------
+
+    SHARED_MEMORY = True
+
+    @classmethod
+    def reset_memory(cls) -> None:
+        """Forget everything instances of this class learned (benchmarks use this)."""
+        cls._MEMORY = {}
+
+    def _ensure_memory(self) -> None:
+        if getattr(self, "_memory_bound", False):
+            return
+        self._memory_bound = True
+        if not self.SHARED_MEMORY:
+            return
+        cls = type(self)
+        if "_MEMORY" not in cls.__dict__:
+            cls._MEMORY = {}
+        store = cls._MEMORY.setdefault(self.name, {})
+        for attr in self._LEARNED:
+            if attr in store:
+                setattr(self, attr, store[attr])
+            else:
+                store[attr] = getattr(self, attr)
+
+    # -- Trihard's engine ------------------------------------------------------
+
+
+    def _trihard_init(self) -> None:
         self._rng = random.Random(0x7A1)
 
         # name -> accumulated log-likelihood of each honesty exponent in HONESTY_GRID.
@@ -142,12 +149,12 @@ class _TrihardCore:
 
     # -- lifecycle ---------------------------------------------------------
 
-    def on_game_start(self, info: GameStartInfo) -> None:
+    def _trihard_on_game_start(self, info: GameStartInfo) -> None:
         self._recovery_enabled = True
         self._palifico_now = False
         self._round_bids = []
 
-    def on_game_end(self, result: GameResult) -> None:
+    def on_game_end(self, result):
         pass
 
     # -- the decision -------------------------------------------------------
@@ -361,7 +368,7 @@ class _TrihardCore:
 
     # -- watching the table ---------------------------------------------------
 
-    def observe(self, event: Event) -> None:
+    def _trihard_observe(self, event: Event) -> None:
         if isinstance(event, BidEvent):
             self._round_bids.append((event.player, event.bid))
 
@@ -453,13 +460,8 @@ class _TrihardCore:
                 return record.player
         return "iemand"
 
+    # -- The Don ---------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# The Don
-# ---------------------------------------------------------------------------
-
-class TheDonBot(SharedMemory, _TrihardCore):
-    name = "The Don"
     # Trihard's learned opponent models, kept in shared memory.
     _LEARNED = ("_honesty_ll", "_call_theta")
 
@@ -480,8 +482,8 @@ class TheDonBot(SharedMemory, _TrihardCore):
     # Penalty on a Dudo against a protected left neighbour.
     SPARE_PENALTY = 0.5
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self):
+        self._trihard_init()
         self.name = "The Don"
 
     # -- who is who --------------------------------------------------------
@@ -503,15 +505,15 @@ class TheDonBot(SharedMemory, _TrihardCore):
 
     # -- the decision -------------------------------------------------------
 
-    def on_game_start(self, info) -> None:
+    def on_game_start(self, info):
         self._ensure_memory()
-        super().on_game_start(info)
+        self._trihard_on_game_start(info)
 
-    def observe(self, event) -> None:
+    def observe(self, event):
         self._ensure_memory()
-        super().observe(event)
+        self._trihard_observe(event)
 
-    def play(self, state: Observation) -> Action:
+    def play(self, state):
         self._ensure_memory()
         self._palifico_now = state.palifico
         if any(not p.alive for p in state.players):

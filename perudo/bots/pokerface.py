@@ -173,7 +173,7 @@ class Profile:
     A plain class rather than a dataclass: the bot loader runs this file
     without registering it as a module, which dataclasses cannot handle."""
 
-    def __init__(self, name: str):
+    def __init__(self, name):
         self.name = name
         self.rounds = 0
         self.bids = 0
@@ -364,7 +364,7 @@ class OpponentProfiler:
     # Weight of the prior / pooled estimate, in observations.
     SHRINK = 10
 
-    def __init__(self, me: Optional[str] = None):
+    def __init__(self, me):
         self.me = me
         self.profiles: Dict[str, Profile] = {}
         self._actions: List[Tuple[str, object]] = []
@@ -409,7 +409,7 @@ class OpponentProfiler:
 
     # -- event stream ---------------------------------------------------
 
-    def observe(self, event) -> None:
+    def observe(self, event):
         if isinstance(event, BidEvent):
             self._actions.append((event.player, event.bid))
         elif isinstance(event, DudoEvent):
@@ -521,16 +521,30 @@ class OpponentProfiler:
 # per game (same process) keeps what was learned. No disk access.
 # ---------------------------------------------------------------------------
 
-class SharedMemory:
+
+# ---------------------------------------------------------------------------
+# Sniper's engine (self-contained copy of perudo/bots/sniper.py, without play())
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Pokerface
+# ---------------------------------------------------------------------------
+
+class PokerfaceBot:
+    name = "Pokerface"
+    count = 1
+
+    # -- shared memory: learned state per bot name, kept at class level --------
+
     SHARED_MEMORY = True
-    _LEARNED: tuple = ()
 
     @classmethod
     def reset_memory(cls) -> None:
         """Forget everything instances of this class learned (benchmarks use this)."""
         cls._MEMORY = {}
 
-    def _ensure_memory(self) -> None:
+    def _shared_ensure_memory(self) -> None:
         if getattr(self, "_memory_bound", False):
             return
         self._memory_bound = True
@@ -546,14 +560,8 @@ class SharedMemory:
             else:
                 store[attr] = getattr(self, attr)
 
+    # -- Sniper's engine -------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Sniper's engine (self-contained copy of perudo/bots/sniper.py, without play())
-# ---------------------------------------------------------------------------
-
-class _SniperCore:
-    """Sniper's engine (no play(): not a bot of its own)."""
-    name = "Sniper"
 
     # Tuned by simulation against the other bots in this folder: targets
     # between 0.75 and 0.9 do about equally well, 0.55 and lower do badly.
@@ -568,7 +576,7 @@ class _SniperCore:
     # Weight of a Paco bid as a hint for normal faces (Pacos are wild).
     PACO_HINT_WEIGHT = 0.4
 
-    def __init__(self):
+    def _sniper_init(self):
         self.name = "Sniper"
         self._tail_cache = {}
 
@@ -597,33 +605,6 @@ class _SniperCore:
         self._tail_cache[key] = result
         return result
 
-    def _hint(self, state, face):
-        """Extra dice of `face` we expect among opponents, based on their bids."""
-        # In Palifico only the opener chose the face; later bids are forced.
-        history = state.history[:1] if state.palifico else state.history
-        dice_of = {p.name: p.dice_count for p in state.players}
-
-        bids_by_player = {}
-        for rec in history:
-            if rec.player == self.name or not isinstance(rec.action, Bid):
-                continue
-            bids_by_player.setdefault(rec.player, []).append(rec.action)
-
-        total = 0.0
-        for who, bids in bids_by_player.items():
-            weight = 0.0
-            for bid in bids:
-                if bid.face == face:
-                    weight += 1.0
-                elif not state.palifico and bid.face == PACO and face != PACO:
-                    weight += self.PACO_HINT_WEIGHT
-            if weight == 0.0:
-                continue
-            # Cap: they can't hold more than their dice beyond expectation.
-            n = dice_of.get(who, 0)
-            cap = n * (1 - self._p_face(face, state.palifico))
-            total += min(weight * self.HINT_PER_BID, cap)
-        return total
 
     def _prob_true(self, state, bid, n_unknown, hints):
         mine = _count_matches(state.my_dice, bid.face, state.palifico)
@@ -643,16 +624,11 @@ class _SniperCore:
 
     # -- decision ---------------------------------------------------------
 
-    def observe(self, event):
+    def _sniper_observe(self, event):
         pass
 
+    # -- Pokerface -------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Pokerface
-# ---------------------------------------------------------------------------
-
-class PokerfaceBot(SharedMemory, _SniperCore):
-    name = "Pokerface"
     # Learned state kept in shared memory (survives a new instance per game).
     _LEARNED = ("profiler", "_calibration", "_thr_cache")
 
@@ -738,7 +714,7 @@ class PokerfaceBot(SharedMemory, _SniperCore):
     decision_log = None
 
     def __init__(self):
-        super().__init__()
+        self._sniper_init()
         self.name = "Pokerface"
         self._rng = random.Random()
         # Learns per opponent name; lives as long as this instance, so
@@ -903,7 +879,7 @@ class PokerfaceBot(SharedMemory, _SniperCore):
                 self.profiler.PRIOR_CHALLENGE = self.TUNED_CHALLENGE
                 self.profiler.PRIOR_CALZA = self.TUNED_CALZA
                 self.DEFAULT_DUDO_AT = self.TUNED_DUDO_AT
-        SharedMemory._ensure_memory(self)
+        self._shared_ensure_memory()
 
     def play(self, state):
         self._ensure_memory()
@@ -1095,7 +1071,7 @@ class PokerfaceBot(SharedMemory, _SniperCore):
         self.profiler.observe(event)
         if isinstance(event, RevealEvent):
             self._learn_calibration(event)
-        super().observe(event)
+        self._sniper_observe(event)
 
     def on_game_start(self, info):
         pass

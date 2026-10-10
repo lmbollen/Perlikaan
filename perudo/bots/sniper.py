@@ -37,6 +37,7 @@ def _count_matches(dice_values, face, palifico):
 
 class SniperBot:
     name = "Sniper"
+    count = 1
 
     # Tuned by simulation against the other bots in this folder: targets
     # between 0.75 and 0.9 do about equally well, 0.55 and lower do badly.

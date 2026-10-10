@@ -62,8 +62,9 @@ def _count_matches(dice_values: Sequence[int], face: int, palifico: bool) -> int
 
 class Fabulous:
     name = "Fabulous"
+    count = 1
 
-    def __init__(self) -> None:
+    def __init__(self):
         # RNG for decisions (fixed seed -> reproducible simulations).
         self._rng = random.Random(0xFAB)
 
@@ -80,17 +81,17 @@ class Fabulous:
 
     # -- lifecycle ---------------------------------------------------------
 
-    def on_game_start(self, info: GameStartInfo) -> None:
+    def on_game_start(self, info):
         self._recovery_enabled = True
         self._palifico_now = False
         self._round_bids = []
 
-    def on_game_end(self, result: GameResult) -> None:
+    def on_game_end(self, result):
         pass
 
     # -- the decision -------------------------------------------------------
 
-    def play(self, state: Observation) -> Action:
+    def play(self, state):
         self._palifico_now = state.palifico
         if any(not p.alive for p in state.players):
             self._recovery_enabled = False
@@ -261,7 +262,7 @@ class Fabulous:
 
     # -- watching the table ---------------------------------------------------
 
-    def observe(self, event: Event) -> None:
+    def observe(self, event):
         if isinstance(event, BidEvent):
             self._round_bids.append((event.player, event.bid))
 

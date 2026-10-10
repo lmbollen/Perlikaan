@@ -31,6 +31,7 @@ BOT_NAME = "Oppa Style"
 
 class OppaStyleBot:
     name = BOT_NAME
+    count = 1
 
     # Tunables (found by self-play against variants).
     CHALLENGE_RATE_DUEL = 0.75

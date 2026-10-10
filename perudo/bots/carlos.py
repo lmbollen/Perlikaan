@@ -180,7 +180,7 @@ class Profile:
     A plain class rather than a dataclass: the bot loader runs this file
     without registering it as a module, which dataclasses cannot handle."""
 
-    def __init__(self, name: str):
+    def __init__(self, name):
         self.name = name
         self.rounds = 0
         self.bids = 0
@@ -371,7 +371,7 @@ class OpponentProfiler:
     # Weight of the prior / pooled estimate, in observations.
     SHRINK = 10
 
-    def __init__(self, me: Optional[str] = None):
+    def __init__(self, me):
         self.me = me
         self.profiles: Dict[str, Profile] = {}
         self._actions: List[Tuple[str, object]] = []
@@ -416,7 +416,7 @@ class OpponentProfiler:
 
     # -- event stream ---------------------------------------------------
 
-    def observe(self, event) -> None:
+    def observe(self, event):
         if isinstance(event, BidEvent):
             self._actions.append((event.player, event.bid))
         elif isinstance(event, DudoEvent):
@@ -528,31 +528,6 @@ class OpponentProfiler:
 # per game (same process) keeps what was learned. No disk access.
 # ---------------------------------------------------------------------------
 
-class SharedMemory:
-    SHARED_MEMORY = True
-    _LEARNED: tuple = ()
-
-    @classmethod
-    def reset_memory(cls) -> None:
-        """Forget everything instances of this class learned (benchmarks use this)."""
-        cls._MEMORY = {}
-
-    def _ensure_memory(self) -> None:
-        if getattr(self, "_memory_bound", False):
-            return
-        self._memory_bound = True
-        if not self.SHARED_MEMORY:
-            return
-        cls = type(self)
-        if "_MEMORY" not in cls.__dict__:
-            cls._MEMORY = {}
-        store = cls._MEMORY.setdefault(self.name, {})
-        for attr in self._LEARNED:
-            if attr in store:
-                setattr(self, attr, store[attr])
-            else:
-                store[attr] = getattr(self, attr)
-
 
 # ---------------------------------------------------------------------------
 # Carlos
@@ -619,8 +594,37 @@ def min_quantity(bid, face, palifico):
     return q0 if face > f0 else q0 + 1
 
 
-class CarlosBot(SharedMemory):
+class CarlosBot:
     name = "Carlos"
+    count = 1
+
+    # -- shared memory: learned state per bot name, kept at class level --------
+
+    SHARED_MEMORY = True
+
+    @classmethod
+    def reset_memory(cls) -> None:
+        """Forget everything instances of this class learned (benchmarks use this)."""
+        cls._MEMORY = {}
+
+    def _shared_ensure_memory(self) -> None:
+        if getattr(self, "_memory_bound", False):
+            return
+        self._memory_bound = True
+        if not self.SHARED_MEMORY:
+            return
+        cls = type(self)
+        if "_MEMORY" not in cls.__dict__:
+            cls._MEMORY = {}
+        store = cls._MEMORY.setdefault(self.name, {})
+        for attr in self._LEARNED:
+            if attr in store:
+                setattr(self, attr, store[attr])
+            else:
+                store[attr] = getattr(self, attr)
+
+    # -- Carlos ----------------------------------------------------------------
+
     # Learned state kept in shared memory (survives a new instance per game).
     _LEARNED = ("profiler", "hist", "other", "_fit_cache", "_calibration", "_response",
                 "_risk", "_beta_table", "_beta")
@@ -773,7 +777,7 @@ class CarlosBot(SharedMemory):
                 self._beta_table[:] = self.TUNED_RAISE_PRIOR
                 self.profiler.PRIOR_CALZA = self.TUNED_CALZA
                 self.profiler.PRIOR_CHALLENGE = self.TUNED_CHALLENGE
-        SharedMemory._ensure_memory(self)
+        self._shared_ensure_memory()
 
     def on_game_start(self, info):
         self._ensure_memory()
