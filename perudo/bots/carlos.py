@@ -607,6 +607,9 @@ class CarlosBot(SharedMemory):
     # bid by how that player really responded to our bids before (per table
     # size and prediction bucket); weight of the prediction in observations.
     RESPONSE_PRIOR = 20
+    # Added to the predicted chance that the next player calls Dudo on our
+    # bid, as the starting point of that calibration.
+    RESPONSE_SHIFT = 0.0
     # The chain looks only one round of turns ahead, so it underrates the risk
     # of a bid (later in the round we face higher bids). Learn how often we
     # really lost a die in rounds where we made a bid with a given predicted
@@ -1220,7 +1223,10 @@ class CarlosBot(SharedMemory):
         hits, n = self._response.get((kind, min(len(ctx["dice"]), 4), self._resp_bucket(p)), (0, 0))
         k = self.RESPONSE_PRIOR
         p = max(p, 1e-3)
-        return ((hits + k * p) / (n + k)) / p
+        # Before data: opponents call Dudo on our bids more often than the
+        # model predicts (measured over many games), so start from that.
+        prior = min(p + self.RESPONSE_SHIFT, 1.0) if kind == "dudo" else p
+        return ((hits + k * prior) / (n + k)) / p
 
     def _next_response(self, ctx, bid, actor=None):
         """(P(Dudo), P(Calza)) of `actor` (default: the next player) on `bid`, before correction."""
