@@ -62,8 +62,9 @@ uv run python analyze_losses.py analyze rounds.jsonl --bot Sniper       # analyz
 **Opponent profiling** — `perudo/profiler.py` learns per opponent name whether
 they bid faces they hold (honest / random / bluffer), how much they risk, at
 which odds they call Dudo, whether they jump or min-raise and whether they use
-Calza. Any bot can use it (`OpponentProfiler(self.name)`, feed it `observe()`
-events); Pokerface does. Check that it learns correctly:
+Calza. It is a development tool: a competition bot has to be one self-contained
+file, so Pokerface and Carlos each carry their own copy of the profiler (and
+The Don a copy of Trihard's engine). Check that it learns correctly:
 
 ```sh
 uv run python verify_profiler.py --games 400 --table known   # bots with known strategies
@@ -84,7 +85,13 @@ uv run python analyze_endgame.py --start-players 2 --show 10                    
 uv run python diagnose_bluff.py --rates 0 0.5 1                                        # do our bluffs mislead them?
 ```
 
-### Pokerface and Carlos
+### Pokerface, Carlos and The Don
+
+Each is a single self-contained file that only imports the game framework
+(`perudo.models`, `perudo.rules`, `perudo.talk`). What they learn lives in
+memory at class level, so it survives a new bot instance per game; nothing
+is written to disk.
+
 
 * **Pokerface** (`perudo/bots/pokerface.py`) plays like Sniper, bluffs about
   faces, reads each opponent's bids with what their bids were worth before
@@ -141,7 +148,7 @@ perudo/
   bot_loader.py   bot discovery and instantiation
   talk.py         optional bot chatter
   tts.py          optional text-to-speech
-  profiler.py     per-opponent learning (OpponentProfiler)
+  profiler.py     per-opponent learning (tooling; bots embed their own copy)
   bots/           all participating bots
 contestants/      bots that are not at the table (Hakaman, Wouluh)
 run_simulation.py

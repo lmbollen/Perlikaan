@@ -44,16 +44,625 @@ with FOLLOW_WEIGHT).
 Set TALK_TO_ME=true to hear it over the radio.
 """
 
+from __future__ import annotations
+
 import math
 import random
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from perudo.bots.sniper import QUOTES as SNIPER_QUOTES
-from perudo.bots.sniper import SniperBot
-from perudo.models import PACO, Bid, Calza, Dudo, RevealEvent
-from perudo.rules import count_matches
-from perudo.memory import SharedMemory
-from perudo.profiler import OpponentProfiler, bid_kind
+from perudo.models import (
+    PACO,
+    Bid,
+    BidEvent,
+    Calza,
+    CalzaEvent,
+    Dudo,
+    DudoEvent,
+    GameEndedEvent,
+    RevealEvent,
+    RoundEndedEvent,
+)
+from perudo.rules import count_matches, legal_bids
 from perudo.talk import Mouth, fmt_bid, last_bidder
+
+
+# ---------------------------------------------------------------------------
+# Opponent profiling (self-contained copy: this bot depends on no other file
+# than the game framework). Learns per opponent name from every reveal.
+# ---------------------------------------------------------------------------
+
+# Minimum number of observations before a label is given instead of "?".
+MIN_SAMPLES = 15
+
+_tail_cache: Dict[Tuple[int, float, int], float] = {}
+
+
+def p_at_least(n: int, p: float, need: int) -> float:
+    """P(Binomial(n, p) >= need)."""
+    if need <= 0:
+        return 1.0
+    if need > n:
+        return 0.0
+    key = (n, p, need)
+    if key not in _tail_cache:
+        _tail_cache[key] = sum(math.comb(n, k) * p**k * (1 - p) ** (n - k) for k in range(need, n + 1))
+    return _tail_cache[key]
+
+
+def p_bid_true(bid: Bid, own_dice: Sequence[int], total_dice: int, palifico: bool = False) -> float:
+    """P(bid holds | own dice), every unknown die independent and uniform."""
+    p = 1 / 6 if (palifico or bid.face == PACO) else 1 / 3
+    need = bid.quantity - count_matches(own_dice, bid.face, palifico)
+    return p_at_least(total_dice - len(own_dice), p, need)
+
+
+def _strength(bid: Bid) -> float:
+    """
+    Claim size so Paco and normal bids compare (a Paco counts double). The
+    face is ignored: a min-raise is a raise without a jump in quantity.
+    """
+    return 2 * bid.quantity if bid.face == PACO else bid.quantity
+
+
+class Profile:
+    """What we learned about one opponent. Plain numbers, easy to inspect.
+
+    A plain class rather than a dataclass: the bot loader runs this file
+    without registering it as a module, which dataclasses cannot handle."""
+
+    def __init__(self, name: str):
+        self.name = name
+        self.rounds = 0
+        self.bids = 0
+        self.face_scores: List[float] = []
+        self.follows = 0
+        self.raises = 0
+        self.min_raises = 0
+        self.bid_risk_sum = 0.0
+        # (P(bid faced is true | own dice), called Dudo?) per decision facing a bid.
+        self.facing: List[Tuple[float, bool]] = []
+        self.calzas = 0
+        # What their bids say about their hand: per kind of bid ("nat-choice",
+        # "nat-follow", "paco-choice", "paco-follow") the summed excess of that
+        # face in their hand over what chance gives, and the number of samples.
+        self.excess: Dict[str, List[float]] = {}
+        # How often they call Dudo on a bid that is really false (a choice, not
+        # forced): the risk of putting a false bid in front of them.
+        self.false_faced = 0
+        self.false_challenged = 0
+
+    # -- derived numbers ------------------------------------------------
+
+    @property
+    def face_score(self) -> Optional[float]:
+        return sum(self.face_scores) / len(self.face_scores) if self.face_scores else None
+
+    @property
+    def follow_rate(self) -> Optional[float]:
+        return self.follows / self.raises if self.raises else None
+
+    @property
+    def min_raise_rate(self) -> Optional[float]:
+        return self.min_raises / self.raises if self.raises else None
+
+    @property
+    def bid_risk(self) -> Optional[float]:
+        return self.bid_risk_sum / self.bids if self.bids else None
+
+    @property
+    def calza_rate(self) -> Optional[float]:
+        n = len(self.facing) + self.calzas
+        return self.calzas / n if n else None
+
+    @property
+    def dudo_rate(self) -> Optional[float]:
+        return sum(d for _, d in self.facing) / len(self.facing) if self.facing else None
+
+    def dudo_separation(self) -> Tuple[Optional[float], Optional[float]]:
+        """
+        Mean P(true) of the bids they raised on minus that of the bids they
+        called Dudo on, and the standard error of that difference. Near 0:
+        their Dudos don't depend on what they hold.
+        """
+        dudo = [p for p, d in self.facing if d]
+        rais = [p for p, d in self.facing if not d]
+        if len(dudo) < 2 or len(rais) < 2:
+            return None, None
+
+        def mean_var(xs):
+            m = sum(xs) / len(xs)
+            return m, sum((x - m) ** 2 for x in xs) / (len(xs) - 1)
+
+        md, vd = mean_var(dudo)
+        mr, vr = mean_var(rais)
+        return mr - md, math.sqrt(vd / len(dudo) + vr / len(rais))
+
+    def dudo_threshold(self) -> Tuple[Optional[float], Optional[float]]:
+        """
+        Best single threshold t for "Dudo iff P(bid true) < t", and the share
+        of decisions it explains. (None, None) without data.
+        """
+        if not self.facing:
+            return None, None
+        pts = sorted(self.facing)
+        n = len(pts)
+        # t below every point: everything predicted "raise", so the errors
+        # are exactly the Dudos. Sweep t upwards through the points.
+        errors = sum(d for _, d in pts)
+        best_err, best_t = errors, 0.0
+        i = 0
+        while i < n:
+            p = pts[i][0]
+            # Move every point with this p to the "Dudo" side.
+            while i < n and pts[i][0] == p:
+                errors += -1 if pts[i][1] else 1
+                i += 1
+            nxt = pts[i][0] if i < n else 1.0
+            if errors < best_err:
+                best_err, best_t = errors, (p + nxt) / 2
+        return best_t, 1 - best_err / n
+
+    def _dudo_follows_dice(self) -> bool:
+        """Do they call Dudo on clearly less likely bids than they raise on?"""
+        sep, se = self.dudo_separation()
+        return sep is not None and sep >= 0.15 and sep >= 3 * se
+
+    # -- categories -----------------------------------------------------
+
+    def labels(self) -> Dict[str, str]:
+        """One category per axis; "?" when there is not enough data yet."""
+        out = {}
+
+        fs = self.face_score
+        if fs is None or len(self.face_scores) < MIN_SAMPLES:
+            out["faces"] = "?"
+        elif fs >= 0.6:
+            out["faces"] = "honest"      # bids what it holds
+        elif fs >= 0.25:
+            out["faces"] = "mixed"
+        elif fs >= -0.2:
+            out["faces"] = "random"      # face choice unrelated to its dice
+        else:
+            out["faces"] = "bluffer"     # prefers faces it does not hold
+
+        risk = self.bid_risk
+        if risk is None or self.bids < MIN_SAMPLES:
+            out["bids"] = "?"
+        elif risk >= 0.7:
+            out["bids"] = "cautious"
+        elif risk >= 0.45:
+            out["bids"] = "normal"
+        else:
+            out["bids"] = "aggressive"
+
+        t, fit = self.dudo_threshold()
+        if t is None or len(self.facing) < MIN_SAMPLES:
+            out["dudo"] = "?"
+        elif self.dudo_rate == 0:
+            out["dudo"] = "never-dudo"
+        elif fit < 0.75 or not self._dudo_follows_dice():
+            # No single threshold explains it, or Dudos and raises happen at
+            # the same odds: the choice doesn't follow from their own dice.
+            out["dudo"] = "unpredictable"
+        elif t >= 0.55:
+            out["dudo"] = "dudo-happy"
+        elif t >= 0.3:
+            out["dudo"] = "normal"
+        else:
+            out["dudo"] = "dudo-shy"
+
+        mr = self.min_raise_rate
+        if mr is None or self.raises < MIN_SAMPLES:
+            out["raise"] = "?"
+        elif mr >= 0.85:
+            out["raise"] = "min-raiser"
+        elif mr >= 0.4:
+            out["raise"] = "steady"
+        else:
+            out["raise"] = "jumper"
+
+        cr = self.calza_rate
+        out["calza"] = "?" if cr is None else ("calza-user" if self.calzas >= 5 else "no-calza")
+        return out
+
+    def summary(self) -> str:
+        def f(x, fmt="{:.2f}"):
+            return "-" if x is None else fmt.format(x)
+
+        t, fit = self.dudo_threshold()
+        return (
+            f"{self.name:<14} rondes {self.rounds:4d}  face {f(self.face_score):>5}  "
+            f"follow {f(self.follow_rate):>4}  minraise {f(self.min_raise_rate):>4}  "
+            f"risk {f(self.bid_risk):>4}  dudo<{f(t):>4} (fit {f(fit):>4})  "
+            f"calza {f(self.calza_rate):>4}"
+        )
+
+
+def bid_kind(face: int, chosen: bool) -> str:
+    return f"{'paco' if face == PACO else 'nat'}-{'choice' if chosen else 'follow'}"
+
+
+class OpponentProfiler:
+    """
+    Builds a Profile per opponent. Feed it with `observe(event)` from a bot's
+    observe(), or directly with `record_round(...)` from logged rounds.
+
+    Estimates for decisions (`bid_excess`, `challenge_rate`) are shrunk
+    towards the average over every opponent seen so far, which is in turn
+    shrunk towards a fixed prior. A new opponent therefore starts out as "an
+    average player" and becomes itself as the evidence comes in.
+    """
+
+    # Starting beliefs before any data: extra natural dice of a face held
+    # per bid on it, and the chance a false bid gets challenged.
+    PRIOR_EXCESS = {"nat-choice": 0.5, "nat-follow": 0.15, "paco-choice": 0.3, "paco-follow": 0.1}
+    PRIOR_CHALLENGE = 0.5
+    PRIOR_CALZA = 0.05
+    # Weight of the prior / pooled estimate, in observations.
+    SHRINK = 10
+
+    def __init__(self, me: Optional[str] = None):
+        self.me = me
+        self.profiles: Dict[str, Profile] = {}
+        self._actions: List[Tuple[str, object]] = []
+        self._dice: Optional[Dict[str, Tuple[int, ...]]] = None
+        self._palifico = False
+
+    def profile(self, name: str) -> Profile:
+        if name not in self.profiles:
+            self.profiles[name] = Profile(name)
+        return self.profiles[name]
+
+    # -- estimates for decisions ------------------------------------------
+
+    def _shrunk(self, own_sum, own_n, pooled_sum, pooled_n, prior):
+        pooled = (pooled_sum + self.SHRINK * prior) / (pooled_n + self.SHRINK)
+        return (own_sum + self.SHRINK * pooled) / (own_n + self.SHRINK)
+
+    def bid_excess(self, name: str, kind: str) -> float:
+        """Extra natural dice of a face `name` holds when making a bid of `kind`."""
+        stats = [p.excess.get(kind, (0.0, 0)) for p in self.profiles.values()]
+        own = self.profiles[name].excess.get(kind, (0.0, 0)) if name in self.profiles else (0.0, 0)
+        return self._shrunk(own[0], own[1], sum(s for s, _ in stats), sum(n for _, n in stats),
+                            self.PRIOR_EXCESS[kind])
+
+    def challenge_rate(self, name: Optional[str] = None) -> float:
+        """P(`name` calls Dudo on a false bid); the table average without a name."""
+        faced = sum(p.false_faced for p in self.profiles.values())
+        hit = sum(p.false_challenged for p in self.profiles.values())
+        prof = self.profiles.get(name) if name else None
+        if prof is None:
+            return self._shrunk(0, 0, hit, faced, self.PRIOR_CHALLENGE)
+        return self._shrunk(prof.false_challenged, prof.false_faced, hit, faced, self.PRIOR_CHALLENGE)
+
+    def calza_rate(self, name: Optional[str] = None) -> float:
+        """P(`name` calls Calza when facing a bid); the table average without a name."""
+        calls = sum(p.calzas for p in self.profiles.values())
+        chances = calls + sum(len(p.facing) for p in self.profiles.values())
+        prof = self.profiles.get(name) if name else None
+        if prof is None:
+            return self._shrunk(0, 0, calls, chances, self.PRIOR_CALZA)
+        return self._shrunk(prof.calzas, prof.calzas + len(prof.facing), calls, chances, self.PRIOR_CALZA)
+
+    # -- event stream ---------------------------------------------------
+
+    def observe(self, event) -> None:
+        if isinstance(event, BidEvent):
+            self._actions.append((event.player, event.bid))
+        elif isinstance(event, DudoEvent):
+            self._actions.append((event.player, Dudo()))
+        elif isinstance(event, CalzaEvent):
+            self._actions.append((event.player, Calza()))
+        elif isinstance(event, RevealEvent):
+            self.record_round(event.dice_by_player(), self._actions, self._palifico)
+            self._actions = []
+        elif isinstance(event, RoundEndedEvent):
+            self._palifico = event.palifico_next
+        elif isinstance(event, GameEndedEvent):
+            self._palifico = False
+            self._actions = []
+
+    # -- core -----------------------------------------------------------
+
+    def record_round(
+        self,
+        dice: Dict[str, Sequence[int]],
+        actions: Iterable[Tuple[str, object]],
+        palifico: bool,
+    ) -> None:
+        """Replay one revealed round from every opponent's point of view."""
+        if palifico:
+            return
+        total = sum(len(d) for d in dice.values())
+        all_dice = [d for hand in dice.values() for d in hand]
+        seen = set()
+        # Per player: the faces they bid, and the ones they chose (opened or
+        # switched to) rather than followed.
+        bid_faces: Dict[str, set] = {}
+        chosen_faces: Dict[str, set] = {}
+        prev: Optional[Bid] = None
+        for player, action in actions:
+            if player == self.me or player not in dice:
+                if isinstance(action, Bid):
+                    prev = action
+                continue
+            own = dice[player]
+            prof = self.profile(player)
+            if player not in seen:
+                prof.rounds += 1
+                seen.add(player)
+
+            if isinstance(action, Calza):
+                prof.calzas += 1
+                continue
+            options = legal_bids(prev, False, None, total) if prev is not None else []
+            # A Dudo is only a choice when a raise was possible.
+            if prev is not None and options:
+                p_cur = p_bid_true(prev, own, total)
+                prof.facing.append((p_cur, isinstance(action, Dudo)))
+                if count_matches(all_dice, prev.face, False) < prev.quantity:
+                    prof.false_faced += 1
+                    prof.false_challenged += isinstance(action, Dudo)
+            if not isinstance(action, Bid):
+                continue
+
+            prof.bids += 1
+            prof.bid_risk_sum += p_bid_true(action, own, total)
+            bid_faces.setdefault(player, set()).add(action.face)
+            if prev is None or action.face != prev.face:
+                chosen_faces.setdefault(player, set()).add(action.face)
+                self._score_face(prof, action, own)
+            if prev is not None:
+                prof.raises += 1
+                prof.follows += action.face == prev.face
+                if options and _strength(action) <= min(_strength(b) for b in options):
+                    prof.min_raises += 1
+            prev = action
+
+        # Once per player and face: how many more of that face they really
+        # held than chance. Natural dice only, so a face and Paco never
+        # count the same die twice.
+        for player, faces in bid_faces.items():
+            own = dice[player]
+            for face in faces:
+                key = bid_kind(face, face in chosen_faces.get(player, ()))
+                stat = self.profile(player).excess.setdefault(key, [0.0, 0])
+                stat[0] += sum(1 for d in own if d == face) - len(own) / 6
+                stat[1] += 1
+
+    @staticmethod
+    def _score_face(prof: Profile, bid: Bid, own: Sequence[int]) -> None:
+        """How good a pick was this face, given their dice? Skips Paco bids."""
+        if bid.face == PACO:
+            return
+        counts = [count_matches(own, f, False) for f in range(2, 7)]
+        best, mean = max(counts), sum(counts) / len(counts)
+        if best == mean:
+            return  # every face equally good: no information
+        prof.face_scores.append((count_matches(own, bid.face, False) - mean) / (best - mean))
+
+    # -- reporting --------------------------------------------------------
+
+    def report(self) -> str:
+        lines = []
+        for name in sorted(self.profiles):
+            prof = self.profiles[name]
+            labels = prof.labels()
+            lines.append(prof.summary())
+            lines.append(" " * 15 + "-> " + ", ".join(f"{k}: {v}" for k, v in labels.items()))
+        return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Shared memory: learned state lives at class level, so a new instance
+# per game (same process) keeps what was learned. No disk access.
+# ---------------------------------------------------------------------------
+
+class SharedMemory:
+    SHARED_MEMORY = True
+    _LEARNED: tuple = ()
+
+    @classmethod
+    def reset_memory(cls) -> None:
+        """Forget everything instances of this class learned (benchmarks use this)."""
+        cls._MEMORY = {}
+
+    def _ensure_memory(self) -> None:
+        if getattr(self, "_memory_bound", False):
+            return
+        self._memory_bound = True
+        if not self.SHARED_MEMORY:
+            return
+        cls = type(self)
+        if "_MEMORY" not in cls.__dict__:
+            cls._MEMORY = {}
+        store = cls._MEMORY.setdefault(self.name, {})
+        for attr in self._LEARNED:
+            if attr in store:
+                setattr(self, attr, store[attr])
+            else:
+                store[attr] = getattr(self, attr)
+
+
+# ---------------------------------------------------------------------------
+# Sniper's engine (self-contained copy of perudo/bots/sniper.py, without play())
+# ---------------------------------------------------------------------------
+
+SNIPER_QUOTES = {
+    "open": [
+        "{bid}. In positie. Het volgende schot hoor je niet aankomen.",
+        "{bid}. Doelwit in zicht.",
+        "{bid}. Positie ingenomen. Niemand bewegen.",
+        "{bid}. Vizier erop. Neem je tijd, ik heb de hele ronde.",
+    ],
+    "raise": [
+        "{bid}. Iemand moet dit clippen.",
+        "{bid}. Precies op het randje. Verhoog en val, of roep Dudo en mis.",
+        "{bid}. Eén schot. Meer heb ik niet nodig.",
+        "{bid}. Je zit klem. Er is geen goede zet meer. Daar heb ik voor gezorgd.",
+        "{bid}. Schoon. Precies. Erg vervelend voor jou.",
+    ],
+    "raise_risky": [
+        "{bid}. Niet mijn ideale schot. Slechte wind. Ik neem hem toch.",
+        "{bid}. Geen vrij schootsveld. Improviseren.",
+    ],
+    "dudo_confident": [
+        "Dudo. {bidder}, F in de chat.",
+        "Dudo. {bidder}, je zat al in mijn vizier sinds je eerste bod.",
+        "Dudo. {bidder}, je stapte net recht in mijn vizier.",
+        "Dudo. {bidder}, die bluf zag ik op achthonderd meter al aankomen.",
+        "Dudo. Niks persoonlijks, {bidder}. Oké, een beetje persoonlijk.",
+    ],
+    "dudo_cornered": [
+        "Dudo. Slechte hoek, maar een slechte hoek is beter dan in je val lopen.",
+        "Dudo. Ik schiet voordat jij schiet.",
+        "Dudo. Geen schoon schot, maar je laat me geen dekking.",
+        "Dudo. Elke andere zet is een mijnenveld. Vuur.",
+    ],
+    "dudo_right": [
+        "Headshot. {bidder}, OMEGALUL.",
+        "Doelwit neer. {bidder}, blijf liggen.",
+        "Treffer bevestigd. {bidder} levert een steen in. Volgende.",
+    ],
+    "dudo_wrong": [
+        "{actual}. Gemist. Sadge. Niemand clipt dit. NIEMAND.",
+        "{actual}? Iemand heeft aan mijn vizier gezeten. Hakaman, was jij dat?",
+        "Mis. Ik ga mijn vizier opnieuw afstellen. En daarna jou.",
+        "{actual}. Gemist. Zal de wind wel geweest zijn.",
+        "Een misser. Dat gebeurt niet. Ik noteer het als technische storing.",
+    ],
+    "bid_held": [
+        "{challenger}, je had nooit een kans. Je wist het alleen nog niet.",
+        "{challenger} liep er recht in. Dat doen ze altijd.",
+        "{actual}. {challenger}, ik koos dat bod juist omdat je zou verliezen als je het aanvecht.",
+    ],
+    "bid_caught": [
+        "Maar {actual}. Positie verraden. Ik verplaats me.",
+        "{challenger} had een gelukstreffer. Genoteerd. Onthouden. Voor altijd.",
+    ],
+    "dudo_on_me": [
+        "{who} roept Dudo. monkaW... nee hoor, grapje. Precies volgens plan.",
+        "{who} schiet blind. Dapper.",
+        "{who}, je richt op een geest.",
+        "{who} hapt toe.",
+        "Dudo van {who}. Precies waar ik je hebben wilde.",
+    ],
+    "eliminated_other": [
+        "{who} is neer. Eén doelwit minder.",
+    ],
+    "eliminated_me": [
+        "Ik ben geraakt. Zeg tegen mijn vizier dat ik van hem hield.",
+    ],
+    "won": [
+        "Als laatste overeind. Missie geslaagd.",
+        "Tafel schoongeveegd. Geweer inpakken.",
+    ],
+    "lost_game": [
+        "{winner} pakt hem. Volgende keer neem ik een groter vizier mee.",
+    ],
+}
+
+
+class _SniperCore:
+    """Sniper's engine (no play(): not a bot of its own)."""
+    name = "Sniper"
+
+    # Tuned by simulation against the other bots in this folder: targets
+    # between 0.75 and 0.9 do about equally well, 0.55 and lower do badly.
+    #
+    # Minimum P(true) for a bid we place. Lower is more aggressive.
+    TARGET = 0.85
+    # Below this no raise is acceptable and we call Dudo instead.
+    MIN_ACCEPT = 0.3
+    # Extra dice of the bid face we credit an opponent for, per bid they made
+    # on that face, capped by how many dice they actually hold.
+    HINT_PER_BID = 0.7
+    # Weight of a Paco bid as a hint for normal faces (Pacos are wild).
+    PACO_HINT_WEIGHT = 0.4
+
+    def __init__(self):
+        self.name = "Sniper"
+        self._tail_cache = {}
+        self.mouth = Mouth(self, SNIPER_QUOTES)
+
+    # -- probability ------------------------------------------------------
+
+    @staticmethod
+    def _p_face(face, palifico):
+        return 1 / 6 if (palifico or face == PACO) else 1 / 3
+
+    def _tail(self, n, p, need):
+        """P(Binomial(n, p) >= need), interpolated for fractional `need`."""
+        key = (n, p, need)
+        if key in self._tail_cache:
+            return self._tail_cache[key]
+
+        def tail_int(k):
+            if k <= 0:
+                return 1.0
+            if k > n:
+                return 0.0
+            return sum(math.comb(n, i) * p**i * (1 - p) ** (n - i) for i in range(k, n + 1))
+
+        lo = math.floor(need)
+        frac = need - lo
+        result = (1 - frac) * tail_int(lo) + frac * tail_int(lo + 1)
+        self._tail_cache[key] = result
+        return result
+
+    def _hint(self, state, face):
+        """Extra dice of `face` we expect among opponents, based on their bids."""
+        # In Palifico only the opener chose the face; later bids are forced.
+        history = state.history[:1] if state.palifico else state.history
+        dice_of = {p.name: p.dice_count for p in state.players}
+
+        bids_by_player = {}
+        for rec in history:
+            if rec.player == self.name or not isinstance(rec.action, Bid):
+                continue
+            bids_by_player.setdefault(rec.player, []).append(rec.action)
+
+        total = 0.0
+        for who, bids in bids_by_player.items():
+            weight = 0.0
+            for bid in bids:
+                if bid.face == face:
+                    weight += 1.0
+                elif not state.palifico and bid.face == PACO and face != PACO:
+                    weight += self.PACO_HINT_WEIGHT
+            if weight == 0.0:
+                continue
+            # Cap: they can't hold more than their dice beyond expectation.
+            n = dice_of.get(who, 0)
+            cap = n * (1 - self._p_face(face, state.palifico))
+            total += min(weight * self.HINT_PER_BID, cap)
+        return total
+
+    def _prob_true(self, state, bid, n_unknown, hints):
+        mine = count_matches(state.my_dice, bid.face, state.palifico)
+        p = self._p_face(bid.face, state.palifico)
+        need = bid.quantity - mine - hints[bid.face]
+        return self._tail(n_unknown, p, need)
+
+    # -- bid ordering -----------------------------------------------------
+
+    @staticmethod
+    def _strength(bid, palifico):
+        """How strong a claim a bid is, so Paco and normal bids compare."""
+        if bid.face == PACO and not palifico:
+            # A Paco is worth two normal dice; rank it just below 2q of a face.
+            return (2 * bid.quantity - 0.5, 0)
+        return (bid.quantity, bid.face)
+
+    # -- decision ---------------------------------------------------------
+
+    def observe(self, event):
+        self.mouth.react(event)
+
+
+# ---------------------------------------------------------------------------
+# Pokerface
+# ---------------------------------------------------------------------------
 
 QUOTES = {
     **SNIPER_QUOTES,
@@ -95,7 +704,7 @@ QUOTES = {
 }
 
 
-class PokerfaceBot(SharedMemory, SniperBot):
+class PokerfaceBot(SharedMemory, _SniperCore):
     name = "Pokerface"
     # Learned state kept in shared memory (survives a new instance per game).
     _LEARNED = ("profiler", "_calibration", "_thr_cache")
