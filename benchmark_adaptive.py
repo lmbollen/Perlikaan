@@ -20,7 +20,8 @@ Usage:
     uv run python benchmark_adaptive.py --a "BLUFF_RATE=0" --b "BLUFF_RATE=0.5"
 
 --a / --b compare any two settings of Pokerface's class attributes (default:
-ADAPTIVE=False against ADAPTIVE=True).
+ADAPTIVE=False against ADAPTIVE=True). BOT=<class> plays another bot in our
+seat, e.g. --a "BOT=PokerfaceBot" --b "BOT=CarlosBot".
 """
 
 from __future__ import annotations
@@ -113,10 +114,12 @@ def run_table(job):
     seed, table, n_opponents, mix, games, variant, settings = job
     classes = discover_bot_classes_by_name()
     specs = table_spec(seed, table, n_opponents, mix)
-    me = classes["PokerfaceBot"]()
+    settings = dict(settings)
+    me = classes[settings.pop("BOT", "PokerfaceBot")]()
     for key, value in settings.items():
         setattr(me, key, value)
-    me._rng = random.Random(table)
+    if hasattr(me, "_rng"):
+        me._rng = random.Random(table)
     bots = [me, *build(specs, classes)]
 
     positions, wins, aborted = [], [], 0
@@ -130,7 +133,7 @@ def run_table(job):
         wins.append(result.winner == me.name)
 
     learned = []
-    if variant:
+    if variant and hasattr(me, "profiler"):
         prof = me.profiler
         for kind, spec in specs:
             if kind != "zoo" or spec["name"] not in prof.profiles:
@@ -150,7 +153,10 @@ def parse_settings(text):
     out = {}
     for part in filter(None, (p.strip() for p in text.split(","))):
         key, value = part.split("=", 1)
-        out[key.strip()] = ast.literal_eval(value.strip())
+        try:
+            out[key.strip()] = ast.literal_eval(value.strip())
+        except (ValueError, SyntaxError):
+            out[key.strip()] = value.strip()   # a bare word, e.g. BOT=CarlosBot
     return out
 
 
