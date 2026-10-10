@@ -174,6 +174,14 @@ class CarlosBot:
     # -1.4 +/- 0.8 pp head-to-head).
     RISK_CALIBRATION = False
     RISK_PRIOR = 20
+    # Before we know a player: residual (held - implied) of a bid that only
+    # follows the face just bid is centred this far below zero. In chains
+    # players raise without holding much; starting at 0 made Carlos believe
+    # every follower (5x6 rated 0.96 with 3 on the table).
+    FOLLOW_PRIOR_SHIFT = -2.0
+    # Opening: consider every quantity at least CAND_MIN likely (not only the
+    # highest ones).
+    OPEN_ALL = True
     # Moves whose expected value is within TIE_EPS of the best one count as
     # equally good; Carlos picks one of them at random, so he is harder to
     # read.
@@ -222,8 +230,6 @@ class CarlosBot:
         self._fit_cache = {}
         self._calibration = {}
         self._pending = []
-        self._own_calibration = {}
-        self._own_pending = []
         self._response = {}     # (kind, size, bucket) -> [hits, n]
         self._risk = {}         # (opening, size, bucket) -> [lost, n]
         self._beta_table = list(self.RAISE_PRIOR)
@@ -267,7 +273,6 @@ class CarlosBot:
             if not self._palifico:
                 self._learn_raises(event)
             self._learn_calibration(event)
-            self._learn_own_calibration(event)
             self._round = []
         elif isinstance(event, RoundEndedEvent):
             self._palifico = event.palifico_next
@@ -435,7 +440,8 @@ class CarlosBot:
 
     def _likelihood(self, player, kind):
         """r -> P(residual r) for this player and kind, shrunk to the table."""
-        base = {r: math.exp(-abs(r)) for r in range(R_MIN, R_MAX + 1)}
+        centre = self.FOLLOW_PRIOR_SHIFT if "follow" in kind else 0.0
+        base = {r: math.exp(-abs(r - centre)) for r in range(R_MIN, R_MAX + 1)}
         z = sum(base.values())
         base = {r: v / z for r, v in base.items()}
         pooled = defaultdict(float)
@@ -475,36 +481,6 @@ class CarlosBot:
         own = [self.other[player][n].get(k, 0.0) for k in range(n + 1)] if player in self.other else [0.0] * (n + 1)
         n_own = sum(own)
         return [(own[k] + self.SHRINK * table[k]) / (n_own + self.SHRINK) for k in range(n + 1)]
-
-    # -- calibration of our own bids ----------------------------------------
-
-    @staticmethod
-    def _own_key(ctx, p):
-        return (min(len(ctx["dice"]), 4), ctx["pal"], min(int(p * 10), 9))
-
-    def _own_shift(self, ctx, bid):
-        """
-        Log-odds correction for our own bid: how often our bids with a similar
-        raw P(true) were really true. Applied to every conditional P(true) of
-        that bid in the chain.
-        """
-        if bid in ctx["own_shift"]:
-            return ctx["own_shift"][bid]
-        p = min(max(self._p_true(ctx, bid), 1e-4), 1 - 1e-4)
-        hits, n = self._own_calibration.get(self._own_key(ctx, p), (0, 0))
-        k = self.CALIBRATION_PRIOR
-        pc = min(max((hits + k * p) / (n + k), 1e-4), 1 - 1e-4)
-        shift = math.log(pc / (1 - pc)) - math.log(p / (1 - p))
-        ctx["own_shift"][bid] = shift
-        return shift
-
-    def _learn_own_calibration(self, event):
-        dice = [d for _, hand in event.dice for d in hand]
-        for key, bid, palifico in self._own_pending:
-            stat = self._own_calibration.setdefault(key, [0, 0])
-            stat[0] += count_matches(dice, bid.face, palifico) >= bid.quantity
-            stat[1] += 1
-        self._own_pending = []
 
     def _dudo_model(self, name):
         """(a, b) of the logistic Dudo model, fitted on the player's history."""
@@ -623,7 +599,6 @@ class CarlosBot:
                       for n in ctx["post"] for f in range(1, 7)}
         ctx["mine"] = {f: count_matches(state.my_dice, f, state.palifico) for f in range(1, 7)}
         ctx["memo"] = {}
-        ctx["own_shift"] = {}
         return ctx
 
     def _lose_value(self, ctx, who):
@@ -763,7 +738,6 @@ class CarlosBot:
         w_actor = ctx["w"]
         gain = 1.0 if (ctx["gain_ok"] and n < 5) else 0.0
 
-        shift = self._own_shift(ctx, bid) if bidder == self.name else 0.0
         rd = rc = 1.0
         if bidder == self.name and actor == order[0]:
             pd0, pc0 = self._next_response(ctx, bid)
@@ -776,8 +750,6 @@ class CarlosBot:
                 continue
             need = q - mine - k
             p_true = tail(loo, need)
-            if shift and 0 < p_true < 1:
-                p_true = 1 / (1 + math.exp(-(math.log(p_true / (1 - p_true)) + shift)))
             p_exact = at(loo, need)
             their_view = binom_tail(ctx["total"] - n, p, q - k)
             pd = 1 / (1 + math.exp(-(a + b * their_view)))
@@ -811,8 +783,10 @@ class CarlosBot:
         for face, bs in by_face.items():
             bs.sort(key=lambda b: b.quantity)
             likely = [b for b in bs if self._p_true(ctx, b) >= self.CAND_MIN]
-            out.extend(likely[-self.CAND_PER_FACE:] if state.current_bid is None
-                       else likely[:self.CAND_PER_FACE])
+            if state.current_bid is None:
+                out.extend(likely if self.OPEN_ALL else likely[-self.CAND_PER_FACE:])
+            else:
+                out.extend(likely[:self.CAND_PER_FACE])
         if not out and bids:
             out = [max(bids, key=lambda b: self._p_true(ctx, b))]
         return out
@@ -841,8 +815,6 @@ class CarlosBot:
         if isinstance(action, Bid):
             self._risk_pending.append(risk_keys[action])
         if isinstance(action, Bid):
-            p = min(max(self._p_true(ctx, action), 1e-4), 1 - 1e-4)
-            self._own_pending.append((self._own_key(ctx, p), action, state.palifico))
             pd, pc = self._next_response(ctx, action)
             self._awaiting = (min(len(ctx["dice"]), 4), pd, pc)
         if isinstance(action, Dudo):

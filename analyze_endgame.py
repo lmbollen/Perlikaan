@@ -74,11 +74,11 @@ def holds(bid, dice, palifico):
 
 
 def run(job):
-    seed, table, n_opp, games = job
+    seed, table, n_opp, games, mix = job
     classes = discover_bot_classes_by_name()
     me = classes["PokerfaceBot"]()
     me._rng = random.Random(table)
-    bots = [me, *build(table_spec(seed, table, n_opp, "core"), classes)]
+    bots = [me, *build(table_spec(seed, table, n_opp, mix), classes)]
     rows = []
     for g, game_seed in enumerate(derive_game_seeds(seed * 7 + table, games)):
         me.decision_log = []
@@ -155,9 +155,10 @@ def main():
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--show", type=int, default=10)
     parser.add_argument("--jobs", type=int, default=4)
+    parser.add_argument("--mix", default="core", help="Opponents, see benchmark_adaptive.py (core, static, ...).")
     args = parser.parse_args()
 
-    jobs = [(args.seed, t, args.start_players - 1, args.games) for t in range(args.tables)]
+    jobs = [(args.seed, t, args.start_players - 1, args.games, args.mix) for t in range(args.tables)]
     with Pool(args.jobs) as pool:
         rows = [r for part in pool.map(run, jobs) for r in part]
 
