@@ -38,6 +38,7 @@ Zet TALK_TO_ME=true om Carlos te horen.
 from __future__ import annotations
 
 import math
+import random
 from collections import defaultdict
 
 from perudo.models import PACO, Bid, Calza, Dudo, RevealEvent, RoundEndedEvent, GameEndedEvent
@@ -168,6 +169,17 @@ class CarlosBot:
     # -1.4 +/- 0.8 pp head-to-head).
     RISK_CALIBRATION = False
     RISK_PRIOR = 20
+    # Moves whose expected value is within TIE_EPS of the best one count as
+    # equally good; Carlos picks one of them at random, so he is harder to
+    # read.
+    TIE_EPS = 0.01
+    # How many times the chain runs up to our turn. 1: stop when it is our
+    # turn again and value that with a rule of thumb. 2: at our next turn
+    # weigh our real options (Dudo, Calza, raises) and follow each raise
+    # around the table once more.
+    LAPS = 2
+    # Raises per face we consider at a later turn of ours (keeps it fast).
+    CAND_INNER = 2
     # When the chain comes back to us, raising is valued as
     # -(1 - P(our best raise true)) * this.
     OUR_RAISE_RISK = 0.5
@@ -176,6 +188,7 @@ class CarlosBot:
         self.name = "Carlos"
         self.mouth = Mouth(self, QUOTES)
         self.profiler = OpponentProfiler(self.name)
+        self._rng = random.Random()
         # name -> kind -> residual histogram (dict r -> count)
         self.hist = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
         # name -> dice count -> k -> count: matches of a face a player did NOT
@@ -562,18 +575,41 @@ class CarlosBot:
             pc_tot += pk * (1 - pd) * cr
         return pd_tot, pc_tot
 
-    def _chain(self, ctx, bid, bidder, pos, depth):
+    def _our_options(self, ctx, bid, bidder, pos, depth, laps):
+        """Our best move at a later turn of ours, each raise followed by the chain."""
+        p_true = self._p_true(ctx, bid)
+        best = -p_true + (1 - p_true) * self._lose_value(ctx, bidder)           # Dudo
+        if ctx["gain_ok"] and ctx["state"].my_dice_count < 5:
+            p_ex = self._p_exact(ctx, bid)
+            best = max(best, p_ex * self.CALZA_GAIN - (1 - p_ex))               # Calza
+        faces = [ctx["pal_face"] or bid.face] if ctx["pal"] else [2, 3, 4, 5, 6, PACO]
+        for f in faces:
+            q = min_quantity(bid, f, ctx["pal"])
+            if q is None:
+                continue
+            for qq in range(q, min(q + self.CAND_INNER, ctx["total"] + 1)):
+                raise_ = Bid(qq, f)
+                if self._p_true(ctx, raise_) >= self.CAND_MIN:
+                    best = max(best, self._chain(ctx, raise_, self.name, pos + 1, depth + 1, laps - 1))
+        return best
+
+    def _chain(self, ctx, bid, bidder, pos, depth, laps=None):
         """Expected value for us of the state (bid, order[pos] to act)."""
-        key = (bid, bidder, pos, depth)
+        if laps is None:
+            laps = self.LAPS
+        key = (bid, bidder, pos, depth, laps)
         if key in ctx["memo"]:
             return ctx["memo"][key]
         order = ctx["order"]
         actor = order[pos % len(order)]
         if actor == self.name:
-            value = self._our_turn_value(ctx, bid, bidder)
+            if laps > 1 and depth > 0:
+                value = self._our_options(ctx, bid, bidder, pos, depth, laps)
+            else:
+                value = self._our_turn_value(ctx, bid, bidder)
             ctx["memo"][key] = value
             return value
-        if depth >= len(order) + 1:
+        if depth >= len(order) * self.LAPS + 1:
             ctx["memo"][key] = 0.0
             return 0.0
 
@@ -591,7 +627,7 @@ class CarlosBot:
 
         shift = self._own_shift(ctx, bid) if bidder == self.name else 0.0
         rd = rc = 1.0
-        if bidder == self.name and pos == 0:
+        if bidder == self.name and actor == order[0]:
             pd0, pc0 = self._next_response(ctx, bid)
             rd = self._response_ratio(ctx, "dudo", pd0)
             rc = self._response_ratio(ctx, "calza", pc0)
@@ -619,7 +655,7 @@ class CarlosBot:
             value += pk * (pd * dudo + pc * calza)
             p_raise += pk * pr
         if nxt is not None and p_raise > 0:
-            value += p_raise * self._chain(ctx, nxt, actor, pos + 1, depth + 1)
+            value += p_raise * self._chain(ctx, nxt, actor, pos + 1, depth + 1, laps)
         ctx["memo"][key] = value
         return value
 
@@ -661,7 +697,8 @@ class CarlosBot:
             risk_keys[b] = key
             options.append((value, b))
 
-        value, action = max(options, key=lambda o: (o[0], -getattr(o[1], "quantity", 0)))
+        best = max(v for v, _ in options)
+        value, action = self._rng.choice([o for o in options if o[0] >= best - self.TIE_EPS])
         if isinstance(action, Bid):
             self._risk_pending.append(risk_keys[action])
         if isinstance(action, Bid):
