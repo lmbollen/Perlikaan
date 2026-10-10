@@ -82,8 +82,7 @@ class ExampleBot:
 
         # Anders: als je nog mag bieden, doe het goedkoopste legale bod.
         if possible_bids:
-            bid = min(possible_bids, key=lambda b: (b.quantity, b.face))
-            return bid
+            return min(possible_bids, key=lambda b: (b.quantity, b.face))
 
         # Geen bids meer mogelijk (zeldzaam) -> val terug op Calza of Dudo.
         if can_say_calza:

@@ -7,42 +7,22 @@ that to estimate the probability that the current bid is actually true,
 then either raises (using the face it personally holds the most of) or
 calls Dudo.
 
-Uses _count_matches, a copy of the same pure counting rule the engine
-itself uses to decide bids/Dudo/Calza (wild Paco's, Palifico).
+Reuses perudo.rules.count_matches -- the same pure counting rule the
+engine itself uses to decide bids/Dudo/Calza -- so the wild-Paco and
+Palifico counting logic is never duplicated here.
 """
 
 import math
 
 from perudo.models import PACO, Bid, Dudo
-
-
-def _count_matches(dice_values, face, palifico):
-    """How many dice count towards a bid on `face`."""
-    if palifico:
-        return sum(1 for d in dice_values if d == face)
-    if face == PACO:
-        return sum(1 for d in dice_values if d == PACO)
-    return sum(1 for d in dice_values if d == face or d == PACO)
+from perudo.rules import count_matches
 
 
 class HundredIQBot:
     def __init__(self):
             self.name = "100 IQ Bot"
             self.count = 3
-
-    def on_game_start(self, info):
-        pass
-
     def play(self, state):
-        return self._choose(state)
-
-    def observe(self, event):
-        pass
-
-    def on_game_end(self, result):
-        pass
-
-    def _choose(self, state):
         possible_bids = [a for a in state.legal_actions if isinstance(a, Bid)]
         best_face = self._face_i_hold_most(state.my_dice)
 
@@ -88,7 +68,7 @@ class HundredIQBot:
         total_dice_in_play = sum(p.dice_count for p in state.players)
         opponent_dice = total_dice_in_play - state.my_dice_count
 
-        my_matches = _count_matches(state.my_dice, bid.face, state.palifico)
+        my_matches = count_matches(state.my_dice, bid.face, state.palifico)
         still_needed = max(0, bid.quantity - my_matches)
 
         if state.palifico or bid.face == PACO:

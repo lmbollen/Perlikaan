@@ -19,19 +19,7 @@ class MinRaiseBot:
     name = "MinRaise Bot"
     count = 0
 
-    def on_game_start(self, info):
-        pass
-
     def play(self, state):
-        return self._choose(state)
-
-    def observe(self, event):
-        pass
-
-    def on_game_end(self, result):
-        pass
-
-    def _choose(self, state):
         possible_bids = [a for a in state.legal_actions if isinstance(a, Bid)]
         if possible_bids:
             return self._minraise(possible_bids)
