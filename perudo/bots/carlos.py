@@ -49,6 +49,7 @@ from collections import defaultdict
 from perudo.models import PACO, Bid, Calza, Dudo, RevealEvent, RoundEndedEvent, GameEndedEvent
 from perudo.models import BidEvent, CalzaEvent, DieLostEvent, DudoEvent
 from perudo.models import PublicPlayer
+from perudo.memory import SharedMemory
 from perudo.profiler import OpponentProfiler
 from perudo.rules import count_matches
 from perudo.talk import Mouth, fmt_bid, last_bidder
@@ -137,8 +138,11 @@ def min_quantity(bid, face, palifico):
     return q0 if face > f0 else q0 + 1
 
 
-class CarlosBot:
+class CarlosBot(SharedMemory):
     name = "Carlos"
+    # Learned state kept in shared memory (survives a new instance per game).
+    _LEARNED = ("profiler", "hist", "other", "_fit_cache", "_calibration", "_response",
+                "_risk", "_beta_table", "_beta")
 
     # Value of an opponent losing a die, divided by the number of opponents.
     OTHER_WEIGHT = 1.0
@@ -266,10 +270,12 @@ class CarlosBot:
     # ------------------------------------------------------------------
 
     def on_game_start(self, info):
+        self._ensure_memory()
         self._seats = info.players
         self._my_id = info.my_id
 
     def observe(self, event):
+        self._ensure_memory()
         self.profiler.observe(event)
         if self._awaiting is not None and isinstance(event, (BidEvent, DudoEvent, CalzaEvent)) \
                 and event.player != self.name:
@@ -888,10 +894,12 @@ class CarlosBot:
 
     def decide(self, state):
         """The move the chain rates best, without side effects (ties: lowest quantity)."""
+        self._ensure_memory()
         _, options, _ = self._options(state, record=False)
         return max(options, key=lambda o: (o[0], -getattr(o[1], "quantity", 0)))[1]
 
     def play(self, state):
+        self._ensure_memory()
         ctx, options, risk_keys = self._options(state)
         cur = state.current_bid
         best = max(v for v, _ in options)

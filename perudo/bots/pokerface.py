@@ -51,6 +51,7 @@ from perudo.bots.sniper import QUOTES as SNIPER_QUOTES
 from perudo.bots.sniper import SniperBot
 from perudo.models import PACO, Bid, Calza, Dudo, RevealEvent
 from perudo.rules import count_matches
+from perudo.memory import SharedMemory
 from perudo.profiler import OpponentProfiler, bid_kind
 from perudo.talk import Mouth, fmt_bid, last_bidder
 
@@ -94,8 +95,10 @@ QUOTES = {
 }
 
 
-class PokerfaceBot(SniperBot):
+class PokerfaceBot(SharedMemory, SniperBot):
     name = "Pokerface"
+    # Learned state kept in shared memory (survives a new instance per game).
+    _LEARNED = ("profiler", "_calibration", "_thr_cache")
 
     # Chance to bluff when a bluff is available. Below 1 keeps us
     # unpredictable: an opponent can't assume every bid of ours is a lie.
@@ -329,6 +332,7 @@ class PokerfaceBot(SniperBot):
         return min(max(1 - (1 - base) * avg / max(rate, 0.05), lo), hi)
 
     def play(self, state):
+        self._ensure_memory()
         total = sum(p.dice_count for p in state.players if p.alive)
         n_unknown = total - state.my_dice_count
         hints = {face: self._hint(state, face) for face in range(1, 7)}
@@ -521,6 +525,7 @@ class PokerfaceBot(SniperBot):
         ))
 
     def observe(self, event):
+        self._ensure_memory()
         self.profiler.observe(event)
         if isinstance(event, RevealEvent):
             self._learn_calibration(event)

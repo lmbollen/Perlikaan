@@ -50,3 +50,21 @@ def test_learns_that_a_player_bids_what_it_holds():
     state = _state([2, 3], [ActionRecord("A", Bid(3, 6))], Bid(3, 6))
     post = bot._posteriors(state)["A"][6]
     assert sum(k * w for k, w in enumerate(post)) > 2.5
+
+
+def test_learning_survives_a_new_instance():
+    from perudo.models import BidEvent, DudoEvent, RevealEvent
+    CarlosBot.reset_memory()
+    first = CarlosBot()
+    first.observe(BidEvent("A", Bid(3, 6)))
+    first.observe(DudoEvent("B"))
+    first.observe(RevealEvent(dice=(("Carlos", (2,)), ("A", (6, 6, 6, 2, 3)), ("B", (2, 3, 4, 5, 2))),
+                              current_bid=Bid(3, 6), actual_count=3, challenge_type="dudo",
+                              challenger="B", bidder="A", result="bidder_correct"))
+    second = CarlosBot()
+    second._ensure_memory()
+    assert second.hist is first.hist and "A" in second.hist
+    CarlosBot.reset_memory()
+    third = CarlosBot()
+    third._ensure_memory()
+    assert "A" not in third.hist

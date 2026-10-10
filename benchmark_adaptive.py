@@ -121,6 +121,9 @@ class RoundLimit:
 def run_table(job):
     seed, table, n_opponents, mix, games, variant, settings = job
     classes = discover_bot_classes_by_name()
+    for cls in classes.values():      # every table starts without memory
+        if hasattr(cls, "reset_memory"):
+            cls.reset_memory()
     specs = table_spec(seed, table, n_opponents, mix)
     settings = dict(settings)
     me = classes[settings.pop("BOT", "PokerfaceBot")]()

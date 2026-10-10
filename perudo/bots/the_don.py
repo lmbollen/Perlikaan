@@ -37,6 +37,7 @@ from perudo.bots.trihard import (
     _fmt_bid,
     _sigmoid,
 )
+from perudo.memory import SharedMemory
 from perudo.models import Action, Bid, Calza, Dudo, Observation, PublicPlayer
 from perudo.rules import count_matches
 from perudo.talk import Mouth
@@ -69,8 +70,10 @@ QUOTES = {
 }
 
 
-class TheDonBot(Trihard):
+class TheDonBot(SharedMemory, Trihard):
     name = "The Don"
+    # Trihard's learned opponent models, kept in shared memory.
+    _LEARNED = ("_honesty_ll", "_call_theta")
 
     # Switch the two halves of the policy on or off.
     ATTACK = True
@@ -113,7 +116,16 @@ class TheDonBot(Trihard):
 
     # -- the decision -------------------------------------------------------
 
+    def on_game_start(self, info) -> None:
+        self._ensure_memory()
+        super().on_game_start(info)
+
+    def observe(self, event) -> None:
+        self._ensure_memory()
+        super().observe(event)
+
     def play(self, state: Observation) -> Action:
+        self._ensure_memory()
         self._palifico_now = state.palifico
         if any(not p.alive for p in state.players):
             self._recovery_enabled = False
