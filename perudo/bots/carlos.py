@@ -21,8 +21,13 @@ player, by name, from the reveals at the end of each round:
     on or switched to a face probably holds fewer of the faces they passed
     over; that distribution is learned per player too;
   * how a player reacts to a bid: P(Dudo) as a logistic function of how
-    likely the bid looks from their own dice (fitted per player), how often
-    they call Calza, and how bold their own raises are (their usual P(true)).
+    likely the bid looks from their own dice (fitted per player) and how
+    often they call Calza;
+  * how a player raises: a choice model (softmax) over their possible raises,
+    on how likely each looks from their own hand, staying on the face, the
+    jump above the minimum and Paco. How often they pick a raise that looks
+    unlikely to themselves is their bluffing. In the chain every opponent
+    turn branches into their RAISE_BRANCHES most likely raises.
 
 For every candidate move (Dudo, Calza, and a short list of bids per face)
 Carlos walks the chain from that move over the players after it, up to one
@@ -173,6 +178,20 @@ class CarlosBot:
     # equally good; Carlos picks one of them at random, so he is harder to
     # read.
     TIE_EPS = 0.01
+    # When an opponent raises, follow this many of their most likely raises
+    # (each with its learned probability, bluffs included).
+    RAISE_BRANCHES = 3
+    # Raises considered per face: the minimum quantity and this many above.
+    RAISE_SPAN = 3
+    # Raise-choice model before we know a player: weights for (how likely
+    # the raise looks from their own hand, stays on the same face, jump above
+    # the minimum quantity, is a Paco bid, looks >= 50% likely to them,
+    # >= 80%, jump x how likely, is what a "strongest bid that still looks
+    # likely enough to me" player would bid).
+    RAISE_PRIOR = (3.0, 0.5, -0.8, -0.3, 1.0, 1.0, 0.5, 2.0)
+    RAISE_LR = 0.05
+    # Pull of a player's weights towards the table's, per update.
+    RAISE_PULL = 0.02
     # How many times the chain runs up to our turn (with 3+ players). 1: stop when it is our
     # turn again and value that with a rule of thumb. 2: at our next turn
     # weigh our real options (Dudo, Calza, raises) and follow each raise
@@ -207,6 +226,8 @@ class CarlosBot:
         self._own_pending = []
         self._response = {}     # (kind, size, bucket) -> [hits, n]
         self._risk = {}         # (opening, size, bucket) -> [lost, n]
+        self._beta_table = list(self.RAISE_PRIOR)
+        self._beta = {}         # name -> weights of their raise-choice model
         self._risk_pending = []
         self._lost_this_round = False
         self._awaiting = None   # (size, pd, pc) of our last bid, until the next player acts
@@ -243,6 +264,8 @@ class CarlosBot:
             self._round.append((event.player, None))
         elif isinstance(event, RevealEvent):
             self._learn_hands(event, self._palifico)
+            if not self._palifico:
+                self._learn_raises(event)
             self._learn_calibration(event)
             self._learn_own_calibration(event)
             self._round = []
@@ -293,6 +316,116 @@ class CarlosBot:
             r = k - self._implied(bid, len(own), total, palifico)
             r = max(R_MIN, min(R_MAX, r))
             self.hist[player][self._kind(chosen, palifico, len(own))][r] += 1
+
+    # -- how a player raises -------------------------------------------------
+
+    def _raise_options(self, bid, total, palifico, pal_face=None):
+        """Raises we model: per face the minimum quantity and RAISE_SPAN above."""
+        faces = [pal_face or bid.face] if palifico else [2, 3, 4, 5, 6, PACO]
+        out = []
+        for f in faces:
+            q = min_quantity(bid, f, palifico)
+            if q is None:
+                continue
+            for qq in range(q, min(q + self.RAISE_SPAN, total) + 1):
+                out.append((Bid(qq, f), qq - q))
+        return out
+
+    @staticmethod
+    def _raise_features(view, bid, prev, jump, heuristic):
+        return (view, 1.0 if bid.face == prev.face else 0.0, float(jump),
+                1.0 if bid.face == PACO else 0.0, 1.0 if view >= 0.5 else 0.0,
+                1.0 if view >= 0.8 else 0.0, jump * view, 1.0 if bid == heuristic else 0.0)
+
+    def _heuristic_raise(self, bid, total, n, pal, pal_face, mean_k, target):
+        """The bid of a "strongest raise that still looks likely to me" player."""
+        faces = [pal_face or bid.face] if pal else [2, 3, 4, 5, 6, PACO]
+        best = None
+        for f in faces:
+            q = min_quantity(bid, f, pal)
+            if q is None or q > total:
+                continue
+            p = p_face(f, pal)
+            v = binom_tail(total - n, p, q - mean_k[f])
+            if best is None or v > best[0]:
+                while q + 1 <= total and binom_tail(total - n, p, q + 1 - mean_k[f]) >= target:
+                    q += 1
+                best = (v, Bid(q, f))
+        return None if best is None else best[1]
+
+    def _weights(self, name):
+        if name not in self._beta:
+            self._beta[name] = list(self._beta_table)
+        return self._beta[name]
+
+    def _learn_raises(self, event):
+        """One gradient step of the raise-choice model per raise we saw."""
+        dice = event.dice_by_player()
+        total = sum(len(d) for d in dice.values())
+        prev = None
+        for player, bid in self._round:
+            if bid is None:
+                break
+            if prev is not None and player != self.name and player in dice:
+                own = dice[player]
+                n = len(own)
+                mean_k = {f: count_matches(own, f, False) for f in range(1, 7)}
+                heur = self._heuristic_raise(prev, total, n, False, None, mean_k, self._raise_p(player))
+                options = self._raise_options(prev, total, False)
+                for extra in (bid, heur):
+                    if extra is not None and extra not in [b for b, _ in options]:
+                        q_min = min_quantity(prev, extra.face, False) or extra.quantity
+                        options.append((extra, extra.quantity - q_min))
+                feats = []
+                for b, jump in options:
+                    view = binom_tail(total - n, p_face(b.face, False), b.quantity - mean_k[b.face])
+                    feats.append(self._raise_features(view, b, prev, jump, heur))
+                chosen = [b for b, _ in options].index(bid)
+                m = len(self.RAISE_PRIOR)
+                for weights in (self._weights(player), self._beta_table):
+                    scores = [sum(w * x for w, x in zip(weights, f)) for f in feats]
+                    top = max(scores)
+                    exps = [math.exp(sc - top) for sc in scores]
+                    z = sum(exps)
+                    expect = [sum(e * f[i] for e, f in zip(exps, feats)) / z for i in range(m)]
+                    for i in range(m):
+                        weights[i] += self.RAISE_LR * (feats[chosen][i] - expect[i])
+                own_w = self._beta[player]
+                for i in range(m):
+                    own_w[i] -= self.RAISE_PULL * (own_w[i] - self._beta_table[i])
+            prev = bid
+
+    def _raise_dist(self, ctx, who, bid):
+        """[(probability, raise)] of `who`'s most likely raises over `bid`."""
+        key = ("raise", who, bid)
+        if key in ctx["memo"]:
+            return ctx["memo"][key]
+        n = ctx["dice"][who]
+        total, pal = ctx["total"], ctx["pal"]
+        options = self._raise_options(bid, total, pal, ctx["pal_face"])
+        if not options:
+            ctx["memo"][key] = []
+            return []
+        weights = self._weights(who)
+        mean_k = {f: sum(k * w for k, w in enumerate(ctx["post"][who][f])) for f in range(1, 7)}
+        heur = self._heuristic_raise(bid, total, n, pal, ctx["pal_face"], mean_k, self._raise_p(who))
+        if heur is not None and heur not in [b for b, _ in options]:
+            options.append((heur, heur.quantity - (min_quantity(bid, heur.face, pal) or heur.quantity)))
+        scored = []
+        for b, jump in options:
+            p = p_face(b.face, pal)
+            post = ctx["post"][who][b.face]
+            # How likely the raise looks to them, averaged over their hand.
+            view = sum(w * binom_tail(total - n, p, b.quantity - k) for k, w in enumerate(post) if w)
+            scored.append((sum(w * x for w, x in zip(weights, self._raise_features(view, b, bid, jump, heur))), b))
+        top = max(sc for sc, _ in scored)
+        exps = [(math.exp(sc - top), b) for sc, b in scored]
+        z = sum(e for e, _ in exps)
+        best = sorted(((e / z, b) for e, b in exps), key=lambda x: -x[0])[:self.RAISE_BRANCHES]
+        kept = sum(p for p, _ in best)
+        dist = [(p / kept, b) for p, b in best]
+        ctx["memo"][key] = dist
+        return dist
 
     @staticmethod
     def _implied(bid, n, total, palifico=False):
@@ -625,7 +758,8 @@ class CarlosBot:
         mine = ctx["mine"][face]
         a, b = self._dudo_model(actor)
         cr = self.profiler.calza_rate(actor)
-        nxt = self._their_raise(ctx, actor, bid)
+        raises = self._raise_dist(ctx, actor, bid)
+        nxt = raises[0][1] if raises else None
         w_actor = ctx["w"]
         gain = 1.0 if (ctx["gain_ok"] and n < 5) else 0.0
 
@@ -658,8 +792,9 @@ class CarlosBot:
             calza = p_exact * (-w_actor * gain) + (1 - p_exact) * w_actor
             value += pk * (pd * dudo + pc * calza)
             p_raise += pk * pr
-        if nxt is not None and p_raise > 0:
-            value += p_raise * self._chain(ctx, nxt, actor, pos + 1, depth + 1, laps)
+        if raises and p_raise > 0:
+            value += p_raise * sum(p * self._chain(ctx, b2, actor, pos + 1, depth + 1, laps)
+                                   for p, b2 in raises)
         ctx["memo"][key] = value
         return value
 
