@@ -87,8 +87,8 @@ uv run python diagnose_bluff.py --rates 0 0.5 1                                 
 
 ### Pokerface, Carlos and The Don
 
-Each is a single self-contained file that only imports the standard library
-and the game's data types (`perudo.models`). What they learn lives in
+Each is a single self-contained file that only imports the standard
+library. What they learn lives in
 memory at class level, so it survives a new bot instance per game; nothing
 is written to disk.
 
@@ -108,8 +108,11 @@ is written to disk.
 Every bot in `perudo/bots/` (and `contestants/`) is one self-contained file
 with the same interface as `example_bot.py`: a class with a `name` and the
 methods `play(state)`, `observe(event)`, `on_game_start(info)` and
-`on_game_end(result)`. Bots import only the standard library and
-`perudo.models`, and do not talk.
+`on_game_end(result)`. Bots import only the standard library (not even
+`perudo.models`) and do not talk. Each file carries its own copies of the
+game types; the `@engine_types` decorator on the bot class translates the
+engine's objects to them in `play`/`observe` and returns the engine's own
+action object from `state.legal_actions`.
 
 ## Project layout
 
