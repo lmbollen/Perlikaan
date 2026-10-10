@@ -42,10 +42,8 @@ Zet TALK_TO_ME=true om Carlos te horen.
 
 from __future__ import annotations
 
-import json
 import math
 import random
-from pathlib import Path
 from collections import defaultdict
 
 from perudo.models import PACO, Bid, Calza, Dudo, RevealEvent, RoundEndedEvent, GameEndedEvent
@@ -77,8 +75,6 @@ QUOTES = {
     "bid_held": ["{challenger}, je reageerde precies zoals je model zei."],
     "won": ["Carlos wint. De keten wist het al."],
 }
-
-PRIORS_FILE = Path(__file__).resolve().parent.parent / "priors.json"
 
 # Residual = matches held - matches the bid implied, clipped to this range.
 R_MIN, R_MAX = -8, 8
@@ -187,11 +183,6 @@ class CarlosBot:
     # players raise without holding much; starting at 0 made Carlos believe
     # every follower (5x6 rated 0.96 with 3 on the table).
     FOLLOW_PRIOR_SHIFT = -3.0
-    # Start every game from the pooled knowledge in perudo/priors.json (see
-    # learn_priors.py) instead of rough defaults; learned counts from the
-    # priors are capped at PRIOR_CAP observations so a table can overrule them.
-    USE_PRIORS = True
-    PRIOR_CAP = 30
     # Factor switches (all on in play; analyze_factors.py turns them off one
     # at a time): read opponents' bids at all, use what a chosen face says
     # about the faces passed over, use the learned per-player Dudo model,
@@ -265,9 +256,6 @@ class CarlosBot:
         self._beta = {}         # name -> weights of their raise-choice model
         self._risk_pending = []
         self._lost_this_round = False
-        self._prior_hist = {}
-        self._prior_other = {}
-        self._priors_checked = False
         self._seats = None      # PublicPlayer per seat, from on_game_start
         self._round_end = None
         self._my_id = None
@@ -277,35 +265,11 @@ class CarlosBot:
     # learning
     # ------------------------------------------------------------------
 
-    def _load_priors(self):
-        self._priors_checked = True
-        if not self.USE_PRIORS or not PRIORS_FILE.exists():
-            return
-        pri = json.loads(PRIORS_FILE.read_text()).get("carlos")
-        if not pri:
-            return
-        cap = self.PRIOR_CAP
-        self._prior_hist = {k: {int(r): c for r, c in v.items()} for k, v in pri["hist"].items()}
-        self._prior_other = {int(n): {int(k): c for k, c in v.items()} for n, v in pri["other"].items()}
-        self.DUDO_A, self.DUDO_B = pri["dudo_logistic"]
-        self.profiler.PRIOR_CALZA = pri["calza_rate"]
-        self.profiler.PRIOR_CHALLENGE = pri["challenge_rate"]
-        self.DEFAULT_RAISE_P = pri["raise_p"]
-        self._beta_table = list(pri["beta"])
-        for table, rows in ((self._calibration, pri["calibration"]), (self._response, pri["response"])):
-            for *key, hits, n in rows:
-                scale = min(1.0, cap / n) if n else 0.0
-                table[tuple(key)] = [hits * scale, n * scale]
-
     def on_game_start(self, info):
-        if not self._priors_checked:
-            self._load_priors()
         self._seats = info.players
         self._my_id = info.my_id
 
     def observe(self, event):
-        if not self._priors_checked:
-            self._load_priors()
         self.profiler.observe(event)
         if self._awaiting is not None and isinstance(event, (BidEvent, DudoEvent, CalzaEvent)) \
                 and event.player != self.name:
@@ -538,13 +502,8 @@ class CarlosBot:
 
     def _likelihood(self, player, kind):
         """r -> P(residual r) for this player and kind, shrunk to the table."""
-        if kind in self._prior_hist:
-            # Learned beforehand over many opponents (Laplace-smoothed).
-            seen = self._prior_hist[kind]
-            base = {r: seen.get(r, 0.0) + 0.5 for r in range(R_MIN, R_MAX + 1)}
-        else:
-            centre = self.FOLLOW_PRIOR_SHIFT if "follow" in kind else 0.0
-            base = {r: math.exp(-abs(r - centre)) for r in range(R_MIN, R_MAX + 1)}
+        centre = self.FOLLOW_PRIOR_SHIFT if "follow" in kind else 0.0
+        base = {r: math.exp(-abs(r - centre)) for r in range(R_MIN, R_MAX + 1)}
         z = sum(base.values())
         base = {r: v / z for r, v in base.items()}
         pooled = defaultdict(float)
@@ -581,10 +540,6 @@ class CarlosBot:
     def _other_face_pmf(self, player, n):
         """Matches of a face `player` passed over for another face (n dice)."""
         base = binom_pmf(n, 1 / 3)
-        if n in self._prior_other:
-            seen = self._prior_other[n]
-            raw = [seen.get(k, 0.0) + 0.5 for k in range(n + 1)]
-            base = [x / sum(raw) for x in raw]
         pooled = [sum(self.other[who][n].get(k, 0.0) for who in self.other) for k in range(n + 1)]
         n_pool = sum(pooled)
         table = [(pooled[k] + self.SHRINK * base[k]) / (n_pool + self.SHRINK) for k in range(n + 1)]
@@ -937,8 +892,6 @@ class CarlosBot:
         return max(options, key=lambda o: (o[0], -getattr(o[1], "quantity", 0)))[1]
 
     def play(self, state):
-        if not self._priors_checked:
-            self._load_priors()
         ctx, options, risk_keys = self._options(state)
         cur = state.current_bid
         best = max(v for v, _ in options)

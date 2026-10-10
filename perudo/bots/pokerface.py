@@ -44,10 +44,8 @@ with FOLLOW_WEIGHT).
 Set TALK_TO_ME=true to hear it over the radio.
 """
 
-import json
 import math
 import random
-from pathlib import Path
 
 from perudo.bots.sniper import QUOTES as SNIPER_QUOTES
 from perudo.bots.sniper import SniperBot
@@ -55,8 +53,6 @@ from perudo.models import PACO, Bid, Calza, Dudo, RevealEvent
 from perudo.rules import count_matches
 from perudo.profiler import OpponentProfiler, bid_kind
 from perudo.talk import Mouth, fmt_bid, last_bidder
-
-PRIORS_FILE = Path(__file__).resolve().parent.parent / "priors.json"
 
 QUOTES = {
     **SNIPER_QUOTES,
@@ -170,10 +166,6 @@ class PokerfaceBot(SniperBot):
     # In Palifico a follower could have called Dudo instead of raising, so
     # their raise says something about their hand too (Sniper ignores it).
     PALIFICO_FOLLOWERS = True
-    # Start every game from the pooled knowledge in perudo/priors.json (see
-    # learn_priors.py); learned counts capped at PRIOR_CAP observations.
-    USE_PRIORS = True
-    PRIOR_CAP = 30
     # Set to a list to record every decision with what we believed at the
     # time (see analyze_endgame.py). None = no logging.
     decision_log = None
@@ -190,7 +182,6 @@ class PokerfaceBot(SniperBot):
         self._calibration = {}
         self._pending = []   # (key, bid, palifico) of bids faced this round
         self._thr_cache = {}
-        self._priors_checked = False
 
     # -- reading the others ------------------------------------------------
 
@@ -337,24 +328,7 @@ class PokerfaceBot(SniperBot):
         lo, hi = self.TARGET_RANGE
         return min(max(1 - (1 - base) * avg / max(rate, 0.05), lo), hi)
 
-    def _load_priors(self):
-        self._priors_checked = True
-        if not self.USE_PRIORS or not PRIORS_FILE.exists():
-            return
-        pri = json.loads(PRIORS_FILE.read_text()).get("pokerface")
-        if not pri:
-            return
-        self.profiler.PRIOR_EXCESS = {**self.profiler.PRIOR_EXCESS, **pri["excess"]}
-        self.profiler.PRIOR_CHALLENGE = pri["challenge_rate"]
-        self.profiler.PRIOR_CALZA = pri["calza_rate"]
-        self.DEFAULT_DUDO_AT = pri["dudo_at"]
-        for *key, hits, n in pri["calibration"]:
-            scale = min(1.0, self.PRIOR_CAP / n) if n else 0.0
-            self._calibration[tuple(key)] = [hits * scale, n * scale]
-
     def play(self, state):
-        if not self._priors_checked:
-            self._load_priors()
         total = sum(p.dice_count for p in state.players if p.alive)
         n_unknown = total - state.my_dice_count
         hints = {face: self._hint(state, face) for face in range(1, 7)}
@@ -547,8 +521,6 @@ class PokerfaceBot(SniperBot):
         ))
 
     def observe(self, event):
-        if not self._priors_checked:
-            self._load_priors()
         self.profiler.observe(event)
         if isinstance(event, RevealEvent):
             self._learn_calibration(event)
