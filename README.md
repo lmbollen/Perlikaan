@@ -111,6 +111,27 @@ methods `play(state)`, `observe(event)`, `on_game_start(info)` and
 `on_game_end(result)`. Bots import only the standard library and
 `perudo.models`, and do not talk.
 
+### Trash talk and text-to-speech (optional)
+
+Bots can talk via `perudo.talk`. Enable it with environment variables:
+
+| Variable           | Effect                                                                 |
+|--------------------|------------------------------------------------------------------------|
+| `TALK_TO_ME=true`  | Print the bots' chatter                                                |
+| `TTS=true`         | Also speak it out loud                                                 |
+| `TTS_BACKEND`      | `edge` (default, online Microsoft voices) or `piper` (local, offline)  |
+| `PIPER_VOICES_DIR` | Where piper voice models are cached (default `~/.cache/perudo/piper-voices`) |
+| `EDGE_CACHE_DIR`   | Where edge-tts audio is cached, so each line is fetched only once (default `~/.cache/perudo/edge-tts`) |
+
+```sh
+TALK_TO_ME=true TTS=true uv run python run_interactive.py
+```
+
+Audio playback needs a system player: `ffplay` (from ffmpeg) for edge, or
+`aplay` / `paplay` / `ffplay` for piper. On Debian/Ubuntu:
+`sudo apt install ffmpeg`. If speech fails you get one warning and the game
+continues silently.
+
 ## Project layout
 
 ```
@@ -120,6 +141,8 @@ perudo/
   models.py       bids, events, observations
   bot_base.py     bot base class / interface
   bot_loader.py   bot discovery and instantiation
+  talk.py         optional bot chatter
+  tts.py          optional text-to-speech
   profiler.py     per-opponent learning (tooling; bots embed their own copy)
   bots/           all participating bots
 contestants/      bots that are not at the table (Hakaman, Wouluh)

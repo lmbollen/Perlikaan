@@ -3,7 +3,10 @@ name = "perudo"
 version = "0.1.0"
 description = "Perudo game engine with bot framework"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+    "edge-tts>=7.2.8",
+    "piper-tts>=1.8.0",
+]
 
 [dependency-groups]
 dev = [

@@ -4,7 +4,6 @@ console output as possible during the games themselves.
 
 Usage:
     python run_simulation.py --games 2000 --seed 12345
-    python run_simulation.py --games 1000 --bot SniperBot --bot CarlosBot
 
 Bots are instantiated exactly once, before the loop, and the same bot
 objects are reused for every game -- this is what lets a bot "learn"
@@ -23,7 +22,7 @@ import random
 from collections import defaultdict
 from typing import List
 
-from perudo.bot_loader import instantiate_bots, load_bots
+from perudo.bot_loader import load_bots
 from perudo.game import PerudoGame
 from perudo.models import BidEvent, CalzaEvent, DudoEvent, GameResult, RevealEvent
 
@@ -94,12 +93,10 @@ def main() -> None:
     parser.add_argument("--games", type=int, default=200, help="Aantal potjes.")
     parser.add_argument("--seed", type=int, default=12345, help="Basis-seed voor reproduceerbaarheid.")
     parser.add_argument("--csv", type=str, default=None, help="Optioneel: pad naar een CSV-resultatenlog.")
-    parser.add_argument("--bot", action="append", default=None,
-                        help="Class-naam van een bot (herhaalbaar). Zonder --bot spelen alle bots mee.")
     args = parser.parse_args()
 
     # Bots worden precies EEN keer geinitialiseerd, hier, buiten de loop.
-    bots = instantiate_bots(args.bot) if args.bot else load_bots()
+    bots = load_bots()
     bot_names = [bot.name for bot in bots]
     stats = Stats(bot_names)
     game_seeds = derive_game_seeds(args.seed, args.games)
