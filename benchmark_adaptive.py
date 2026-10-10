@@ -39,6 +39,8 @@ from run_simulation import derive_game_seeds
 from zoo import ZooBot, random_zoo_bot
 
 REPO_BOTS = ("SniperBot", "Trihard", "Fabulous", "OppaStyleBot", "SonnyBoy", "HundredIQBot")
+# The opponents that matter: --mix core seats only these (the default).
+CORE_BOTS = ("SonnyBoy", "OppaStyleBot", "Fabulous", "Trihard")
 # The strongest bots in the repo; --mix strong seats all three at every table
 # (a random subset at smaller tables).
 STRONG_BOTS = ("SniperBot", "Trihard", "OppaStyleBot")
@@ -47,6 +49,12 @@ STRONG_BOTS = ("SniperBot", "Trihard", "OppaStyleBot")
 def table_spec(seed, table, n_opponents, mix):
     """The opponents of one table, as rebuildable specs."""
     rng = random.Random(seed * 100_003 + table)
+    if mix == "core":
+        # Every core bot once, in random order; at bigger tables extra
+        # copies of random core bots (they get a numbered name).
+        picks = rng.sample(CORE_BOTS, min(len(CORE_BOTS), n_opponents))
+        picks += rng.choices(CORE_BOTS, k=n_opponents - len(picks))
+        return [("repo", name) for name in picks]
     specs = []
     # With fewer seats than strong bots, a random subset of them.
     strong = rng.sample(STRONG_BOTS, min(len(STRONG_BOTS), n_opponents)) if mix == "strong" else []
@@ -70,8 +78,11 @@ def build(specs, classes):
             bots.append(ZooBot(**spec))
         else:
             bot = classes[spec]()
-            if bot.name in seen:
-                continue  # same repo bot drawn twice
+            base, copy = bot.name, 2
+            while bot.name in seen:
+                # Same bot twice: names must be unique.
+                bot.name = f"{base} {copy}"
+                copy += 1
             bots.append(bot)
         seen.add(bots[-1].name)
     return bots
@@ -157,9 +168,10 @@ def main():
     parser.add_argument("--games", type=int, default=60, help="Games per table (learning carries over).")
     parser.add_argument("--opponents", type=int, default=5)
     parser.add_argument("--seed", type=int, default=1)
-    parser.add_argument("--mix", choices=("zoo", "repo", "strong"), default="zoo",
-                        help="zoo: only generated opponents; repo: 2 seats go to random repo bots; "
-                             "strong: Sniper, Trihard and Oppa Style at every table, rest zoo.")
+    parser.add_argument("--mix", choices=("core", "zoo", "repo", "strong"), default="core",
+                        help="core: only Sonny Boy, Oppa Style, Fabulous and Trihard (copies at "
+                             "big tables); zoo: only generated opponents; repo: 2 seats go to "
+                             "random repo bots; strong: Sniper, Trihard and Oppa Style, rest zoo.")
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--a", default="ADAPTIVE=False", help="Settings of variant A.")
     parser.add_argument("--b", default="ADAPTIVE=True", help="Settings of variant B.")

@@ -291,6 +291,7 @@ class OpponentProfiler:
     # per bid on it, and the chance a false bid gets challenged.
     PRIOR_EXCESS = {"nat-choice": 0.5, "nat-follow": 0.15, "paco-choice": 0.3, "paco-follow": 0.1}
     PRIOR_CHALLENGE = 0.5
+    PRIOR_CALZA = 0.05
     # Weight of the prior / pooled estimate, in observations.
     SHRINK = 10
 
@@ -327,6 +328,15 @@ class OpponentProfiler:
         if prof is None:
             return self._shrunk(0, 0, hit, faced, self.PRIOR_CHALLENGE)
         return self._shrunk(prof.false_challenged, prof.false_faced, hit, faced, self.PRIOR_CHALLENGE)
+
+    def calza_rate(self, name: Optional[str] = None) -> float:
+        """P(`name` calls Calza when facing a bid); the table average without a name."""
+        calls = sum(p.calzas for p in self.profiles.values())
+        chances = calls + sum(len(p.facing) for p in self.profiles.values())
+        prof = self.profiles.get(name) if name else None
+        if prof is None:
+            return self._shrunk(0, 0, calls, chances, self.PRIOR_CALZA)
+        return self._shrunk(prof.calzas, prof.calzas + len(prof.facing), calls, chances, self.PRIOR_CALZA)
 
     # -- event stream ---------------------------------------------------
 

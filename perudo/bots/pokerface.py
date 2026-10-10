@@ -48,7 +48,8 @@ import random
 
 from perudo.bots.sniper import QUOTES as SNIPER_QUOTES
 from perudo.bots.sniper import SniperBot
-from perudo.models import PACO, Bid, Dudo
+from perudo.models import PACO, Bid, Calza, Dudo, RevealEvent
+from perudo.rules import count_matches
 from perudo.profiler import OpponentProfiler, bid_kind
 from perudo.talk import Mouth, fmt_bid, last_bidder
 
@@ -73,6 +74,10 @@ QUOTES = {
         "{bid}. Ik zit er ook vol mee, toevallig.",
         "{bid}. Daar zijn er veel van. Ik kan het weten.",
         "{bid}. Iedereen heeft ze vandaag, hè?",
+    ],
+    "calza": [
+        "Calza. Precies goed. Ik heb het je gezicht zien zeggen.",
+        "Calza. Niet meer, niet minder.",
     ],
     "bid_held": [
         "{challenger}, je had moeten kijken naar mijn ogen. Daar stond niks in.",
@@ -114,6 +119,22 @@ class PokerfaceBot(SniperBot):
     ADAPT_TARGET = False
     # Bounds for the adapted TARGET.
     TARGET_RANGE = (0.6, 0.97)
+    # Learn how often the bids we face are really true, per estimate bucket
+    # and table size, and decide Dudo on that instead of the raw estimate.
+    CALIBRATE = True
+    # Weight of the raw estimate as a prior, in observations.
+    CALIBRATION_PRIOR = 20
+    # Call Calza ourselves when a correct one gains a die, P(exact) is at
+    # least CALZA_AT and it beats Dudo in expected dice.
+    CALZA = True
+    CALZA_AT = 0.5
+    # Avoid bids that the next player is likely to Calza correctly: skip a
+    # bid when P(exact) * their learned Calza rate exceeds CALZA_RISK.
+    AVOID_CALZA = True
+    CALZA_RISK = 0.1
+    # Set to a list to record every decision with what we believed at the
+    # time (see analyze_endgame.py). None = no logging.
+    decision_log = None
 
     def __init__(self):
         super().__init__()
@@ -123,6 +144,9 @@ class PokerfaceBot(SniperBot):
         # Learns per opponent name; lives as long as this instance, so
         # across all games of a simulation.
         self.profiler = OpponentProfiler(self.name)
+        # (table size class, estimate bucket) -> [times true, times seen]
+        self._calibration = {}
+        self._pending = []   # (key, bid, palifico) of bids faced this round
 
     # -- reading the others ------------------------------------------------
 
@@ -274,6 +298,11 @@ class PokerfaceBot(SniperBot):
         scored = [(self._prob_true(state, b, n_unknown, hints), b) for b in bids]
 
         safe = [(pt, b) for pt, b in scored if pt >= target]
+        if safe and self.AVOID_CALZA:
+            rate = self.profiler.calza_rate(self._next_player(state))
+            low_risk = [(pt, b) for pt, b in safe
+                        if rate * self._prob_exact(state, b, n_unknown, hints) <= self.CALZA_RISK]
+            safe = low_risk or safe
         if safe:
             best_p, best = max(safe, key=lambda s: (self._strength(s[1], state.palifico), s[0]))
         elif scored:
@@ -282,11 +311,20 @@ class PokerfaceBot(SniperBot):
             best_p, best = 0.0, None
 
         cur = state.current_bid
+        p_cur = None
         if cur is not None:
-            p_cur = self._prob_true(state, cur, n_unknown, hints)
+            p_cur = self._calibrated(state, cur, self._prob_true(state, cur, n_unknown, hints))
+            if self.CALZA and Calza() in state.legal_actions and self._calza_gains(state):
+                p_ex = self._calibrated(state, cur, self._prob_exact(state, cur, n_unknown, hints), exact=True)
+                # Expected dice: Calza +1 / -1, Dudo +1 (they lose) / -1.
+                if p_ex >= self.CALZA_AT and 2 * p_ex - 1 > 1 - 2 * p_cur:
+                    self.mouth.say("calza", announce="Calza!", bidder=last_bidder(state))
+                    self._log(state, Calza(), p_cur, best, best_p, hints, False)
+                    return Calza()
             if best is None or best_p < self.MIN_ACCEPT or p_cur < 1 - best_p:
                 key = "dudo_confident" if p_cur < 0.3 else "dudo_cornered"
                 self.mouth.say(key, announce="Dudo!", bidder=last_bidder(state))
+                self._log(state, Dudo(), p_cur, best, best_p, hints, False)
                 return Dudo()
 
         # We are going to bid. Decide whether to lie about the face.
@@ -298,8 +336,73 @@ class PokerfaceBot(SniperBot):
         else:
             key = "raise" if best_p >= target else "raise_risky"
         self.mouth.say(key, announce=fmt_bid(best), bid=fmt_bid(best))
+        self._log(state, best, p_cur, best, self._prob_true(state, best, n_unknown, hints), hints,
+                  bluff is not None)
         return best
+
+    def _prob_exact(self, state, bid, n_unknown, hints):
+        """P(exactly bid.quantity matching dice on the table)."""
+        more = Bid(bid.quantity + 1, bid.face)
+        return self._prob_true(state, bid, n_unknown, hints) - self._prob_true(state, more, n_unknown, hints)
+
+    @staticmethod
+    def _calza_gains(state):
+        """A correct Calza only gives a die while nobody is out and we have < 5."""
+        return all(p.alive for p in state.players) and state.my_dice_count < 5
+
+    # -- calibration ------------------------------------------------------
+
+    @staticmethod
+    def _size_class(state):
+        alive = sum(p.alive for p in state.players)
+        return min(alive, 4)
+
+    def _calibrated(self, state, bid, p, exact=False):
+        """
+        Our estimate for a bid we face, corrected by how often bids we gave
+        a similar estimate at a similar table size turned out true. Raw
+        estimates in head-to-head play are far too low (opponents' bids say
+        more about their hand than the hint model credits), and this learns
+        that from the reveals, for any opponent.
+        """
+        key = (exact, self._size_class(state), min(int(p * 10), 9))
+        self._pending.append((key, bid, state.palifico))
+        if not self.CALIBRATE:
+            return p
+        hits, n = self._calibration.get(key, (0, 0))
+        k = self.CALIBRATION_PRIOR
+        return (hits + k * p) / (n + k)
+
+    def _learn_calibration(self, event):
+        dice = [d for _, hand in event.dice for d in hand]
+        for key, bid, palifico in self._pending:
+            stat = self._calibration.setdefault(key, [0, 0])
+            actual = count_matches(dice, bid.face, palifico)
+            exact = key[0]
+            stat[0] += actual == bid.quantity if exact else actual >= bid.quantity
+            stat[1] += 1
+        self._pending = []
+
+    def _log(self, state, action, p_cur, best, best_p, hints, bluffed):
+        if self.decision_log is None:
+            return
+        self.decision_log.append(dict(
+            round=state.round_number,
+            players={p.name: p.dice_count for p in state.players if p.alive},
+            my_dice=state.my_dice,
+            palifico=state.palifico,
+            history=[(r.player, r.action) for r in state.history],
+            current=state.current_bid,
+            p_current=p_cur,
+            action=action,
+            best_raise=best,
+            p_best_raise=best_p,
+            hints=dict(hints),
+            bluffed=bluffed,
+        ))
 
     def observe(self, event):
         self.profiler.observe(event)
+        if isinstance(event, RevealEvent):
+            self._learn_calibration(event)
         super().observe(event)

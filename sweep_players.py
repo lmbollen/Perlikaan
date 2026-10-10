@@ -6,8 +6,8 @@ random tables and game seeds are played by several Pokerface variants. Each
 variant is compared with the baseline (the first one) on the same tables, so
 the differences are paired and the noise of the tables cancels out.
 
-Opponents come from zoo.py (unseen, random strategies) or, with
---mix strong, Sniper / Trihard / Oppa Style filled up with zoo bots. See
+Opponents are Sonny Boy, Oppa Style, Fabulous and Trihard (--mix core, the
+default; numbered copies at tables bigger than 5). Other mixes: see
 benchmark_adaptive.py.
 
 Usage:
@@ -39,7 +39,7 @@ def main():
     parser.add_argument("--tables", type=int, default=60, help="Tables per size.")
     parser.add_argument("--games", type=int, default=40, help="Games per table.")
     parser.add_argument("--seed", type=int, default=1)
-    parser.add_argument("--mix", choices=("zoo", "repo", "strong"), default="zoo")
+    parser.add_argument("--mix", choices=("core", "zoo", "repo", "strong"), default="core")
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--variants", nargs="*", default=None,
                         help="Settings per variant; the baseline (no changes) is always first.")
