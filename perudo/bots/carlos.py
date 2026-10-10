@@ -608,8 +608,11 @@ class CarlosBot(SharedMemory):
     # size and prediction bucket); weight of the prediction in observations.
     RESPONSE_PRIOR = 20
     # Added to the predicted chance that the next player calls Dudo on our
-    # bid, as the starting point of that calibration.
-    RESPONSE_SHIFT = 0.0
+    # bid, as the starting point of that calibration: opponents call Dudo on
+    # our bids more often than the model predicts (e.g. 11% where it says
+    # 4-7%), and one game is too short to learn that. Paired benchmarks at
+    # tables of 2-7: +4.8 and +4.6 +/- 1.6 pp win rate (0.05), +4.7 (0.07).
+    RESPONSE_SHIFT = 0.06
     # The chain looks only one round of turns ahead, so it underrates the risk
     # of a bid (later in the round we face higher bids). Learn how often we
     # really lost a die in rounds where we made a bid with a given predicted
