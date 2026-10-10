@@ -79,8 +79,9 @@ def table_spec(seed, table, n_opponents, mix):
     return specs
 
 
-def build(specs, classes):
-    bots, seen = [], set()
+def build(specs, classes, taken=()):
+    """Opponent bots for `specs`; names in `taken` (our own) count as used."""
+    bots, seen = [], set(taken)
     for kind, spec in specs:
         if kind == "zoo":
             bots.append(ZooBot(**spec))
@@ -127,7 +128,7 @@ def run_table(job):
         setattr(me, key, value)
     if hasattr(me, "_rng"):
         me._rng = random.Random(table)
-    bots = [me, *build(specs, classes)]
+    bots = [me, *build(specs, classes, taken={me.name})]
 
     positions, wins, aborted = [], [], 0
     for game_seed in derive_game_seeds(seed * 7 + table, games):
