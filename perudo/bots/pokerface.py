@@ -150,6 +150,16 @@ class PokerfaceBot(SniperBot):
     # this many players are left. They win big head-to-head and cost a
     # little at bigger tables (benchmark_adaptive.py / sweep_players.py).
     ENDGAME_PLAYERS = 2
+    # Dudo when it loses less often than raising: a Dudo loses when the bid
+    # is true, a raise only when it is false AND the next player challenges
+    # it (their learned challenge rate). Only in the endgame (ENDGAME_PLAYERS):
+    # head-to-head it adds +3.8 pp, at 5 players it costs 5.2 pp (there an
+    # unchallenged raise still tends to come back). Otherwise Sniper's rule:
+    # Dudo when P(bid true) < P(best raise false).
+    DUDO_EV = True
+    # In Palifico a follower could have called Dudo instead of raising, so
+    # their raise says something about their hand too (Sniper ignores it).
+    PALIFICO_FOLLOWERS = True
     # Set to a list to record every decision with what we believed at the
     # time (see analyze_endgame.py). None = no logging.
     decision_log = None
@@ -212,8 +222,9 @@ class PokerfaceBot(SniperBot):
 
     def _static_hint(self, state, face):
         """Extra dice of `face` we expect among opponents, based on their bids."""
-        # In Palifico only the opener chose the face; later bids are forced.
-        history = state.history[:1] if state.palifico else state.history
+        # Sniper: in Palifico only the opener chose the face; later bids are
+        # forced. Unless PALIFICO_FOLLOWERS: raising instead of Dudo is a choice.
+        history = state.history[:1] if (state.palifico and not self.PALIFICO_FOLLOWERS) else state.history
         dice_of = {p.name: p.dice_count for p in state.players}
 
         weight_of = {}
@@ -349,7 +360,12 @@ class PokerfaceBot(SniperBot):
                     self.mouth.say("calza", announce="Calza!", bidder=last_bidder(state))
                     self._log(state, Calza(), p_cur, best, best_p, hints, False)
                     return Calza()
-            if best is None or best_p < self.MIN_ACCEPT or p_cur < 1 - best_p:
+            if self.DUDO_EV and sum(p.alive for p in state.players) <= self.ENDGAME_PLAYERS:
+                challenge = self.profiler.challenge_rate(self._next_player(state))
+                call = best is None or p_cur < (1 - best_p) * challenge
+            else:
+                call = best is None or best_p < self.MIN_ACCEPT or p_cur < 1 - best_p
+            if call:
                 key = "dudo_confident" if p_cur < 0.3 else "dudo_cornered"
                 self.mouth.say(key, announce="Dudo!", bidder=last_bidder(state))
                 self._log(state, Dudo(), p_cur, best, best_p, hints, False)

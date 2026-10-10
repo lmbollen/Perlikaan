@@ -42,6 +42,8 @@ from zoo import ZooBot, random_zoo_bot
 REPO_BOTS = ("SniperBot", "Trihard", "Fabulous", "OppaStyleBot", "SonnyBoy", "HundredIQBot")
 # The opponents that matter: --mix core seats only these (the default).
 CORE_BOTS = ("SonnyBoy", "OppaStyleBot", "Fabulous", "Trihard")
+# --mix static: the core bots and Sniper.
+STATIC_BOTS = CORE_BOTS + ("SniperBot",)
 # The strongest bots in the repo; --mix strong seats all three at every table
 # (a random subset at smaller tables).
 STRONG_BOTS = ("SniperBot", "Trihard", "OppaStyleBot")
@@ -50,6 +52,11 @@ STRONG_BOTS = ("SniperBot", "Trihard", "OppaStyleBot")
 def table_spec(seed, table, n_opponents, mix):
     """The opponents of one table, as rebuildable specs."""
     rng = random.Random(seed * 100_003 + table)
+    if mix == "static":
+        # Every non-learning-from-us opponent we know: the core bots + Sniper.
+        picks = rng.sample(STATIC_BOTS, min(len(STATIC_BOTS), n_opponents))
+        picks += rng.choices(STATIC_BOTS, k=n_opponents - len(picks))
+        return [("repo", name) for name in picks]
     if mix == "core":
         # Every core bot once, in random order; at bigger tables extra
         # copies of random core bots (they get a numbered name).
@@ -174,7 +181,7 @@ def main():
     parser.add_argument("--games", type=int, default=60, help="Games per table (learning carries over).")
     parser.add_argument("--opponents", type=int, default=5)
     parser.add_argument("--seed", type=int, default=1)
-    parser.add_argument("--mix", choices=("core", "zoo", "repo", "strong"), default="core",
+    parser.add_argument("--mix", choices=("core", "static", "zoo", "repo", "strong"), default="core",
                         help="core: only Sonny Boy, Oppa Style, Fabulous and Trihard (copies at "
                              "big tables); zoo: only generated opponents; repo: 2 seats go to "
                              "random repo bots; strong: Sniper, Trihard and Oppa Style, rest zoo.")
