@@ -156,6 +156,14 @@ def run_table(job):
     return table, variant, len(bots), positions, wins, learned, aborted
 
 
+def fresh_seed(seed):
+    """The given seed, or a new random one so every run plays new games."""
+    if seed is None:
+        seed = random.SystemRandom().randrange(1, 10**9)
+    print(f"seed = {seed}  (herhaal met --seed {seed})")
+    return seed
+
+
 def parse_settings(text):
     """"A=1,B=False" -> {"A": 1, "B": False}"""
     out = {}
@@ -181,7 +189,7 @@ def main():
     parser.add_argument("--tables", type=int, default=40)
     parser.add_argument("--games", type=int, default=60, help="Games per table (learning carries over).")
     parser.add_argument("--opponents", type=int, default=5)
-    parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--seed", type=int, default=None, help="Default: a new random seed per run.")
     parser.add_argument("--mix", choices=("core", "static", "zoo", "repo", "strong"), default="core",
                         help="core: only Sonny Boy, Oppa Style, Fabulous and Trihard (copies at "
                              "big tables); zoo: only generated opponents; repo: 2 seats go to "
@@ -191,6 +199,7 @@ def main():
     parser.add_argument("--b", default="ADAPTIVE=True", help="Settings of variant B.")
     args = parser.parse_args()
 
+    args.seed = fresh_seed(args.seed)
     variants = (parse_settings(args.a), parse_settings(args.b))
     jobs = [(args.seed, t, args.opponents, args.mix, args.games, v, variants[v])
             for t in range(args.tables) for v in (0, 1)]

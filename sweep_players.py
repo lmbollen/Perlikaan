@@ -21,7 +21,7 @@ from __future__ import annotations
 import argparse
 from multiprocessing import Pool
 
-from benchmark_adaptive import MAX_ROUNDS, mean_se, parse_settings, run_table
+from benchmark_adaptive import fresh_seed, MAX_ROUNDS, mean_se, parse_settings, run_table
 
 DEFAULT_VARIANTS = (
     "",                     # baseline: Pokerface as it is
@@ -39,7 +39,7 @@ def main():
     parser.add_argument("--max-players", type=int, default=7)
     parser.add_argument("--tables", type=int, default=60, help="Tables per size.")
     parser.add_argument("--games", type=int, default=40, help="Games per table.")
-    parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--seed", type=int, default=None, help="Default: a new random seed per run.")
     parser.add_argument("--mix", choices=("core", "static", "zoo", "repo", "strong"), default="core")
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--variants", nargs="*", default=None,
@@ -48,6 +48,7 @@ def main():
                         help="Settings shared by the baseline and every variant, e.g. BOT=CarlosBot.")
     args = parser.parse_args()
 
+    args.seed = fresh_seed(args.seed)
     variants = ["", *(args.variants if args.variants is not None else DEFAULT_VARIANTS[1:])]
     base = parse_settings(args.base)
     settings = [{**base, **parse_settings(v)} for v in variants]

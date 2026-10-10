@@ -25,7 +25,7 @@ import random
 from collections import Counter, defaultdict
 from multiprocessing import Pool
 
-from benchmark_adaptive import RoundLimit, TooManyRounds, build, table_spec
+from benchmark_adaptive import fresh_seed, RoundLimit, TooManyRounds, build, table_spec
 from perudo.bot_loader import discover_bot_classes_by_name
 from perudo.game import PerudoGame
 from perudo.models import PACO, Bid, Calza, Dudo, DieLostEvent, RevealEvent, RoundEndedEvent
@@ -152,12 +152,13 @@ def main():
     parser.add_argument("--games", type=int, default=40)
     parser.add_argument("--start-players", type=int, default=5, help="Players at the start of each game.")
     parser.add_argument("--players", type=int, default=2, help="Analyse rounds with at most this many players left.")
-    parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--seed", type=int, default=None, help="Default: a new random seed per run.")
     parser.add_argument("--show", type=int, default=10)
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--mix", default="core", help="Opponents, see benchmark_adaptive.py (core, static, ...).")
     args = parser.parse_args()
 
+    args.seed = fresh_seed(args.seed)
     jobs = [(args.seed, t, args.start_players - 1, args.games, args.mix) for t in range(args.tables)]
     with Pool(args.jobs) as pool:
         rows = [r for part in pool.map(run, jobs) for r in part]
