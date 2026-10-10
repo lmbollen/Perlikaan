@@ -133,19 +133,23 @@ class PokerfaceBot(SniperBot):
     # bid when P(exact) * their learned Calza rate exceeds CALZA_RISK.
     AVOID_CALZA = True
     CALZA_RISK = 0.1
-    # Pick bids by a one-step lookahead instead of "strongest bid that is
-    # TARGET likely": for every hand the next player may hold, how likely is
+    # Pick bids by a one-step lookahead (in the endgame, see ENDGAME_PLAYERS)
+    # instead of "strongest bid that is TARGET likely": for every hand the next player may hold, how likely is
     # our bid (to us) and how likely does it look to them? With their learned
     # Dudo threshold and Calza rate that gives the expected dice of each bid.
     # Bids that are true but look false to them (traps) score best; bids
     # that hand them an easy Dudo or Calza score worst.
-    LOOKAHEAD = False
+    LOOKAHEAD = True
     # Only bids at least this likely (to us) are considered.
     LOOKAHEAD_MIN = 0.5
     # How sharp an opponent's Dudo threshold is (logistic width).
     DUDO_SOFTNESS = 0.07
     # Dudo threshold assumed for an opponent we know nothing about yet.
     DEFAULT_DUDO_AT = 0.3
+    # CALIBRATE, CALZA, AVOID_CALZA and LOOKAHEAD only kick in once at most
+    # this many players are left. They win big head-to-head and cost a
+    # little at bigger tables (benchmark_adaptive.py / sweep_players.py).
+    ENDGAME_PLAYERS = 2
     # Set to a list to record every decision with what we believed at the
     # time (see analyze_endgame.py). None = no logging.
     decision_log = None
@@ -317,12 +321,13 @@ class PokerfaceBot(SniperBot):
         scored = [(self._prob_true(state, b, n_unknown, hints), b) for b in bids]
 
         safe = [(pt, b) for pt, b in scored if pt >= target]
-        if safe and self.AVOID_CALZA:
+        endgame = sum(p.alive for p in state.players) <= self.ENDGAME_PLAYERS
+        if safe and self.AVOID_CALZA and endgame:
             rate = self.profiler.calza_rate(self._next_player(state))
             low_risk = [(pt, b) for pt, b in safe
                         if rate * self._prob_exact(state, b, n_unknown, hints) <= self.CALZA_RISK]
             safe = low_risk or safe
-        if self.LOOKAHEAD and not state.palifico and scored:
+        if self.LOOKAHEAD and endgame and not state.palifico and scored:
             picked = self._lookahead_pick(state, scored, n_unknown, hints)
             if picked is not None:
                 safe = [picked]
@@ -337,7 +342,7 @@ class PokerfaceBot(SniperBot):
         p_cur = None
         if cur is not None:
             p_cur = self._calibrated(state, cur, self._prob_true(state, cur, n_unknown, hints))
-            if self.CALZA and Calza() in state.legal_actions and self._calza_gains(state):
+            if self.CALZA and endgame and Calza() in state.legal_actions and self._calza_gains(state):
                 p_ex = self._calibrated(state, cur, self._prob_exact(state, cur, n_unknown, hints), exact=True)
                 # Expected dice: Calza +1 / -1, Dudo +1 (they lose) / -1.
                 if p_ex >= self.CALZA_AT and 2 * p_ex - 1 > 1 - 2 * p_cur:
@@ -448,7 +453,7 @@ class PokerfaceBot(SniperBot):
         """
         key = (exact, self._size_class(state), min(int(p * 10), 9))
         self._pending.append((key, bid, state.palifico))
-        if not self.CALIBRATE:
+        if not self.CALIBRATE or sum(pl.alive for pl in state.players) > self.ENDGAME_PLAYERS:
             return p
         hits, n = self._calibration.get(key, (0, 0))
         k = self.CALIBRATION_PRIOR
