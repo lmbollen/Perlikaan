@@ -1,7 +1,7 @@
 """Carlos: Markov-chain move choice on learned opponent models."""
 
 from perudo.bots.carlos import CarlosBot, convolve, min_quantity, tail
-from perudo.models import PACO, ActionRecord, Bid, Calza, Dudo, Observation, PublicPlayer
+from perudo.models import PACO, ActionRecord, Bid, BidEvent, Calza, Dudo, DudoEvent, Observation, PublicPlayer, RevealEvent
 from perudo.rules import legal_actions
 
 
@@ -68,3 +68,17 @@ def test_learning_survives_a_new_instance():
     third = CarlosBot()
     third._ensure_memory()
     assert "A" not in third.hist
+
+
+def test_older_games_count_less():
+    from perudo.models import GameEndedEvent
+    bot = CarlosBot()
+    bot.observe(BidEvent("A", Bid(3, 6)))
+    bot.observe(DudoEvent("B"))
+    bot.observe(RevealEvent(dice=(("Carlos", (2,)), ("A", (6, 6, 6, 2, 3)), ("B", (2, 3, 4, 5, 2))),
+                            current_bid=Bid(3, 6), actual_count=3, challenge_type="dudo",
+                            challenger="B", bidder="A", result="bidder_correct"))
+    before = sum(sum(c.values()) for c in bot.hist["A"].values())
+    bot.observe(GameEndedEvent(winner="Carlos", standings=("Carlos", "A", "B")))
+    after = sum(sum(c.values()) for c in bot.hist["A"].values())
+    assert before > 0 and abs(after - before * bot.GAME_DECAY) < 1e-9

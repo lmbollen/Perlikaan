@@ -643,6 +643,10 @@ class TheDonBot(SharedMemory, _TrihardCore):
     PROTECT_MIN_TRUE = 0.75
     # Penalty on a Dudo against a protected left neighbour.
     SPARE_PENALTY = 0.5
+    # Once per game, the learned honesty evidence is multiplied by this, so
+    # the latest games count more than older ones (0.95: a game 14 games ago
+    # counts half). The Dudo thresholds already move a step per round.
+    GAME_DECAY = 0.95
 
     def __init__(self) -> None:
         super().__init__()
@@ -675,6 +679,10 @@ class TheDonBot(SharedMemory, _TrihardCore):
     def observe(self, event) -> None:
         self._ensure_memory()
         super().observe(event)
+        if isinstance(event, GameEndedEvent) and self.GAME_DECAY < 1:
+            for ll in self._honesty_ll.values():
+                for i in range(len(ll)):
+                    ll[i] *= self.GAME_DECAY
 
     def play(self, state: Observation) -> Action:
         self._ensure_memory()
