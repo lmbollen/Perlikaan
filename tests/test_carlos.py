@@ -1,6 +1,6 @@
 """Carlos: Markov-chain move choice on learned opponent models."""
 
-from perudo.bots.carlos import CarlosBot, _to_local, convolve, min_quantity, tail
+from perudo.bots.carlos import CarlosBot, convolve, min_quantity, tail
 from perudo.models import PACO, ActionRecord, Bid, Calza, Dudo, Observation, PublicPlayer
 from perudo.rules import legal_actions
 
@@ -48,7 +48,7 @@ def test_learns_that_a_player_bids_what_it_holds():
                                 current_bid=Bid(3, 6), actual_count=3, challenge_type="dudo",
                                 challenger="B", bidder="A", result="bidder_correct"))
     state = _state([2, 3], [ActionRecord("A", Bid(3, 6))], Bid(3, 6))
-    post = bot._posteriors(_to_local(state))["A"][6]
+    post = bot._posteriors(state)["A"][6]
     assert sum(k * w for k, w in enumerate(post)) > 2.5
 
 

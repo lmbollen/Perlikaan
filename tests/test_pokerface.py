@@ -1,7 +1,6 @@
 """Pokerface bluffs about faces it doesn't hold, but only with plausible bids."""
 
-from perudo.bots import sniper
-from perudo.bots.pokerface import PokerfaceBot, _to_local
+from perudo.bots.pokerface import PokerfaceBot
 from perudo.bots.sniper import SniperBot
 from perudo.models import PACO, ActionRecord, Bid, Dudo, Observation, PublicPlayer
 from perudo.rules import legal_actions
@@ -71,8 +70,7 @@ def test_bluff_bids_are_still_plausible():
 def test_chain_of_raises_counts_less_than_for_sniper():
     chain = [ActionRecord("A", Bid(2, PACO)), ActionRecord("B", Bid(3, PACO))]
     state = _state([2, 3], chain, current_bid=Bid(3, PACO))
-    # Internal methods take the bot file's own types (play() translates).
-    assert PokerfaceBot()._hint(_to_local(state), PACO) < SniperBot()._hint(sniper._to_local(state), PACO)
+    assert PokerfaceBot()._hint(state, PACO) < SniperBot()._hint(state, PACO)
 
 
 def test_learned_hint_trusts_honest_and_ignores_bluffers():
@@ -81,12 +79,12 @@ def test_learned_hint_trusts_honest_and_ignores_bluffers():
     # holding none.
     dice = {"A": (6, 6, 6, 2, 3), "B": (2, 3, 4, 5, 5), "Pokerface": (2,)}
     for _ in range(10):
-        bot.profiler.record_round(dice, _to_local((("A", Bid(1, 6)), ("Pokerface", Dudo()))), False)
-        bot.profiler.record_round(dice, _to_local((("B", Bid(1, 6)), ("Pokerface", Dudo()))), False)
+        bot.profiler.record_round(dice, [("A", Bid(1, 6)), ("Pokerface", Dudo())], False)
+        bot.profiler.record_round(dice, [("B", Bid(1, 6)), ("Pokerface", Dudo())], False)
     honest = _state([2, 3], [ActionRecord("A", Bid(2, 6))], current_bid=Bid(2, 6))
     liar = _state([2, 3], [ActionRecord("B", Bid(2, 6))], current_bid=Bid(2, 6))
-    assert bot._hint(_to_local(honest), 6) > 1.0
-    assert bot._hint(_to_local(liar), 6) < 0
+    assert bot._hint(honest, 6) > 1.0
+    assert bot._hint(liar, 6) < 0
 
 
 def test_target_is_bolder_against_a_player_who_never_challenges():
@@ -96,12 +94,12 @@ def test_target_is_bolder_against_a_player_who_never_challenges():
         # A faces a false bid of 5x6 and raises; B faces one and calls Dudo.
         bot.profiler.record_round(
             {"A": (2,), "B": (3,), "Pokerface": (4,)},
-            _to_local((("Pokerface", Bid(2, 2)), ("A", Bid(3, 2)), ("B", Dudo()))),
+            [("Pokerface", Bid(2, 2)), ("A", Bid(3, 2)), ("B", Dudo())],
             False,
         )
     state = _state([2, 3, 4])   # seats: Pokerface, A, B -> A is next
-    assert bot._next_player(_to_local(state)) == "A"
-    assert bot._target(_to_local(state), bot.TARGET) < bot.TARGET
+    assert bot._next_player(state) == "A"
+    assert bot._target(state, bot.TARGET) < bot.TARGET
 
 
 def test_calza_only_when_it_gains_a_die():
