@@ -72,6 +72,9 @@ QUOTES = {
 class TheDonBot(Trihard):
     name = "The Don"
 
+    # Switch the two halves of the policy on or off.
+    ATTACK = True
+    PROTECT = True
     # Value of a strong neighbour losing a die, on top of the normal +1.
     ATTACK_BONUS = 0.6
     # Toward a protected right neighbour: penalty per unit of chance that
@@ -116,7 +119,7 @@ class TheDonBot(Trihard):
         hints = self._collect_hints(state)
         right = self._next_player(state)
         left = self._neighbour(state, -1)
-        protect_right = self._protected(state, right)
+        protect_right = self.PROTECT and self._protected(state, right)
 
         best_bid, best_bid_ev, best_bid_p = self._best_bid_don(
             state, others, hints, right, legal_bids, protect_right)
@@ -135,8 +138,9 @@ class TheDonBot(Trihard):
         if bidder in (left.name, right.name):
             neighbour = left if bidder == left.name else right
             if self._protected(state, neighbour):
-                ev_dudo -= self.SPARE_PENALTY
-            else:
+                if self.PROTECT:
+                    ev_dudo -= self.SPARE_PENALTY
+            elif self.ATTACK:
                 ev_dudo += self.ATTACK_BONUS * (1.0 - p_true)
         gain = GAIN_VALUE if (self._recovery_enabled and state.my_dice_count < MAX_DICE) else FREE_PASS_VALUE
         ev_calza = p_exact * gain - (1.0 - p_exact)
@@ -202,7 +206,7 @@ class TheDonBot(Trihard):
                 c = _sigmoid((theta - self._at_least(their_at_least, q - m)) / OPP_CHALLENGE_SOFTNESS)
                 challenge += pm * c
                 value = c * (2.0 * p_true_m - 1.0) + (1.0 - c) * CONTINUE_VALUE
-                if not protect:
+                if not protect and self.ATTACK:
                     # They challenge a true bid: our neighbour loses a die.
                     value += self.ATTACK_BONUS * c * p_true_m
                 ev += pm * value
