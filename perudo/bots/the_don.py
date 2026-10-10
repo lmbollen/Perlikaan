@@ -75,6 +75,8 @@ class TheDonBot(Trihard):
     # Switch the two halves of the policy on or off.
     ATTACK = True
     PROTECT = True
+    # Attack through Dudo on a strong neighbour's bid (besides trap bids).
+    ATTACK_DUDO = True
     # Value of a strong neighbour losing a die, on top of the normal +1.
     ATTACK_BONUS = 0.6
     # Toward a protected right neighbour: penalty per unit of chance that
@@ -140,7 +142,7 @@ class TheDonBot(Trihard):
             if self._protected(state, neighbour):
                 if self.PROTECT:
                     ev_dudo -= self.SPARE_PENALTY
-            elif self.ATTACK:
+            elif self.ATTACK and self.ATTACK_DUDO:
                 ev_dudo += self.ATTACK_BONUS * (1.0 - p_true)
         gain = GAIN_VALUE if (self._recovery_enabled and state.my_dice_count < MAX_DICE) else FREE_PASS_VALUE
         ev_calza = p_exact * gain - (1.0 - p_exact)
