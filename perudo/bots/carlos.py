@@ -48,6 +48,7 @@ from collections import defaultdict
 
 from perudo.models import PACO, Bid, Calza, Dudo, RevealEvent, RoundEndedEvent, GameEndedEvent
 from perudo.models import BidEvent, CalzaEvent, DieLostEvent, DudoEvent
+from perudo.models import PublicPlayer
 from perudo.profiler import OpponentProfiler
 from perudo.rules import count_matches
 from perudo.talk import Mouth, fmt_bid, last_bidder
@@ -211,6 +212,10 @@ class CarlosBot:
     LAPS_HEADS_UP = 2
     # Raises per face we consider at a later turn of ours (keeps it fast).
     CAND_INNER = 2
+    # Also correct the Dudo / Calza chance at every later step of the chain,
+    # by replaying every opponent decision of a round at the reveal: what our
+    # model predicted from what we knew then, against what they did.
+    CALIBRATE_ALL_RESPONSES = True
     # When the chain comes back to us, raising is valued as
     # -(1 - P(our best raise true)) * this.
     OUR_RAISE_RISK = 0.5
@@ -236,11 +241,18 @@ class CarlosBot:
         self._beta = {}         # name -> weights of their raise-choice model
         self._risk_pending = []
         self._lost_this_round = False
+        self._seats = None      # PublicPlayer per seat, from on_game_start
+        self._round_end = None
+        self._my_id = None
         self._awaiting = None   # (size, pd, pc) of our last bid, until the next player acts
 
     # ------------------------------------------------------------------
     # learning
     # ------------------------------------------------------------------
+
+    def on_game_start(self, info):
+        self._seats = info.players
+        self._my_id = info.my_id
 
     def observe(self, event):
         self.profiler.observe(event)
@@ -268,7 +280,10 @@ class CarlosBot:
             self._round.append((event.player, event.bid))
         elif isinstance(event, (DudoEvent, CalzaEvent)):
             self._round.append((event.player, None))
+            self._round_end = (event.player, "dudo" if isinstance(event, DudoEvent) else "calza")
         elif isinstance(event, RevealEvent):
+            if self.CALIBRATE_ALL_RESPONSES:
+                self._learn_responses(event)
             self._learn_hands(event, self._palifico)
             if not self._palifico:
                 self._learn_raises(event)
@@ -431,6 +446,38 @@ class CarlosBot:
         dist = [(p / kept, b) for p, b in best]
         ctx["memo"][key] = dist
         return dist
+
+    def _learn_responses(self, event):
+        """Replay this round's opponent decisions with what we knew back then."""
+        if self._seats is None or self.name not in event.dice_by_player():
+            return
+        from perudo.models import ActionRecord, Observation
+        dice = event.dice_by_player()
+        players = tuple(PublicPlayer(id=p.id, name=p.name, dice_count=len(dice.get(p.name, ())),
+                                     alive=p.name in dice) for p in self._seats)
+        mine = tuple(dice[self.name])
+        history = []
+        for player, bid in self._round:
+            current = history[-1].action if history else None
+            if current is not None and player != self.name and player in dice:
+                state = Observation(my_id=self._my_id, my_dice=mine, my_dice_count=len(mine),
+                                    players=players, current_bid=current, palifico=self._palifico,
+                                    round_number=0, history=tuple(history), legal_actions=())
+                ctx = self._setup(state)
+                if self._raise_options(current, ctx["total"], ctx["pal"], ctx["pal_face"]):
+                    pd, pc = self._next_response(ctx, current, player)
+                    size = min(len(ctx["dice"]), 4)
+                    for kind, pred, hit in (("any-dudo", pd, bid is None and self._was_dudo(player)),
+                                            ("any-calza", pc, bid is None and not self._was_dudo(player))):
+                        stat = self._response.setdefault((kind, size, self._resp_bucket(pred)), [0, 0])
+                        stat[0] += hit
+                        stat[1] += 1
+            if bid is None:
+                break
+            history.append(ActionRecord(player=player, action=bid))
+
+    def _was_dudo(self, player):
+        return self._round_end == (player, "dudo")
 
     @staticmethod
     def _implied(bid, n, total, palifico=False):
@@ -672,9 +719,9 @@ class CarlosBot:
         p = max(p, 1e-3)
         return ((hits + k * p) / (n + k)) / p
 
-    def _next_response(self, ctx, bid):
-        """(P(Dudo), P(Calza)) of the next player on our `bid`, before correction."""
-        actor = ctx["order"][0]
+    def _next_response(self, ctx, bid, actor=None):
+        """(P(Dudo), P(Calza)) of `actor` (default: the next player) on `bid`, before correction."""
+        actor = actor or ctx["order"][0]
         n = ctx["dice"][actor]
         p = p_face(bid.face, ctx["pal"])
         a, b = self._dudo_model(actor)
@@ -743,6 +790,10 @@ class CarlosBot:
             pd0, pc0 = self._next_response(ctx, bid)
             rd = self._response_ratio(ctx, "dudo", pd0)
             rc = self._response_ratio(ctx, "calza", pc0)
+        elif self.CALIBRATE_ALL_RESPONSES:
+            pd0, pc0 = self._next_response(ctx, bid, actor)
+            rd = self._response_ratio(ctx, "any-dudo", pd0)
+            rc = self._response_ratio(ctx, "any-calza", pc0)
         value = 0.0
         p_raise = 0.0
         for k, pk in enumerate(post):
