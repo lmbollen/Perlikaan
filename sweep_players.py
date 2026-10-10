@@ -13,6 +13,7 @@ benchmark_adaptive.py.
 Usage:
     uv run python sweep_players.py --tables 60 --games 40
     uv run python sweep_players.py --mix strong --variants "TARGET=0.8" "TARGET=0.9"
+    uv run python sweep_players.py --base BOT=CarlosBot --variants "OTHER_WEIGHT=2"
 """
 
 from __future__ import annotations
@@ -43,10 +44,13 @@ def main():
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--variants", nargs="*", default=None,
                         help="Settings per variant; the baseline (no changes) is always first.")
+    parser.add_argument("--base", default="",
+                        help="Settings shared by the baseline and every variant, e.g. BOT=CarlosBot.")
     args = parser.parse_args()
 
     variants = ["", *(args.variants if args.variants is not None else DEFAULT_VARIANTS[1:])]
-    settings = [parse_settings(v) for v in variants]
+    base = parse_settings(args.base)
+    settings = [{**base, **parse_settings(v)} for v in variants]
     sizes = range(args.min_players, args.max_players + 1)
 
     jobs = [(args.seed + 1000 * size, t, size - 1, args.mix, args.games, 0, settings[v])
@@ -67,7 +71,8 @@ def main():
                 pos.setdefault((size, v), []).append(sum(positions) / max(len(positions), 1))
 
     names = ["baseline", *variants[1:]]
-    print(f"{args.tables} tafels x {args.games} games per grootte, tegenstanders: {args.mix}")
+    print(f"{args.tables} tafels x {args.games} games per grootte, tegenstanders: {args.mix}"
+          + (f", basis: {args.base}" if args.base else ""))
     print(f"Afgebroken games (> {MAX_ROUNDS} rondes, niet meegeteld): {aborted}\n")
     print("Winst % per tafelgrootte (verschil met baseline ± standaardfout, gepaard):\n")
     width = max(len(n) for n in names) + 2
