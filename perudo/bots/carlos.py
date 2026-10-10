@@ -36,8 +36,6 @@ losing a die ourselves counts -1, an opponent losing one +1/(opponents), a
 correct Calza of ours +1 (only while it gains a die).
 
 New players start out as the average of everyone seen so far.
-
-Zet TALK_TO_ME=true om Carlos te horen.
 """
 
 from __future__ import annotations
@@ -57,12 +55,85 @@ from perudo.models import (
     Dudo,
     DudoEvent,
     GameEndedEvent,
+    NORMAL_FACES,
     PublicPlayer,
     RevealEvent,
     RoundEndedEvent,
 )
-from perudo.rules import count_matches, legal_bids
-from perudo.talk import Mouth, fmt_bid, last_bidder
+
+
+# ---------------------------------------------------------------------------
+# Rule helpers (private copies, so this file depends only on perudo.models)
+# ---------------------------------------------------------------------------
+
+def _count_matches(dice_values: Sequence[int], face: int, palifico: bool) -> int:
+    """How many dice count towards a bid on `face`."""
+    if palifico:
+        return sum(1 for d in dice_values if d == face)
+    if face == PACO:
+        return sum(1 for d in dice_values if d == PACO)
+    return sum(1 for d in dice_values if d == face or d == PACO)
+
+
+def _legal_bids(
+    current_bid: Optional[Bid],
+    palifico: bool,
+    palifico_face: Optional[int],
+    total_dice: int,
+) -> List[Bid]:
+    """All legal Bid actions given the current state of a round."""
+    max_q = max(total_dice, 1)
+    bids: List[Bid] = []
+
+    if current_bid is None:
+        # Opening bid of the round.
+        faces = range(1, 7) if palifico else NORMAL_FACES
+        for face in faces:
+            for q in range(1, max_q + 1):
+                bids.append(Bid(q, face))
+        return bids
+
+    q0, f0 = current_bid.quantity, current_bid.face
+
+    if palifico:
+        # Face is locked for the whole round; only quantity may increase.
+        face = palifico_face
+        for q in range(q0 + 1, max_q + 1):
+            bids.append(Bid(q, face))
+        return bids
+
+    # Normal (non-Palifico) round, a bid already exists.
+    if f0 == PACO:
+        # Paco -> higher Paco.
+        for q in range(q0 + 1, max_q + 1):
+            bids.append(Bid(q, PACO))
+        # Paco -> normal face, quantity must at least double (+1).
+        min_q_normal = 2 * q0 + 1
+        for q in range(min_q_normal, max_q + 1):
+            for face in NORMAL_FACES:
+                bids.append(Bid(q, face))
+    else:
+        # Same quantity, strictly higher normal face.
+        for face in range(f0 + 1, 7):
+            bids.append(Bid(q0, face))
+        # Higher quantity, any normal face (including the same one).
+        for q in range(q0 + 1, max_q + 1):
+            for face in NORMAL_FACES:
+                bids.append(Bid(q, face))
+        # Normal -> Paco, quantity at least ceil(q0 / 2).
+        min_q_paco = math.ceil(q0 / 2)
+        for q in range(min_q_paco, max_q + 1):
+            bids.append(Bid(q, PACO))
+
+    return bids
+
+
+def _last_bidder(state, default: Optional[str] = None) -> Optional[str]:
+    """Name of the player who made the last bid this round, or `default`."""
+    for record in reversed(state.history):
+        if isinstance(record.action, Bid):
+            return record.player
+    return default
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +162,7 @@ def p_at_least(n: int, p: float, need: int) -> float:
 def p_bid_true(bid: Bid, own_dice: Sequence[int], total_dice: int, palifico: bool = False) -> float:
     """P(bid holds | own dice), every unknown die independent and uniform."""
     p = 1 / 6 if (palifico or bid.face == PACO) else 1 / 3
-    need = bid.quantity - count_matches(own_dice, bid.face, palifico)
+    need = bid.quantity - _count_matches(own_dice, bid.face, palifico)
     return p_at_least(total_dice - len(own_dice), p, need)
 
 
@@ -394,12 +465,12 @@ class OpponentProfiler:
             if isinstance(action, Calza):
                 prof.calzas += 1
                 continue
-            options = legal_bids(prev, False, None, total) if prev is not None else []
+            options = _legal_bids(prev, False, None, total) if prev is not None else []
             # A Dudo is only a choice when a raise was possible.
             if prev is not None and options:
                 p_cur = p_bid_true(prev, own, total)
                 prof.facing.append((p_cur, isinstance(action, Dudo)))
-                if count_matches(all_dice, prev.face, False) < prev.quantity:
+                if _count_matches(all_dice, prev.face, False) < prev.quantity:
                     prof.false_faced += 1
                     prof.false_challenged += isinstance(action, Dudo)
             if not isinstance(action, Bid):
@@ -434,11 +505,11 @@ class OpponentProfiler:
         """How good a pick was this face, given their dice? Skips Paco bids."""
         if bid.face == PACO:
             return
-        counts = [count_matches(own, f, False) for f in range(2, 7)]
+        counts = [_count_matches(own, f, False) for f in range(2, 7)]
         best, mean = max(counts), sum(counts) / len(counts)
         if best == mean:
             return  # every face equally good: no information
-        prof.face_scores.append((count_matches(own, bid.face, False) - mean) / (best - mean))
+        prof.face_scores.append((_count_matches(own, bid.face, False) - mean) / (best - mean))
 
     # -- reporting --------------------------------------------------------
 
@@ -486,29 +557,6 @@ class SharedMemory:
 # ---------------------------------------------------------------------------
 # Carlos
 # ---------------------------------------------------------------------------
-
-QUOTES = {
-    "open": [
-        "{bid}. De keten is berekend, amigo.",
-        "{bid}. Ik heb alle toestanden al gezien.",
-    ],
-    "raise": [
-        "{bid}. Overgangskans in mijn voordeel.",
-        "{bid}. Jouw volgende toestand is een slechte.",
-        "{bid}.",
-    ],
-    "dudo": [
-        "Dudo. {bidder}, de keten zegt nee.",
-        "Dudo. Absorberende toestand bereikt, {bidder}.",
-    ],
-    "calza": [
-        "Calza. Precies wat de verdeling zei.",
-    ],
-    "dudo_right": ["Zoals berekend. Gracias, {bidder}."],
-    "dudo_wrong": ["{actual}. Een uitschieter in de staart. Gebeurt."],
-    "bid_held": ["{challenger}, je reageerde precies zoals je model zei."],
-    "won": ["Carlos wint. De keten wist het al."],
-}
 
 # Residual = matches held - matches the bid implied, clipped to this range.
 R_MIN, R_MAX = -8, 8
@@ -688,7 +736,6 @@ class CarlosBot(SharedMemory):
 
     def __init__(self):
         self.name = "Carlos"
-        self.mouth = Mouth(self, QUOTES)
         self.profiler = OpponentProfiler(self.name)
         self._rng = random.Random()
         # name -> kind -> residual histogram (dict r -> count)
@@ -774,7 +821,6 @@ class CarlosBot(SharedMemory):
         elif isinstance(event, GameEndedEvent):
             self._palifico = False
             self._round = []
-        self.mouth.react(event)
 
     @staticmethod
     def _last_claims(actions, me):
@@ -807,12 +853,12 @@ class CarlosBot(SharedMemory):
                 own = dice[player]
                 for f in range(2, 7):
                     if f not in bid_on:
-                        self.other[player][len(own)][count_matches(own, f, False)] += 1
+                        self.other[player][len(own)][_count_matches(own, f, False)] += 1
         for (player, face), (bid, chosen) in claims.items():
             if player not in dice:
                 continue
             own = dice[player]
-            k = count_matches(own, face, palifico)
+            k = _count_matches(own, face, palifico)
             r = k - self._implied(bid, len(own), total, palifico)
             r = max(R_MIN, min(R_MAX, r))
             self.hist[player][self._kind(chosen, palifico, len(own), face)][r] += 1
@@ -869,7 +915,7 @@ class CarlosBot(SharedMemory):
             if prev is not None and player != self.name and player in dice:
                 own = dice[player]
                 n = len(own)
-                mean_k = {f: count_matches(own, f, False) for f in range(1, 7)}
+                mean_k = {f: _count_matches(own, f, False) for f in range(1, 7)}
                 heur = self._heuristic_raise(prev, total, n, False, None, mean_k, self._raise_p(player))
                 options = self._raise_options(prev, total, False)
                 for extra in (bid, heur):
@@ -1002,7 +1048,7 @@ class CarlosBot(SharedMemory):
         dice = [d for _, hand in event.dice for d in hand]
         for key, bid, palifico in self._pending:
             stat = self._calibration.setdefault(key, [0, 0])
-            actual = count_matches(dice, bid.face, palifico)
+            actual = _count_matches(dice, bid.face, palifico)
             stat[0] += (actual == bid.quantity) if key[0] else (actual >= bid.quantity)
             stat[1] += 1
         self._pending = []
@@ -1137,7 +1183,7 @@ class CarlosBot(SharedMemory):
         ctx["all"] = {f: self._sums(ctx["post"], f) for f in range(1, 7)}
         ctx["loo"] = {(n, f): self._sums(ctx["post"], f, exclude=n)
                       for n in ctx["post"] for f in range(1, 7)}
-        ctx["mine"] = {f: count_matches(state.my_dice, f, state.palifico) for f in range(1, 7)}
+        ctx["mine"] = {f: _count_matches(state.my_dice, f, state.palifico) for f in range(1, 7)}
         ctx["memo"] = {}
         return ctx
 
@@ -1341,7 +1387,7 @@ class CarlosBot(SharedMemory):
         cur = state.current_bid
         options = []
         if cur is not None:
-            bidder = last_bidder(state, default=None)
+            bidder = _last_bidder(state, default=None)
             p_true = self._calibrated(state, cur, self._p_true(ctx, cur), exact=False, record=record)
             if Dudo() in state.legal_actions:
                 options.append((p_true * -1.0 + (1 - p_true) * self._lose_value(ctx, bidder), Dudo()))
@@ -1365,7 +1411,6 @@ class CarlosBot(SharedMemory):
     def play(self, state):
         self._ensure_memory()
         ctx, options, risk_keys = self._options(state)
-        cur = state.current_bid
         best = max(v for v, _ in options)
         value, action = self._rng.choice([o for o in options if o[0] >= best - self.TIE_EPS])
         if isinstance(action, Bid):
@@ -1373,10 +1418,7 @@ class CarlosBot(SharedMemory):
         if isinstance(action, Bid):
             pd, pc = self._next_response(ctx, action)
             self._awaiting = (min(len(ctx["dice"]), 4), pd, pc)
-        if isinstance(action, Dudo):
-            self.mouth.say("dudo", announce="Dudo!", bidder=last_bidder(state))
-        elif isinstance(action, Calza):
-            self.mouth.say("calza", announce="Calza!")
-        else:
-            self.mouth.say("open" if cur is None else "raise", announce=fmt_bid(action), bid=fmt_bid(action))
         return action
+
+    def on_game_end(self, result):
+        pass

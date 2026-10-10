@@ -1,31 +1,25 @@
 """
-Fabulous -- a probability-driven Perudo bot with a big mouth.
+Fabulous -- a probability-driven Perudo bot.
 
 Strategy in one breath: count my own dice, model every unknown die as a
 coin with the right odds (1/3 for a normal face thanks to wild Pacos, 1/6
 for Pacos or during Palifico), nudge that model with what opponents have
 been bidding on (and how honest they have historically been about it),
 and then pick Dudo / Calza / a bid by comparing probabilities.
-
-Set the environment variable TALK_TO_ME=true to make the bot narrate its
-inner life on the terminal.
 """
 
 from __future__ import annotations
 
 import random
 from collections import defaultdict
-from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 
-from perudo.bot_base import BaseBot
 from perudo.models import (
     PACO,
     Action,
     Bid,
     BidEvent,
     Calza,
-    DieGainedEvent,
     Dudo,
     Event,
     GameEndedEvent,
@@ -36,8 +30,6 @@ from perudo.models import (
     RevealEvent,
     RoundEndedEvent,
 )
-from perudo.rules import count_matches
-from perudo.talk import Mouth
 
 MAX_DICE = 5
 
@@ -54,130 +46,13 @@ HINT_PRIOR_HITS = 2.0        # prior for "opponent holds the face they bid on"
 HINT_PRIOR_TRIES = 3.0
 
 
-def _fmt_bid(bid: Bid) -> str:
-    face = "Paco" if bid.face == PACO else str(bid.face)
-    return f"{bid.quantity}x {face}"
-
-
-# ---------------------------------------------------------------------------
-# Quotes
-# ---------------------------------------------------------------------------
-
-QUOTES: Dict[str, Sequence[str]] = {
-    "open_strong": [
-        "Ik open met {bid}. Ik gooide als een godin, probeer maar bij te houden.",
-        "{bid}. Ja, ik heb ze echt. Schokkend, ik weet het.",
-        "We beginnen met {bid}. Mijn stenen zijn zo mooi dat ik ze bijna niet wil verstoppen.",
-    ],
-    "open_meh": [
-        "{bid} om te openen. Mijn stenen zijn... werk in uitvoering.",
-        "Ik open met {bid}. Laag bod, nog lagere verwachtingen.",
-        "{bid}. Iemand moet beginnen, en blijkbaar koos het universum mij.",
-    ],
-    "bid_safe": [
-        "{bid}. Een klein stapje. Ik ben niet bang, ik ben gewoon... voorzichtig. Oké, bang.",
-        "{bid}. Nauwelijks een verhoging. Ik speel het veiliger dan een gordelreclame.",
-        "{bid}. Niks te zien hier, loop maar door naar het volgende slachtoffer.",
-        "{bid}. Ik kan hoger, maar waarom een prima vriendschap verpesten.",
-    ],
-    "bid_normal": [
-        "{bid}. Kan kloppen. Kan ook een schreeuw om hulp zijn.",
-        "{bid}. Ik heb het uitgerekend. De wiskunde was niet enthousiast, maar tekende wel.",
-        "{bid}. De kansen zeggen 'meh', mijn buik zegt 'gaan'. We hebben een compromis gesloten.",
-    ],
-    "bid_bluff": [
-        "{bid}. Ik heb ze echt. Kappa",
-        "{bid}! Met een stalen gezicht gezegd en helemaal niks om het te onderbouwen.",
-        "{bid}. Als iemand het vraagt: ik heb ze allemaal. Allemaal. Echt. Allemaal.",
-        "{bid}. Roep maar Dudo, ik daag je uit. Nee, toch maar liever niet.",
-        "{bid}. Dit noemen wij in het vak 'creatief boekhouden'.",
-    ],
-    "dudo_confident": [
-        "Dudo! {bidder}, chat, kijk dit. Clip dit.",
-        "Dudo! {bidder}, dat bod heeft meer gaten dan mijn alibi.",
-        "Dudo. {bidder}, ik bewonder de ambitie, maar nee.",
-        "DUDO. {bidder}, ik heb eerlijkere biedingen gezien van een tweedehandsautoverkoper.",
-    ],
-    "dudo_scared": [
-        "Dudo... denk ik? Of jij bluft, of ik ga zo huilen.",
-        "Dudo. Vijftig-vijftig, net als mijn liefdesleven. Daar gaan we.",
-        "Dudo, met het zelfvertrouwen van een kat op een natte vloer.",
-    ],
-    "dudo_forced": [
-        "Dudo, omdat elke andere optie slechter was. Verhaal van mijn leven.",
-        "Dudo. Niet omdat ik het geloof, maar omdat verhogen pure comedy zou zijn.",
-        "Dudo. In het nauw gedreven als een wasbeer in een keuken. Eens kijken hoe dit afloopt.",
-    ],
-    "calza": [
-        "CALZA! Precies {bid}. Ik voel het in mijn ellebogen.",
-        "Calza! {bidder} zit er precies op, en ik kom de bonus ophalen.",
-        "Calza. Veel risico voor één steen, maar zo fabulous ben ik nou eenmaal.",
-    ],
-    "my_dudo_right": [
-        "Zei ik toch! {bidder}, bied volgende keer op stenen die je echt hebt.",
-        "Gezien. {bidder}, die bluf was slapper dan tankstationkoffie.",
-    ],
-    "my_dudo_wrong": [
-        "{actual}?! Copium. De stenen waren gewoon lelijk.",
-        "O. Er waren er echt {actual}. Ik wil de manager van de kansrekening spreken.",
-        "Tja, {actual} stuks. Mijn ellebogen hebben tegen me gelogen.",
-    ],
-    "my_bluff_caught": [
-        "Oké {challenger}, je hebt me. Er waren er maar {actual}. Onbeschoft.",
-        "Op heterdaad betrapt. Ter verdediging: het klonk waar toen ik het zei.",
-    ],
-    "my_bid_held": [
-        "{actual}! {challenger}, gezellig dat je meedeed. EZ Clap.",
-        "{challenger}, twijfelde je aan mij? Er waren er {actual}. Ik ben gekwetst. En ik win.",
-        "Zie je? {actual}. Eerlijkheid is mijn beste beleid. Soms.",
-    ],
-    "my_calza_right": [
-        "PRECIES {actual}! PogChamp! Chat, buig voor mij.",
-        "PRECIES {actual}! Geef me die steen. Geef. Dank je.",
-        "Calza binnen. Ik zou dit professioneel moeten doen. Ik dóé dit professioneel.",
-    ],
-    "my_calza_wrong": [
-        "Niet precies. {actual}, geen {bid}. Zo dichtbij dat ik de steen die ik net kwijt ben kan proeven.",
-        "Nee, {actual}. Calza was een gedurfde keuze, Fabulous. Gedurfd en fout.",
-    ],
-    "others_bluff_caught": [
-        "{challenger} ruikt de bluf! {bidder}, jij deugniet.",
-        "Ha! {bidder} bood {bid} en er waren er {actual}. Ik maak aantekeningen.",
-    ],
-    "others_dudo_wrong": [
-        "{challenger} twijfelde aan {bidder} en betaalt de prijs. Vertrouwensproblemen, zie ik.",
-        "Het bod van {bidder} klopte. {challenger}, geloof mensen eens een keertje.",
-    ],
-    "others_calza_right": [
-        "{challenger} raakt een Calza?! Oké, dat is eigenlijk best indrukwekkend. Ik ben jaloers.",
-        "Een exacte Calza van {challenger}. Hekserij, vast en zeker.",
-    ],
-    "others_calza_wrong": [
-        "{challenger} ging voor Calza en mistte. Gedurfd. Tragisch. Vermakelijk.",
-        "Calza-misser van {challenger}. Die voelde ik helemaal hier.",
-    ],
-    "eliminated_other": [
-        "Doei {player}! Pas op dat de deur je nul stenen niet raakt op weg naar buiten.",
-        "{player} ligt eruit. Eén bluffer minder aan tafel. Wacht even, nu ben ik de bluffer.",
-    ],
-    "eliminated_me": [
-        "Ik lig eruit. Sadge. Maar wel een fabulous Sadge.",
-        "Uitgeschakeld?! Prima. Ik droeg deze tafel toch al.",
-        "Ik lig eruit. Onthoud me zoals ik was: fabulous en een tikje overmoedig.",
-    ],
-    "palifico": [
-        "Volgende ronde Palifico! Geen wilde Paco's. Alleen rauwe, eerlijke stenen. Ik haat het.",
-        "Er komt een Palifico-ronde aan. Iedereen doet normaal.",
-    ],
-    "won": [
-        "IK HEB GEWONNEN! Niemand is verrast. Ik al helemaal niet.",
-        "Victorie! Stenen vrezen mij, tafels respecteren mij, bots leren van mij.",
-    ],
-    "lost_game": [
-        "{winner} wint. Ik eis een hertelling van de stenen die ik niet meer heb.",
-        "Gefeliciteerd, {winner}. Je hebt de beste verslagen. Namelijk mij. Wacht.",
-    ],
-}
+def _count_matches(dice_values: Sequence[int], face: int, palifico: bool) -> int:
+    """How many dice count towards a bid on `face`."""
+    if palifico:
+        return sum(1 for d in dice_values if d == face)
+    if face == PACO:
+        return sum(1 for d in dice_values if d == PACO)
+    return sum(1 for d in dice_values if d == face or d == PACO)
 
 
 # ---------------------------------------------------------------------------
@@ -185,14 +60,12 @@ QUOTES: Dict[str, Sequence[str]] = {
 # ---------------------------------------------------------------------------
 
 
-class Fabulous(BaseBot):
-    name = Path(__file__).stem.capitalize()
+class Fabulous:
+    name = "Fabulous"
 
     def __init__(self) -> None:
-        # Separate RNGs: one for decisions (fixed seed -> reproducible
-        # simulations), one for quips (does not affect gameplay).
+        # RNG for decisions (fixed seed -> reproducible simulations).
         self._rng = random.Random(0xFAB)
-        self.mouth = Mouth(self, QUOTES)
 
         # Learned across games: how often each opponent actually held the
         # face they bid on.  name -> [hits, tries]
@@ -213,7 +86,7 @@ class Fabulous(BaseBot):
         self._round_bids = []
 
     def on_game_end(self, result: GameResult) -> None:
-        pass  # handled via GameEndedEvent so we also react when watching
+        pass
 
     # -- the decision -------------------------------------------------------
 
@@ -228,19 +101,15 @@ class Fabulous(BaseBot):
 
         if state.current_bid is None:
             bid = self._opening_bid(state, legal_bids, others, hints)
-            my_count = count_matches(state.my_dice, bid.face, state.palifico)
-            self.mouth.say("open_strong" if my_count >= 2 else "open_meh", announce=_fmt_bid(bid), bid=_fmt_bid(bid))
             return bid
 
         current = state.current_bid
-        bidder = self._last_bidder(state)
         p_true = self._prob_at_least(state, others, hints, current.face, current.quantity)
         p_exact = self._prob_exact(state, others, hints, current.face, current.quantity)
 
         # Calza: only worth it when there is actually a die to win.
         can_gain = self._recovery_enabled and state.my_dice_count < MAX_DICE
         if can_gain and p_exact >= CALZA_THRESHOLD and self._has_calza(state):
-            self.mouth.say("calza", announce="Calza!", bid=_fmt_bid(current), bidder=bidder)
             return Calza()
 
         scored = [
@@ -253,21 +122,9 @@ class Fabulous(BaseBot):
         # than the bid we are doubting.
         bid_risk = (1.0 - best_p) * CHALLENGE_FACTOR
         if p_true < DUDO_THRESHOLD or (not legal_bids) or (p_true < bid_risk):
-            if p_true < 0.2:
-                self.mouth.say("dudo_confident", announce="Dudo!", bidder=bidder)
-            elif p_true >= DUDO_THRESHOLD:
-                self.mouth.say("dudo_forced", announce="Dudo!", bidder=bidder)
-            else:
-                self.mouth.say("dudo_scared", announce="Dudo!", bidder=bidder)
             return Dudo()
 
-        bid, p_bid = self._pick_bid(scored, best_p)
-        if p_bid >= 0.7:
-            self.mouth.say("bid_safe", announce=_fmt_bid(bid), bid=_fmt_bid(bid))
-        elif p_bid >= 0.4:
-            self.mouth.say("bid_normal", announce=_fmt_bid(bid), bid=_fmt_bid(bid))
-        else:
-            self.mouth.say("bid_bluff", announce=_fmt_bid(bid), bid=_fmt_bid(bid))
+        bid, _ = self._pick_bid(scored, best_p)
         return bid
 
     # -- bid selection -------------------------------------------------------
@@ -278,7 +135,7 @@ class Fabulous(BaseBot):
         best_face = max(
             faces,
             key=lambda f: (
-                count_matches(state.my_dice, f, state.palifico),
+                _count_matches(state.my_dice, f, state.palifico),
                 0 if f == PACO else 1,  # tie-break: avoid opening on Paco
                 self._rng.random(),
             ),
@@ -383,7 +240,7 @@ class Fabulous(BaseBot):
         return out
 
     def _prob_at_least(self, state, others, hints, face: int, quantity: int) -> float:
-        mine = count_matches(state.my_dice, face, state.palifico)
+        mine = _count_matches(state.my_dice, face, state.palifico)
         need = quantity - mine
         if need <= 0:
             return 1.0
@@ -391,7 +248,7 @@ class Fabulous(BaseBot):
         return sum(pmf[need:]) if need < len(pmf) else 0.0
 
     def _prob_exact(self, state, others, hints, face: int, quantity: int) -> float:
-        mine = count_matches(state.my_dice, face, state.palifico)
+        mine = _count_matches(state.my_dice, face, state.palifico)
         need = quantity - mine
         if need < 0:
             return 0.0
@@ -405,67 +262,28 @@ class Fabulous(BaseBot):
     # -- watching the table ---------------------------------------------------
 
     def observe(self, event: Event) -> None:
-        me = self.name
         if isinstance(event, BidEvent):
             self._round_bids.append((event.player, event.bid))
 
         elif isinstance(event, RevealEvent):
             self._learn_from_reveal(event)
-            ctx = dict(
-                challenger=event.challenger,
-                bidder=event.bidder,
-                actual=event.actual_count,
-                bid=_fmt_bid(event.current_bid),
-            )
-            if event.challenge_type == "dudo":
-                if event.challenger == me:
-                    self.mouth.say("my_dudo_wrong" if event.result == "bidder_correct" else "my_dudo_right", **ctx)
-                elif event.bidder == me:
-                    self.mouth.say("my_bid_held" if event.result == "bidder_correct" else "my_bluff_caught", **ctx)
-                else:
-                    self.mouth.say("others_dudo_wrong" if event.result == "bidder_correct" else "others_bluff_caught", **ctx)
-            else:
-                if event.challenger == me:
-                    self.mouth.say("my_calza_right" if event.result == "correct" else "my_calza_wrong", **ctx)
-                else:
-                    self.mouth.say("others_calza_right" if event.result == "correct" else "others_calza_wrong", **ctx)
 
         elif isinstance(event, PlayerEliminatedEvent):
             self._recovery_enabled = False
-            self.mouth.say("eliminated_me" if event.player == me else "eliminated_other", player=event.player)
 
         elif isinstance(event, RoundEndedEvent):
             self._round_bids = []
             self._palifico_now = event.palifico_next
-            if event.palifico_next:
-                self.mouth.say("palifico")
 
         elif isinstance(event, GameEndedEvent):
             self._round_bids = []
-            if event.winner == me:
-                self.mouth.say("won")
-            elif me in event.standings:
-                self.mouth.say("lost_game", winner=event.winner)
-
-        elif isinstance(event, DieGainedEvent):
-            pass
 
     def _learn_from_reveal(self, event: RevealEvent) -> None:
         dice = event.dice_by_player()
         for player, bid in self._round_bids:
             if player == self.name or player not in dice:
                 continue
-            held = count_matches(dice[player], bid.face, self._palifico_now) > 0
+            held = _count_matches(dice[player], bid.face, self._palifico_now) > 0
             stats = self._hint_stats[player]
             stats[0] += 1.0 if held else 0.0
             stats[1] += 1.0
-
-    # -- helpers ------------------------------------------------------------------
-
-    @staticmethod
-    def _last_bidder(state: Observation) -> str:
-        for record in reversed(state.history):
-            if isinstance(record.action, Bid):
-                return record.player
-        return "iemand"
-

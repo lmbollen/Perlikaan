@@ -19,89 +19,20 @@ Each turn the bot:
   2. Takes the strongest raise whose P(true) is at least TARGET.
   3. Calls Dudo instead when the current bid is less likely to be true
      than that raise is to be false, or when no raise is safe enough.
-
-Set TALK_TO_ME=true to hear it over the radio.
 """
 
 import math
 
 from perudo.models import PACO, Bid, Dudo
-from perudo.rules import count_matches
-from perudo.talk import Mouth, fmt_bid, last_bidder
 
-QUOTES = {
-    "open": [
-        "{bid}. In positie. Het volgende schot hoor je niet aankomen.",
-        "{bid}. Doelwit in zicht.",
-        "{bid}. Positie ingenomen. Niemand bewegen.",
-        "{bid}. Vizier erop. Neem je tijd, ik heb de hele ronde.",
-    ],
-    "raise": [
-        "{bid}. Iemand moet dit clippen.",
-        "{bid}. Precies op het randje. Verhoog en val, of roep Dudo en mis.",
-        "{bid}. Eén schot. Meer heb ik niet nodig.",
-        "{bid}. Je zit klem. Er is geen goede zet meer. Daar heb ik voor gezorgd.",
-        "{bid}. Schoon. Precies. Erg vervelend voor jou.",
-    ],
-    "raise_risky": [
-        "{bid}. Niet mijn ideale schot. Slechte wind. Ik neem hem toch.",
-        "{bid}. Geen vrij schootsveld. Improviseren.",
-    ],
-    "dudo_confident": [
-        "Dudo. {bidder}, F in de chat.",
-        "Dudo. {bidder}, je zat al in mijn vizier sinds je eerste bod.",
-        "Dudo. {bidder}, je stapte net recht in mijn vizier.",
-        "Dudo. {bidder}, die bluf zag ik op achthonderd meter al aankomen.",
-        "Dudo. Niks persoonlijks, {bidder}. Oké, een beetje persoonlijk.",
-    ],
-    "dudo_cornered": [
-        "Dudo. Slechte hoek, maar een slechte hoek is beter dan in je val lopen.",
-        "Dudo. Ik schiet voordat jij schiet.",
-        "Dudo. Geen schoon schot, maar je laat me geen dekking.",
-        "Dudo. Elke andere zet is een mijnenveld. Vuur.",
-    ],
-    "dudo_right": [
-        "Headshot. {bidder}, OMEGALUL.",
-        "Doelwit neer. {bidder}, blijf liggen.",
-        "Treffer bevestigd. {bidder} levert een steen in. Volgende.",
-    ],
-    "dudo_wrong": [
-        "{actual}. Gemist. Sadge. Niemand clipt dit. NIEMAND.",
-        "{actual}? Iemand heeft aan mijn vizier gezeten. Hakaman, was jij dat?",
-        "Mis. Ik ga mijn vizier opnieuw afstellen. En daarna jou.",
-        "{actual}. Gemist. Zal de wind wel geweest zijn.",
-        "Een misser. Dat gebeurt niet. Ik noteer het als technische storing.",
-    ],
-    "bid_held": [
-        "{challenger}, je had nooit een kans. Je wist het alleen nog niet.",
-        "{challenger} liep er recht in. Dat doen ze altijd.",
-        "{actual}. {challenger}, ik koos dat bod juist omdat je zou verliezen als je het aanvecht.",
-    ],
-    "bid_caught": [
-        "Maar {actual}. Positie verraden. Ik verplaats me.",
-        "{challenger} had een gelukstreffer. Genoteerd. Onthouden. Voor altijd.",
-    ],
-    "dudo_on_me": [
-        "{who} roept Dudo. monkaW... nee hoor, grapje. Precies volgens plan.",
-        "{who} schiet blind. Dapper.",
-        "{who}, je richt op een geest.",
-        "{who} hapt toe.",
-        "Dudo van {who}. Precies waar ik je hebben wilde.",
-    ],
-    "eliminated_other": [
-        "{who} is neer. Eén doelwit minder.",
-    ],
-    "eliminated_me": [
-        "Ik ben geraakt. Zeg tegen mijn vizier dat ik van hem hield.",
-    ],
-    "won": [
-        "Als laatste overeind. Missie geslaagd.",
-        "Tafel schoongeveegd. Geweer inpakken.",
-    ],
-    "lost_game": [
-        "{winner} pakt hem. Volgende keer neem ik een groter vizier mee.",
-    ],
-}
+
+def _count_matches(dice_values, face, palifico):
+    """How many dice count towards a bid on `face`."""
+    if palifico:
+        return sum(1 for d in dice_values if d == face)
+    if face == PACO:
+        return sum(1 for d in dice_values if d == PACO)
+    return sum(1 for d in dice_values if d == face or d == PACO)
 
 
 class SniperBot:
@@ -123,7 +54,9 @@ class SniperBot:
     def __init__(self):
         self.name = "Sniper"
         self._tail_cache = {}
-        self.mouth = Mouth(self, QUOTES)
+
+    def on_game_start(self, info):
+        pass
 
     # -- probability ------------------------------------------------------
 
@@ -179,7 +112,7 @@ class SniperBot:
         return total
 
     def _prob_true(self, state, bid, n_unknown, hints):
-        mine = count_matches(state.my_dice, bid.face, state.palifico)
+        mine = _count_matches(state.my_dice, bid.face, state.palifico)
         p = self._p_face(bid.face, state.palifico)
         need = bid.quantity - mine - hints[bid.face]
         return self._tail(n_unknown, p, need)
@@ -217,17 +150,15 @@ class SniperBot:
         cur = state.current_bid
         if cur is None:
             # Opening: there is always a legal bid.
-            self.mouth.say("open", announce=fmt_bid(best), bid=fmt_bid(best))
             return best
 
         p_cur = self._prob_true(state, cur, n_unknown, hints)
         if best is None or best_p < self.MIN_ACCEPT or p_cur < 1 - best_p:
-            key = "dudo_confident" if p_cur < 0.3 else "dudo_cornered"
-            self.mouth.say(key, announce="Dudo!", bidder=last_bidder(state))
             return Dudo()
-        key = "raise" if best_p >= self.TARGET else "raise_risky"
-        self.mouth.say(key, announce=fmt_bid(best), bid=fmt_bid(best))
         return best
 
     def observe(self, event):
-        self.mouth.react(event)
+        pass
+
+    def on_game_end(self, result):
+        pass

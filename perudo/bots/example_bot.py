@@ -29,72 +29,9 @@ RandomBot dat doet -- beide werken. De naam is je stabiele identiteit: hij
 duikt overal op (state.players, state.history, observe()-events), ook in
 simulation mode over honderden games heen, dus je kunt tegenstanders
 herkennen en van ze leren ook al wisselt elke game de zitpositie.
-
-Wil je bot praten (en trash talken)? Zie QUOTES hieronder en perudo/talk.py.
-Met TALK_TO_ME=true worden de praatjes geprint, met TTS=true ook uitgesproken.
 """
 
 from perudo.models import Bid, BidEvent, Calza, Dudo
-from perudo.talk import Mouth, fmt_bid, last_bidder
-
-# Optioneel: per situatie een paar zinnen, er wordt er willekeurig één
-# gekozen. {bid}, {bidder} enz. worden ingevuld; zie perudo/talk.py voor de
-# situaties waar Mouth.react() zelf op reageert (onthullingen, eliminaties...).
-QUOTES = {
-    "open": [
-        "{bid}. Eerste bod uit het boekje. Letterlijk, ik bén het boekje.",
-        "{bid}. Ik ben maar een voorbeeld, verwacht geen wonderen.",
-        "{bid}. Kopieer mij gerust, maar dan wel met een betere strategie graag.",
-    ],
-    "raise": [
-        "{bid}. ResidentSleeper. Ja, ik ben saai, ik ben de tutorial.",
-        "{bid}. Het goedkoopste bod. Ik ben een voorbeeld, geen genie.",
-        "{bid}. Zie je, zo bied je. Stap één uit de handleiding.",
-        "{bid}. Precies zoals in de tutorial.",
-    ],
-    "dudo": [
-        "Dudo! PauseChamp... {bidder}, ga je dit echt verliezen van de voorbeeldbot?",
-        "Dudo! {bidder}, dat is meer dan de helft van alle stenen. Regel één van de handleiding.",
-        "Dudo! {bidder}, meer dan de helft van alle stenen? Zelfs ík zie dat dat niet klopt.",
-        "Dudo. Dit staat letterlijk in mijn commentaar, {bidder}. Lees het eens.",
-    ],
-    "calza": [
-        "Calza. Geen idee eigenlijk, er was gewoon niks anders meer over.",
-    ],
-    "dudo_right": [
-        "{bidder} verliest van de tutorial. KEKW",
-        "Ha, {bidder}, je bent net verslagen door de standaardinstellingen.",
-        "Kijk {bidder}, zelfs de voorbeeldbot weet dit. Pijnlijk.",
-    ],
-    "dudo_wrong": [
-        "Oké, misschien moet je mij toch iets aanpassen voordat je me inlevert.",
-        "{actual}?! Oké, ik ben nooit getest. Dat staat ook in de docs. Ergens.",
-    ],
-    "bid_held": [
-        "Wie twijfelt aan de handleiding, {challenger}, verliest een steen. Dat staat er niet in, maar het klopt wel.",
-        "{challenger}, je verliest van de voorbeeldbot. Vertel dat thuis maar niet.",
-    ],
-    "bid_caught": [
-        "Ja, ja, {challenger}. Ik ben een voorbeeld, geen meesterwerk.",
-        "Betrapt. Kopieer mij en maak het beter, daar ben ik voor.",
-        "Betrapt. Ik ben dan ook maar een paar regels code.",
-    ],
-    "dudo_on_me": [
-        "{who}, Dudo op de voorbeeldbot? Dat is als winnen van het oefenpotje.",
-        "{who} valt de tutorial aan. Mooi, je leest in elk geval mee.",
-        "{who} roept Dudo op de voorbeeldbot. Wie pest er nou de tutorial?",
-    ],
-    "eliminated_me": [
-        "Eruit. Geeft niks, ik ben gemaakt om verslagen te worden. Dat was het hele punt.",
-    ],
-    "won": [
-        "De voorbeeldbot wint. Chat, is dit echt? PogChamp",
-        "Gewonnen?! Door de VOORBEELDBOT? Iedereen terug naar de tekentafel.",
-    ],
-    "lost_game": [
-        "Gefeliciteerd {winner}, je hebt de tutorial uitgespeeld.",
-    ],
-}
 
 
 class ExampleBot:
@@ -107,9 +44,6 @@ class ExampleBot:
         # tegenstanders onthouden (bijv. hoe vaak iemand bluft) -- gekoppeld
         # aan hun naam, niet aan hun (elke game willekeurige) zitpositie.
         self.opponent_bid_counts = {}
-
-        # Optioneel: een "mond" om mee te praten (doet niks zonder TALK_TO_ME/TTS).
-        self.mouth = Mouth(self, QUOTES, lang="nl")
 
     def on_game_start(self, info):
         # Optioneel: wordt één keer aangeroepen aan het begin van elk potje.
@@ -144,20 +78,16 @@ class ExampleBot:
         # aantal spelers/dobbelstenen, niet een vast getal).
         if current_bid is not None and can_say_dudo:
             if current_bid.quantity > total_dice_in_play / 2:
-                self.mouth.say("dudo", announce="Dudo!", bidder=last_bidder(state))
                 return Dudo()
 
         # Anders: als je nog mag bieden, doe het goedkoopste legale bod.
         if possible_bids:
             bid = min(possible_bids, key=lambda b: (b.quantity, b.face))
-            self.mouth.say("open" if current_bid is None else "raise", announce=fmt_bid(bid), bid=fmt_bid(bid))
             return bid
 
         # Geen bids meer mogelijk (zeldzaam) -> val terug op Calza of Dudo.
         if can_say_calza:
-            self.mouth.say("calza", announce="Calza!")
             return Calza()
-        self.mouth.say("dudo", announce="Dudo!", bidder=last_bidder(state))
         return Dudo()
 
     def observe(self, event):
@@ -168,9 +98,6 @@ class ExampleBot:
             self.opponent_bid_counts[event.player] = (
                 self.opponent_bid_counts.get(event.player, 0) + 1
             )
-
-        # Laat de mond reageren op onthullingen, Dudo's op jou, eliminaties...
-        self.mouth.react(event)
 
     def on_game_end(self, result):
         # Optioneel: wordt één keer aangeroepen als het potje afgelopen is.

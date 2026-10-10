@@ -24,7 +24,7 @@ and Sniper keeps raising where it should call Dudo. Pokerface counts a bid
 that only raises the quantity of the face just bid at FOLLOW_WEIGHT; a bid
 that opens or switches to a face is a real choice and counts in full.
 
-Pokerface learns from every opponent by name (perudo.profiler), without
+Pokerface learns from every opponent by name (its built-in profiler), without
 assuming anything about who they are. After each reveal it replays their
 choices and learns:
 
@@ -40,8 +40,6 @@ A new opponent starts as the average of everyone seen so far, and its own
 data takes over as it comes in. `self.profiler.report()` shows what it
 learned. ADAPTIVE = False switches the learning off (fixed Sniper reading
 with FOLLOW_WEIGHT).
-
-Set TALK_TO_ME=true to hear it over the radio.
 """
 
 from __future__ import annotations
@@ -59,11 +57,76 @@ from perudo.models import (
     Dudo,
     DudoEvent,
     GameEndedEvent,
+    NORMAL_FACES,
     RevealEvent,
     RoundEndedEvent,
 )
-from perudo.rules import count_matches, legal_bids
-from perudo.talk import Mouth, fmt_bid, last_bidder
+
+
+# ---------------------------------------------------------------------------
+# Rule helpers (private copies, so this file depends only on perudo.models)
+# ---------------------------------------------------------------------------
+
+def _count_matches(dice_values: Sequence[int], face: int, palifico: bool) -> int:
+    """How many dice count towards a bid on `face`."""
+    if palifico:
+        return sum(1 for d in dice_values if d == face)
+    if face == PACO:
+        return sum(1 for d in dice_values if d == PACO)
+    return sum(1 for d in dice_values if d == face or d == PACO)
+
+
+def _legal_bids(
+    current_bid: Optional[Bid],
+    palifico: bool,
+    palifico_face: Optional[int],
+    total_dice: int,
+) -> List[Bid]:
+    """All legal Bid actions given the current state of a round."""
+    max_q = max(total_dice, 1)
+    bids: List[Bid] = []
+
+    if current_bid is None:
+        # Opening bid of the round.
+        faces = range(1, 7) if palifico else NORMAL_FACES
+        for face in faces:
+            for q in range(1, max_q + 1):
+                bids.append(Bid(q, face))
+        return bids
+
+    q0, f0 = current_bid.quantity, current_bid.face
+
+    if palifico:
+        # Face is locked for the whole round; only quantity may increase.
+        face = palifico_face
+        for q in range(q0 + 1, max_q + 1):
+            bids.append(Bid(q, face))
+        return bids
+
+    # Normal (non-Palifico) round, a bid already exists.
+    if f0 == PACO:
+        # Paco -> higher Paco.
+        for q in range(q0 + 1, max_q + 1):
+            bids.append(Bid(q, PACO))
+        # Paco -> normal face, quantity must at least double (+1).
+        min_q_normal = 2 * q0 + 1
+        for q in range(min_q_normal, max_q + 1):
+            for face in NORMAL_FACES:
+                bids.append(Bid(q, face))
+    else:
+        # Same quantity, strictly higher normal face.
+        for face in range(f0 + 1, 7):
+            bids.append(Bid(q0, face))
+        # Higher quantity, any normal face (including the same one).
+        for q in range(q0 + 1, max_q + 1):
+            for face in NORMAL_FACES:
+                bids.append(Bid(q, face))
+        # Normal -> Paco, quantity at least ceil(q0 / 2).
+        min_q_paco = math.ceil(q0 / 2)
+        for q in range(min_q_paco, max_q + 1):
+            bids.append(Bid(q, PACO))
+
+    return bids
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +155,7 @@ def p_at_least(n: int, p: float, need: int) -> float:
 def p_bid_true(bid: Bid, own_dice: Sequence[int], total_dice: int, palifico: bool = False) -> float:
     """P(bid holds | own dice), every unknown die independent and uniform."""
     p = 1 / 6 if (palifico or bid.face == PACO) else 1 / 3
-    need = bid.quantity - count_matches(own_dice, bid.face, palifico)
+    need = bid.quantity - _count_matches(own_dice, bid.face, palifico)
     return p_at_least(total_dice - len(own_dice), p, need)
 
 
@@ -395,12 +458,12 @@ class OpponentProfiler:
             if isinstance(action, Calza):
                 prof.calzas += 1
                 continue
-            options = legal_bids(prev, False, None, total) if prev is not None else []
+            options = _legal_bids(prev, False, None, total) if prev is not None else []
             # A Dudo is only a choice when a raise was possible.
             if prev is not None and options:
                 p_cur = p_bid_true(prev, own, total)
                 prof.facing.append((p_cur, isinstance(action, Dudo)))
-                if count_matches(all_dice, prev.face, False) < prev.quantity:
+                if _count_matches(all_dice, prev.face, False) < prev.quantity:
                     prof.false_faced += 1
                     prof.false_challenged += isinstance(action, Dudo)
             if not isinstance(action, Bid):
@@ -435,11 +498,11 @@ class OpponentProfiler:
         """How good a pick was this face, given their dice? Skips Paco bids."""
         if bid.face == PACO:
             return
-        counts = [count_matches(own, f, False) for f in range(2, 7)]
+        counts = [_count_matches(own, f, False) for f in range(2, 7)]
         best, mean = max(counts), sum(counts) / len(counts)
         if best == mean:
             return  # every face equally good: no information
-        prof.face_scores.append((count_matches(own, bid.face, False) - mean) / (best - mean))
+        prof.face_scores.append((_count_matches(own, bid.face, False) - mean) / (best - mean))
 
     # -- reporting --------------------------------------------------------
 
@@ -488,81 +551,6 @@ class SharedMemory:
 # Sniper's engine (self-contained copy of perudo/bots/sniper.py, without play())
 # ---------------------------------------------------------------------------
 
-SNIPER_QUOTES = {
-    "open": [
-        "{bid}. In positie. Het volgende schot hoor je niet aankomen.",
-        "{bid}. Doelwit in zicht.",
-        "{bid}. Positie ingenomen. Niemand bewegen.",
-        "{bid}. Vizier erop. Neem je tijd, ik heb de hele ronde.",
-    ],
-    "raise": [
-        "{bid}. Iemand moet dit clippen.",
-        "{bid}. Precies op het randje. Verhoog en val, of roep Dudo en mis.",
-        "{bid}. Eén schot. Meer heb ik niet nodig.",
-        "{bid}. Je zit klem. Er is geen goede zet meer. Daar heb ik voor gezorgd.",
-        "{bid}. Schoon. Precies. Erg vervelend voor jou.",
-    ],
-    "raise_risky": [
-        "{bid}. Niet mijn ideale schot. Slechte wind. Ik neem hem toch.",
-        "{bid}. Geen vrij schootsveld. Improviseren.",
-    ],
-    "dudo_confident": [
-        "Dudo. {bidder}, F in de chat.",
-        "Dudo. {bidder}, je zat al in mijn vizier sinds je eerste bod.",
-        "Dudo. {bidder}, je stapte net recht in mijn vizier.",
-        "Dudo. {bidder}, die bluf zag ik op achthonderd meter al aankomen.",
-        "Dudo. Niks persoonlijks, {bidder}. Oké, een beetje persoonlijk.",
-    ],
-    "dudo_cornered": [
-        "Dudo. Slechte hoek, maar een slechte hoek is beter dan in je val lopen.",
-        "Dudo. Ik schiet voordat jij schiet.",
-        "Dudo. Geen schoon schot, maar je laat me geen dekking.",
-        "Dudo. Elke andere zet is een mijnenveld. Vuur.",
-    ],
-    "dudo_right": [
-        "Headshot. {bidder}, OMEGALUL.",
-        "Doelwit neer. {bidder}, blijf liggen.",
-        "Treffer bevestigd. {bidder} levert een steen in. Volgende.",
-    ],
-    "dudo_wrong": [
-        "{actual}. Gemist. Sadge. Niemand clipt dit. NIEMAND.",
-        "{actual}? Iemand heeft aan mijn vizier gezeten. Hakaman, was jij dat?",
-        "Mis. Ik ga mijn vizier opnieuw afstellen. En daarna jou.",
-        "{actual}. Gemist. Zal de wind wel geweest zijn.",
-        "Een misser. Dat gebeurt niet. Ik noteer het als technische storing.",
-    ],
-    "bid_held": [
-        "{challenger}, je had nooit een kans. Je wist het alleen nog niet.",
-        "{challenger} liep er recht in. Dat doen ze altijd.",
-        "{actual}. {challenger}, ik koos dat bod juist omdat je zou verliezen als je het aanvecht.",
-    ],
-    "bid_caught": [
-        "Maar {actual}. Positie verraden. Ik verplaats me.",
-        "{challenger} had een gelukstreffer. Genoteerd. Onthouden. Voor altijd.",
-    ],
-    "dudo_on_me": [
-        "{who} roept Dudo. monkaW... nee hoor, grapje. Precies volgens plan.",
-        "{who} schiet blind. Dapper.",
-        "{who}, je richt op een geest.",
-        "{who} hapt toe.",
-        "Dudo van {who}. Precies waar ik je hebben wilde.",
-    ],
-    "eliminated_other": [
-        "{who} is neer. Eén doelwit minder.",
-    ],
-    "eliminated_me": [
-        "Ik ben geraakt. Zeg tegen mijn vizier dat ik van hem hield.",
-    ],
-    "won": [
-        "Als laatste overeind. Missie geslaagd.",
-        "Tafel schoongeveegd. Geweer inpakken.",
-    ],
-    "lost_game": [
-        "{winner} pakt hem. Volgende keer neem ik een groter vizier mee.",
-    ],
-}
-
-
 class _SniperCore:
     """Sniper's engine (no play(): not a bot of its own)."""
     name = "Sniper"
@@ -583,7 +571,6 @@ class _SniperCore:
     def __init__(self):
         self.name = "Sniper"
         self._tail_cache = {}
-        self.mouth = Mouth(self, SNIPER_QUOTES)
 
     # -- probability ------------------------------------------------------
 
@@ -639,7 +626,7 @@ class _SniperCore:
         return total
 
     def _prob_true(self, state, bid, n_unknown, hints):
-        mine = count_matches(state.my_dice, bid.face, state.palifico)
+        mine = _count_matches(state.my_dice, bid.face, state.palifico)
         p = self._p_face(bid.face, state.palifico)
         need = bid.quantity - mine - hints[bid.face]
         return self._tail(n_unknown, p, need)
@@ -657,52 +644,12 @@ class _SniperCore:
     # -- decision ---------------------------------------------------------
 
     def observe(self, event):
-        self.mouth.react(event)
+        pass
 
 
 # ---------------------------------------------------------------------------
 # Pokerface
 # ---------------------------------------------------------------------------
-
-QUOTES = {
-    **SNIPER_QUOTES,
-    "open": [
-        "{bid}. Zeg maar niks.",
-        "{bid}. Kijk me aan. Zie je iets? Nee.",
-        "{bid}.",
-    ],
-    "raise": [
-        "{bid}. Geen spier vertrokken.",
-        "{bid}. Lees me maar. Succes ermee.",
-        "{bid}.",
-    ],
-    "bluff_open": [
-        "{bid}. Mijn favoriete getal. Echt waar.",
-        "{bid}. Ik heb er een stel, geloof me.",
-        "{bid}. Rustig openen.",
-    ],
-    "bluff_follow": [
-        "{bid}. Ik zit er ook vol mee, toevallig.",
-        "{bid}. Daar zijn er veel van. Ik kan het weten.",
-        "{bid}. Iedereen heeft ze vandaag, hè?",
-    ],
-    "calza": [
-        "Calza. Precies goed. Ik heb het je gezicht zien zeggen.",
-        "Calza. Niet meer, niet minder.",
-    ],
-    "bid_held": [
-        "{challenger}, je had moeten kijken naar mijn ogen. Daar stond niks in.",
-        "{actual}. Pokerface, {challenger}. Pokerface.",
-    ],
-    "bid_caught": [
-        "{actual}. Oké, die zag je. Volgende keer niet.",
-        "Betrapt. Ik blijf er even heel neutraal bij kijken.",
-    ],
-    "won": [
-        "Niemand heeft me kunnen lezen. Niemand.",
-    ],
-}
-
 
 class PokerfaceBot(SharedMemory, _SniperCore):
     name = "Pokerface"
@@ -793,7 +740,6 @@ class PokerfaceBot(SharedMemory, _SniperCore):
     def __init__(self):
         super().__init__()
         self.name = "Pokerface"
-        self.mouth = Mouth(self, QUOTES)
         self._rng = random.Random()
         # Learns per opponent name; lives as long as this instance, so
         # across all games of a simulation.
@@ -897,7 +843,7 @@ class PokerfaceBot(SharedMemory, _SniperCore):
         return max(cands, key=lambda s: (self._strength(s[1], state.palifico), s[0]))
 
     def _bluff(self, state, bids, n_unknown, hints, target):
-        """A bluff bid and its quote key, or (None, None)."""
+        """A bluff bid and its kind ("bluff_open" / "bluff_follow"), or (None, None)."""
         if state.palifico or self._rng.random() >= self.BLUFF_RATE:
             return None, None
         missing = self._missing_faces(state)
@@ -1006,7 +952,6 @@ class PokerfaceBot(SharedMemory, _SniperCore):
                 ev_raise = -math.inf if best is None else \
                     -(1 - best_p) * self.profiler.challenge_rate(self._next_player(state))
                 if (p_ex >= self.CALZA_AT or not gains) and ev_calza > max(ev_dudo, ev_raise):
-                    self.mouth.say("calza", announce="Calza!", bidder=last_bidder(state))
                     self._log(state, Calza(), p_cur, best, best_p, hints, False)
                     return Calza()
             if self.DUDO_EV and sum(p.alive for p in state.players) <= self.ENDGAME_PLAYERS:
@@ -1015,20 +960,13 @@ class PokerfaceBot(SharedMemory, _SniperCore):
             else:
                 call = best is None or best_p < self.MIN_ACCEPT or p_cur < 1 - best_p
             if call:
-                key = "dudo_confident" if p_cur < 0.3 else "dudo_cornered"
-                self.mouth.say(key, announce="Dudo!", bidder=last_bidder(state))
                 self._log(state, Dudo(), p_cur, best, best_p, hints, False)
                 return Dudo()
 
         # We are going to bid. Decide whether to lie about the face.
-        bluff, key = self._bluff(state, bids, n_unknown, hints, self._target(state, self.BLUFF_TARGET))
+        bluff, _ = self._bluff(state, bids, n_unknown, hints, self._target(state, self.BLUFF_TARGET))
         if bluff is not None:
             _, best = bluff
-        elif cur is None:
-            key = "open"
-        else:
-            key = "raise" if best_p >= target else "raise_risky"
-        self.mouth.say(key, announce=fmt_bid(best), bid=fmt_bid(best))
         self._log(state, best, p_cur, best, self._prob_true(state, best, n_unknown, hints), hints,
                   bluff is not None)
         return best
@@ -1051,7 +989,7 @@ class PokerfaceBot(SharedMemory, _SniperCore):
         """Expected dice for us of putting `bid` in front of the next player."""
         p = self._p_face(bid.face, False)
         total = n_unknown + state.my_dice_count
-        mine = count_matches(state.my_dice, bid.face, False)
+        mine = _count_matches(state.my_dice, bid.face, False)
         h_rest = hints[bid.face] - h_next
         m = n_unknown - dice_next          # unknown dice outside the next player
         # Their matches: binomial, nudged by what their own bids told us.
@@ -1128,7 +1066,7 @@ class PokerfaceBot(SharedMemory, _SniperCore):
         dice = [d for _, hand in event.dice for d in hand]
         for key, bid, palifico in self._pending:
             stat = self._calibration.setdefault(key, [0, 0])
-            actual = count_matches(dice, bid.face, palifico)
+            actual = _count_matches(dice, bid.face, palifico)
             exact = key[0]
             stat[0] += actual == bid.quantity if exact else actual >= bid.quantity
             stat[1] += 1
@@ -1158,3 +1096,9 @@ class PokerfaceBot(SharedMemory, _SniperCore):
         if isinstance(event, RevealEvent):
             self._learn_calibration(event)
         super().observe(event)
+
+    def on_game_start(self, info):
+        pass
+
+    def on_game_end(self, result):
+        pass

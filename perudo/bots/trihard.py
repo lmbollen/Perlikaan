@@ -18,8 +18,6 @@ and categorising every die Fabulous lost):
   replays the round from that opponent's point of view (their dice are
   public by then) and nudges a per-opponent "calls Dudo below this
   probability" threshold towards what they actually did.
-
-Set TALK_TO_ME=true for commentary. It is a tryhard, so expect sweat.
 """
 
 from __future__ import annotations
@@ -27,10 +25,8 @@ from __future__ import annotations
 import math
 import random
 from collections import defaultdict
-from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from perudo.bot_base import BaseBot
 from perudo.models import (
     PACO,
     Action,
@@ -40,6 +36,7 @@ from perudo.models import (
     Dudo,
     Event,
     GameEndedEvent,
+    GameResult,
     GameStartInfo,
     Observation,
     PlayerEliminatedEvent,
@@ -47,8 +44,6 @@ from perudo.models import (
     RevealEvent,
     RoundEndedEvent,
 )
-from perudo.rules import count_matches
-from perudo.talk import Mouth
 
 MAX_DICE = 5
 
@@ -69,9 +64,13 @@ HONESTY_FLOOR = 0.05            # even a hopeless bid gets made sometimes (bluff
 PACO_MENTION_WEIGHT = 0.5       # a Paco bid is weaker evidence about a normal face (Pacos still count for it)
 
 
-def _fmt_bid(bid: Bid) -> str:
-    face = "Paco" if bid.face == PACO else str(bid.face)
-    return f"{bid.quantity}x {face}"
+def _count_matches(dice_values: Sequence[int], face: int, palifico: bool) -> int:
+    """How many dice count towards a bid on `face`."""
+    if palifico:
+        return sum(1 for d in dice_values if d == face)
+    if face == PACO:
+        return sum(1 for d in dice_values if d == PACO)
+    return sum(1 for d in dice_values if d == face or d == PACO)
 
 
 def _sigmoid(x: float) -> float:
@@ -83,127 +82,15 @@ def _sigmoid(x: float) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Quotes
-# ---------------------------------------------------------------------------
-
-QUOTES: Dict[str, Sequence[str]] = {
-    "open": [
-        "{bid}. TriHard. Opgewarmd, gehydrateerd, klaar.",
-        "{bid}. Openingszet uit mijn spreadsheet. Ja, ik heb een spreadsheet.",
-        "{bid}. Optimaal. Stel het optimale niet ter discussie.",
-        "{bid} om te openen. Twee keer doorgerekend. En nog één keer voor de lol. Er was geen lol.",
-    ],
-    "bid_safe": [
-        "{bid}. TriHard 7. Zweet op het voorhoofd, EV in de pocket.",
-        "{bid}. EV positief. Hartslag ook positief. Allebei prima.",
-        "{bid}. Klein voordeeltje, maar ik pak elk voordeeltje. Ik eet edges als ontbijt.",
-        "{bid}. Lage variantie, hoge discipline. Zo ziet een topprestatie eruit.",
-    ],
-    "bid_pressure": [
-        "{bid}. Roep het maar. Ik weet al hoe jouw stenen verdeeld zijn. Statistisch.",
-        "{bid}. Uitdagen en verliezen, of verhogen en later verliezen. Kies je gif.",
-        "{bid}. Ik heb je volgende zet al gemodelleerd. Was niet indrukwekkend.",
-    ],
-    "bid_bluff": [
-        "{bid}. De wiskunde noemt dit 'een berekend risico'. Ik noem het een dinsdag.",
-        "{bid}. Negatief in theorie, positief in de praktijk. Trust the process.",
-        "{bid}. Als iemand hier Dudo op roept, geef ik de randomgenerator de schuld.",
-    ],
-    "dudo_confident": [
-        "Dudo. {bidder}, dit is een 5Head-call. Dat was jouw bod niet.",
-        "Dudo. {bidder}, dat is een bod onder de tien procent. Gênant. Voor jou.",
-        "DUDO. {bidder}, ik gok niet, ik incasseer. Bedankt voor de steen.",
-        "Dudo. {bidder}, dit is niet eens close. Ik heb bijna medelijden. Bijna.",
-    ],
-    "dudo_marginal": [
-        "Dudo. Het is marginaal, maar in de marge zit het zweet.",
-        "Dudo. Net genoeg edge om te callen. En edgy ben ik altijd.",
-        "Dudo. Bijna een muntworp, maar de munt is verzwaard. Door mij.",
-    ],
-    "calza": [
-        "CALZA. Precies {bid}. De verdeling piekt precies daar, en ik ook.",
-        "Calza! {bidder} landde op de modus. Ik zag het. Ik zie alles.",
-        "Calza. Gratis value als het klopt, een les als het fout gaat. Ik heb geen lessen nodig.",
-    ],
-    "my_dudo_right": [
-        "Zoals berekend. {bidder}, probeer volgende keer eens kansrekening.",
-        "Correct. Uiteraard. {bidder}, die steen was nooit van jou.",
-    ],
-    "my_dudo_wrong": [
-        "{actual}. Copium: de variantie zat tegen. Niet getilt. TriHard",
-        "{actual}. Prima. Variantie bestaat. Ik heb het gelogd. Ik heb JOU gelogd.",
-        "Het waren er {actual}. Statistisch onwaarschijnlijk. Emotioneel verwoestend.",
-    ],
-    "my_bluff_caught": [
-        "Maar {actual}. {challenger}, goed antwoord om de verkeerde redenen.",
-        "Betrapt. Uitschieter. Door. Niet getilt. NIET getilt.",
-    ],
-    "my_bid_held": [
-        "{actual}. {challenger}, GG EZ. Gelogd en gecategoriseerd.",
-        "{actual}. {challenger}, je callde een bod met positieve EV. Bedankt voor de steen.",
-        "Klopt, zoals gemodelleerd. {challenger}, lees eens een boek. Een kansrekeningboek.",
-    ],
-    "my_calza_right": [
-        "EXACT. {actual}. Geef me de steen en buig een beetje.",
-        "Calza raak. Dat is geen geluk, dat is een convolutie.",
-    ],
-    "my_calza_wrong": [
-        "{actual}, geen {bid}. Acceptabele variantie. Onacceptabele gevoelens.",
-        "Calza gemist. De verdeling loog. Ik ga er even een gesprekje mee voeren.",
-    ],
-    "others_bluff_caught": [
-        "{bidder} bood {bid} terwijl er {actual} lagen. Genoteerd. Vertrouwensscore omlaag.",
-        "{challenger} straft {bidder} af. Correcte play. Met tegenzin: respect.",
-    ],
-    "others_dudo_wrong": [
-        "{challenger} callde een kloppend bod. Wie heeft deze mensen dit geleerd?",
-        "Het bod van {bidder} klopte. {challenger}, dat krijg je als je geen model hebt.",
-    ],
-    "others_calza_right": [
-        "{challenger} raakt een Calza. Geluk. ...Was het geluk? Ik reken het even na.",
-        "Exacte Calza van {challenger}. Prima. Goed. Ik ben niet jaloers, ik analyseer.",
-    ],
-    "others_calza_wrong": [
-        "{challenger} ging voor Calza. OMEGALUL. Variantie straft de onvoorbereiden.",
-        "{challenger} ging voor Calza en mistte. Variantie straft de onvoorbereiden.",
-        "Calza-misser van {challenger}. Vermakelijk. Verwacht.",
-    ],
-    "eliminated_other": [
-        "{player} uitgeschakeld. Line-up bijgewerkt. Minder variabelen, meer controle.",
-        "Dag {player}. Jouw stenen waren toch al een afrondingsfout.",
-    ],
-    "eliminated_me": [
-        "Uitgeschakeld. Het model had gelijk, de stenen niet. Ik ga de replay terugkijken.",
-        "Eruit. Pech. Geen skill issue. Herhaal: geen skill issue.",
-    ],
-    "palifico": [
-        "Palifico. ResidentSleeper voor jullie, TriHard voor mij.",
-        "Palifico. Geen wilds. Pure skill-ronde. Eindelijk.",
-        "Palifico komt eraan. Alle kansen herberekenen. Al gedaan.",
-    ],
-    "won": [
-        "GG EZ. TriHard 7. Zoals gesimuleerd.",
-        "GG. Zoals gesimuleerd. Duizenden keren.",
-        "Victorie. De spreadsheet had gelijk. De spreadsheet heeft altijd gelijk.",
-    ],
-    "lost_game": [
-        "{winner} wint. Geniet ervan. De expected value daarvan was laag.",
-        "GG {winner}. Ik kom terug met een grotere spreadsheet.",
-    ],
-}
-
-
-# ---------------------------------------------------------------------------
 # The bot
 # ---------------------------------------------------------------------------
 
 
-class Trihard(BaseBot):
-    name = Path(__file__).stem.capitalize()
+class Trihard:
+    name = "Trihard"
 
     def __init__(self) -> None:
         self._rng = random.Random(0x7A1)
-        self.mouth = Mouth(self, QUOTES)
 
         # name -> accumulated log-likelihood of each honesty exponent in HONESTY_GRID.
         # Model: P(player bids (q, f) | holds k of f) is proportional to
@@ -225,6 +112,9 @@ class Trihard(BaseBot):
         self._palifico_now = False
         self._round_bids = []
 
+    def on_game_end(self, result: GameResult) -> None:
+        pass
+
     # -- the decision -------------------------------------------------------
 
     def play(self, state: Observation) -> Action:
@@ -237,14 +127,12 @@ class Trihard(BaseBot):
         hints = self._collect_hints(state)
         next_player = self._next_player(state)
 
-        best_bid, best_bid_ev, best_bid_p = self._best_bid(state, others, hints, next_player, legal_bids)
+        best_bid, best_bid_ev, _ = self._best_bid(state, others, hints, next_player, legal_bids)
 
         if state.current_bid is None:
-            self.mouth.say("open", announce=_fmt_bid(best_bid), bid=_fmt_bid(best_bid))
             return best_bid
 
         current = state.current_bid
-        bidder = self._last_bidder(state)
         p_true = self._prob_at_least(state, others, hints, current.face, current.quantity)
         p_exact = self._prob_exact(state, others, hints, current.face, current.quantity)
 
@@ -261,18 +149,9 @@ class Trihard(BaseBot):
         choice = max(options, key=lambda o: o[1])[0]
 
         if choice == "dudo":
-            self.mouth.say("dudo_confident" if p_true < 0.2 else "dudo_marginal", announce="Dudo!", bidder=bidder)
             return Dudo()
         if choice == "calza":
-            self.mouth.say("calza", announce="Calza!", bid=_fmt_bid(current), bidder=bidder)
             return Calza()
-
-        if best_bid_p >= 0.75:
-            self.mouth.say("bid_safe", announce=_fmt_bid(best_bid), bid=_fmt_bid(best_bid))
-        elif best_bid_p >= 0.45:
-            self.mouth.say("bid_pressure", announce=_fmt_bid(best_bid), bid=_fmt_bid(best_bid))
-        else:
-            self.mouth.say("bid_bluff", announce=_fmt_bid(best_bid), bid=_fmt_bid(best_bid))
         return best_bid
 
     # -- bid evaluation ----------------------------------------------------------
@@ -307,7 +186,7 @@ class Trihard(BaseBot):
                 pmf_rest = self._convolve(
                     pmf_rest, self._player_pmf_for(player, face, hints, palifico, p_match, total_dice)
                 )
-            mine = count_matches(state.my_dice, face, palifico)
+            mine = _count_matches(state.my_dice, face, palifico)
             cache[face] = (pmf_next, self._suffix(pmf_rest), pmf_rest, mine, p_match)
             return cache[face]
 
@@ -467,7 +346,7 @@ class Trihard(BaseBot):
         return suffix[need]
 
     def _prob_at_least(self, state, others, hints, face: int, quantity: int) -> float:
-        mine = count_matches(state.my_dice, face, state.palifico)
+        mine = _count_matches(state.my_dice, face, state.palifico)
         need = quantity - mine
         if need <= 0:
             return 1.0
@@ -475,7 +354,7 @@ class Trihard(BaseBot):
         return sum(pmf[need:]) if need < len(pmf) else 0.0
 
     def _prob_exact(self, state, others, hints, face: int, quantity: int) -> float:
-        mine = count_matches(state.my_dice, face, state.palifico)
+        mine = _count_matches(state.my_dice, face, state.palifico)
         need = quantity - mine
         if need < 0:
             return 0.0
@@ -485,49 +364,21 @@ class Trihard(BaseBot):
     # -- watching the table ---------------------------------------------------
 
     def observe(self, event: Event) -> None:
-        me = self.name
         if isinstance(event, BidEvent):
             self._round_bids.append((event.player, event.bid))
 
         elif isinstance(event, RevealEvent):
             self._learn_from_reveal(event)
-            ctx = dict(
-                challenger=event.challenger,
-                bidder=event.bidder,
-                actual=event.actual_count,
-                bid=_fmt_bid(event.current_bid),
-            )
-            if event.challenge_type == "dudo":
-                held = event.result == "bidder_correct"
-                if event.challenger == me:
-                    self.mouth.say("my_dudo_wrong" if held else "my_dudo_right", **ctx)
-                elif event.bidder == me:
-                    self.mouth.say("my_bid_held" if held else "my_bluff_caught", **ctx)
-                else:
-                    self.mouth.say("others_dudo_wrong" if held else "others_bluff_caught", **ctx)
-            else:
-                exact = event.result == "correct"
-                if event.challenger == me:
-                    self.mouth.say("my_calza_right" if exact else "my_calza_wrong", **ctx)
-                else:
-                    self.mouth.say("others_calza_right" if exact else "others_calza_wrong", **ctx)
 
         elif isinstance(event, PlayerEliminatedEvent):
             self._recovery_enabled = False
-            self.mouth.say("eliminated_me" if event.player == me else "eliminated_other", player=event.player)
 
         elif isinstance(event, RoundEndedEvent):
             self._round_bids = []
             self._palifico_now = event.palifico_next
-            if event.palifico_next:
-                self.mouth.say("palifico")
 
         elif isinstance(event, GameEndedEvent):
             self._round_bids = []
-            if event.winner == me:
-                self.mouth.say("won")
-            elif me in event.standings:
-                self.mouth.say("lost_game", winner=event.winner)
 
     def _learn_from_reveal(self, event: RevealEvent) -> None:
         dice = event.dice_by_player()
@@ -541,7 +392,7 @@ class Trihard(BaseBot):
             highest[key] = max(highest.get(key, 0), bid.quantity)
         for (player, face), quantity in highest.items():
             n = len(dice[player])
-            k = count_matches(dice[player], face, palifico)
+            k = _count_matches(dice[player], face, palifico)
             p_match = self._p_match(face, palifico)
             base = self._binomial_pmf(n, p_match)
             lik = self._bid_likelihood(n, quantity, p_match, total_dice)
@@ -566,7 +417,7 @@ class Trihard(BaseBot):
             if player == self.name or player not in dice:
                 continue
             p_match = self._p_match(faced.face, palifico)
-            own = count_matches(dice[player], faced.face, palifico)
+            own = _count_matches(dice[player], faced.face, palifico)
             # Hints visible to them at that moment: everyone else's earlier bids.
             hints: Dict[str, Dict[int, int]] = defaultdict(dict)
             for bidder, bid in self._round_bids[:n_before]:
@@ -596,11 +447,4 @@ class Trihard(BaseBot):
         while not state.players[i].alive:
             i = (i + 1) % n
         return state.players[i]
-
-    @staticmethod
-    def _last_bidder(state: Observation) -> str:
-        for record in reversed(state.history):
-            if isinstance(record.action, Bid):
-                return record.player
-        return "iemand"
 

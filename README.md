@@ -87,8 +87,8 @@ uv run python diagnose_bluff.py --rates 0 0.5 1                                 
 
 ### Pokerface, Carlos and The Don
 
-Each is a single self-contained file that only imports the game framework
-(`perudo.models`, `perudo.rules`, `perudo.talk`). What they learn lives in
+Each is a single self-contained file that only imports the standard library
+and the game's data types (`perudo.models`). What they learn lives in
 memory at class level, so it survives a new bot instance per game; nothing
 is written to disk.
 
@@ -103,39 +103,13 @@ is written to disk.
   from the reveals: the distribution of a player's hand given their bids,
   their Dudo response, Calza rate and raise style.
 
-### Trash talk and text-to-speech (optional)
+### Bots
 
-Bots can talk via `perudo.talk`. Enable it with environment variables:
-
-| Variable           | Effect                                                                 |
-|--------------------|------------------------------------------------------------------------|
-| `TALK_TO_ME=true`  | Print the bots' chatter                                                |
-| `TTS=true`         | Also speak it out loud                                                 |
-| `TTS_BACKEND`      | `edge` (default, online Microsoft voices) or `piper` (local, offline)  |
-| `PIPER_VOICES_DIR` | Where piper voice models are cached (default `~/.cache/perudo/piper-voices`) |
-| `EDGE_CACHE_DIR`   | Where edge-tts audio is cached, so each line is fetched only once (default `~/.cache/perudo/edge-tts`) |
-
-```sh
-TALK_TO_ME=true TTS=true uv run python run_interactive.py
-```
-
-Audio playback needs a system player: `ffplay` (from ffmpeg) for edge, or
-`aplay` / `paplay` / `ffplay` for piper. On Debian/Ubuntu:
-`sudo apt install ffmpeg`. If speech fails you get one warning and the game
-continues silently.
-
-## Writing a bot
-
-Drop a new `.py` file in `perudo/bots/` containing a class with a `play`
-method — no registration needed. See `perudo/bots/example_bot.py` for a
-documented starting point and `perudo/bot_base.py` / `perudo/models.py` for
-the available state and actions.
-
-- Set `count = 3` (class attribute or `self.count`) to seat multiple copies
-  of your bot; copies are auto-numbered.
-- Set `count = 0` to bench a bot without deleting its file.
-- Instance state persists across games in simulation mode, so a bot can learn
-  about its opponents.
+Every bot in `perudo/bots/` (and `contestants/`) is one self-contained file
+with the same interface as `example_bot.py`: a class with a `name` and the
+methods `play(state)`, `observe(event)`, `on_game_start(info)` and
+`on_game_end(result)`. Bots import only the standard library and
+`perudo.models`, and do not talk.
 
 ## Project layout
 
@@ -146,8 +120,6 @@ perudo/
   models.py       bids, events, observations
   bot_base.py     bot base class / interface
   bot_loader.py   bot discovery and instantiation
-  talk.py         optional bot chatter
-  tts.py          optional text-to-speech
   profiler.py     per-opponent learning (tooling; bots embed their own copy)
   bots/           all participating bots
 contestants/      bots that are not at the table (Hakaman, Wouluh)

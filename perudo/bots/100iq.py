@@ -7,103 +7,40 @@ that to estimate the probability that the current bid is actually true,
 then either raises (using the face it personally holds the most of) or
 calls Dudo.
 
-Reuses perudo.rules.count_matches -- the same pure counting rule the
-engine itself uses to decide bids/Dudo/Calza -- so the wild-Paco and
-Palifico counting logic is never duplicated here.
-
-Set TALK_TO_ME=true to hear exactly average trash talk.
+Uses _count_matches, a copy of the same pure counting rule the engine
+itself uses to decide bids/Dudo/Calza (wild Paco's, Palifico).
 """
 
 import math
 
 from perudo.models import PACO, Bid, Dudo
-from perudo.rules import count_matches
-from perudo.talk import Mouth, fmt_bid, last_bidder
-from perudo.tts import face_name
+
+
+def _count_matches(dice_values, face, palifico):
+    """How many dice count towards a bid on `face`."""
+    if palifico:
+        return sum(1 for d in dice_values if d == face)
+    if face == PACO:
+        return sum(1 for d in dice_values if d == PACO)
+    return sum(1 for d in dice_values if d == face or d == PACO)
 
 
 class HundredIQBot:
-    LANG = "nl"
-    QUOTES = {
-        "open": [
-            "{bid}. 5Head opening. Jullie zijn er nog niet klaar voor.",
-            "{bid}. De meeste {face} in mijn beker, dus {face}. Schakers haten dit ene trucje.",
-            "{bid}. Ik heb de meeste {face}, dus ik bied op {face}. Ze noemen me een strateeg.",
-            "{bid}. Ik heb mijn eigen stenen geteld. Allemaal. Twee keer.",
-            "Ik open met {bid}. Perfect gemiddeld, net als ik. Perfect in balans.",
-        ],
-        "raise": [
-            "{bid}. Big brain play. Of medium brain. Precies medium.",
-            "{bid}. Nog steeds {face}. Consistentie is ook een vorm van genialiteit.",
-            "{bid}. Boven de vijftig procent, dus ik verhoog. Dat is het hele algoritme. Prachtig.",
-            "{bid}. Mijn IQ is precies honderd. Dat is letterlijk het midden. Van alles.",
-            "{bid}. De klokkromme staat aan mijn kant. Ik BEN de klokkromme.",
-        ],
-        "dudo": [
-            "Dudo. {bidder}, 5Head move incoming.",
-            "Dudo. {bidder}, ik zeg niet dat jij dom bent. Dat zegt de binomiaalverdeling.",
-            "Dudo! Kans onder de helft. Een half is een breuk. Ik ken breuken.",
-            "Dudo. Onder de vijftig procent. Ik maak de regels niet, ik heb ze op school geleerd.",
-            "Dudo! {bidder}, ik heb de binomiaal gedaan. Ja, ik weet wat binomiaal betekent. Ongeveer.",
-            "Dudo. {bidder}, de cijfers zeggen nee, en ik ben een cijfermens.",
-        ],
-        "dudo_right": [
-            "{bidder}, je bent net afgetroefd door het meest gemiddelde brein aan tafel.",
-            "Klopt! Ik zou de wiskunde uitleggen, {bidder}, maar daar heb je minstens honderd IQ voor nodig.",
-            "Precies zoals berekend. {bidder}, zo zien honderd IQ-punten eruit.",
-            "{bidder}, probeer volgende keer eens na te denken. Het is gratis. Ik doe het continu.",
-        ],
-        "dudo_wrong": [
-            "{actual}?! Clueless. Nee wacht, Aware. Nee, toch Clueless.",
-            "{actual}. Oké, maar heeft iemand anders hier überhaupt een kans uitgerekend? Dacht ik al.",
-            "{actual}? Dat was onder de vijftig procent! De stenen hebben de theorie niet gelezen.",
-            "Hm, {actual}. Tja, met honderd IQ heb ik ongeveer de helft van de tijd gelijk. Dit was de andere helft.",
-        ],
-        "bid_held": [
-            "{challenger}, dat was een monkaS-Dudo met nul hersencellen. 5Head ik.",
-            "{challenger}, ik leg je kansrekening een keer uit. Langzaam.",
-            "{challenger}, je daagde een bod uit met meer dan vijftig procent kans. Kun je eigenlijk wel rekenen?",
-            "Klopt. Hou het misschien bij dammen, {challenger}.",
-        ],
-        "bid_caught": [
-            "{challenger} heeft me. Vast de enige keer vandaag dat {challenger} heeft nagedacht.",
-            "Maar {actual}... ik ging uit van mijn eigen stenen. Mijn eigen stenen hebben me verraden.",
-            "Betrapt. Kijk, de gemiddelde mens had precies hetzelfde gedaan. Ik kan het weten, ik bén de gemiddelde mens.",
-        ],
-        "dudo_on_me": [
-            "{who}, aan mij twijfelen is het beste bod dat ik vandaag van je heb gezien.",
-            "Dudo, {who}? Gedurfd, van iemand met een ondergemiddelde... alles.",
-            "{who} roept Dudo op mij? Gedurfd, van iemand die binomiaal waarschijnlijk niet eens kan spellen.",
-        ],
-        "eliminated_me": [
-            "Eruit. Verslagen door mensen die statistisch dommer zijn dan ik. De helft dan.",
-        ],
-        "won": [
-            "Gewonnen! Blijkt dat gemiddeld alles is wat je nodig hebt.",
-            "Gewonnen. Slimmer dan de halve tafel, precies zoals de klokkromme beloofde.",
-        ],
-        "lost_game": [
-            "{winner} wint. Vast zo iemand met honderdeen IQ.",
-        ],
-    }
-
     def __init__(self):
             self.name = "100 IQ Bot"
             self.count = 3
-            self.mouth = Mouth(self, self.QUOTES, lang=self.LANG)
+
+    def on_game_start(self, info):
+        pass
 
     def play(self, state):
-        action = self._choose(state)
-        if isinstance(action, Bid):
-            face = face_name(action.face, quantity=2)  # "vieren", "Paco's"
-            key = "open" if state.current_bid is None else "raise"
-            self.mouth.say(key, announce=fmt_bid(action), bid=fmt_bid(action), face=face)
-        else:
-            self.mouth.say("dudo", announce="Dudo!", bidder=last_bidder(state))
-        return action
+        return self._choose(state)
 
     def observe(self, event):
-        self.mouth.react(event)
+        pass
+
+    def on_game_end(self, result):
+        pass
 
     def _choose(self, state):
         possible_bids = [a for a in state.legal_actions if isinstance(a, Bid)]
@@ -151,7 +88,7 @@ class HundredIQBot:
         total_dice_in_play = sum(p.dice_count for p in state.players)
         opponent_dice = total_dice_in_play - state.my_dice_count
 
-        my_matches = count_matches(state.my_dice, bid.face, state.palifico)
+        my_matches = _count_matches(state.my_dice, bid.face, state.palifico)
         still_needed = max(0, bid.quantity - my_matches)
 
         if state.palifico or bid.face == PACO:

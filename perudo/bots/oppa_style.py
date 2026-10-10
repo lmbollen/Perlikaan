@@ -1,5 +1,5 @@
 """
-Oppa Style -- een Perudo-bot die rekent als een nerd en praat als een popster.
+Oppa Style -- een Perudo-bot die rekent als een nerd.
 
 Strategie in het kort:
   * Voor elk bod rekenen we de kans uit dat het klopt: onze eigen stenen
@@ -10,14 +10,10 @@ Strategie in het kort:
   * We kiezen de actie met de kleinste kans om een steen te verliezen:
     Dudo als het huidige bod waarschijnlijk vals is, Calza als "precies
     goed" heel waarschijnlijk is, en anders het veiligste bod.
-
-Zet TALK_TO_ME=true in je environment om Oppa Style te horen praten, en
-TTS=true om het ook hardop te horen (Piper).
 """
 
 import math
 import random
-from pathlib import Path
 
 from perudo.models import (
     Bid,
@@ -26,103 +22,11 @@ from perudo.models import (
     DieGainedEvent,
     DieLostEvent,
     Dudo,
-    PlayerEliminatedEvent,
     RevealEvent,
 )
-from perudo.talk import Mouth
 
 PACO = 1
-BOT_NAME = Path(__file__).stem.replace("_", " ").title()  # "Oppa Style"
-
-
-# ---------------------------------------------------------------------------
-# Quotes
-# ---------------------------------------------------------------------------
-
-QUOTES = {
-    "open": [
-        "{bid}. catJAM. Oppa voelt de beat.",
-        "Oppa opent met {bid}. Hey, sexy dice!",
-        "{bid}. Ik begin rustig... zoals het intro voordat de beat dropt.",
-        "Ik open met {bid}. Eeeeh, sexy lady!",
-        "{bid} om te beginnen. Mijn stenen dragen een zonnebril, je kunt ze niet lezen.",
-    ],
-    "open_bluff": [
-        "{bid}. Of ik ze heb? Vraag het maar aan mijn paardendansleraar.",
-        "{bid}! Helemaal echt. Geloof me, ik ben een beroemdheid.",
-    ],
-    "raise_safe": [
-        "{bid}. Kreygasm. Wat een bod, wat een dans.",
-        "{bid}. Mijn stenen hebben het me ingefluisterd. Ze liegen nooit. Meestal.",
-        "{bid}, makkie. Ik heb de goederen onder dit bekertje.",
-        "{bid}. Veiliger dan een K-pop-dansrepetitie.",
-        "{bid}. Soepel als het verkeer in Gangnam om drie uur 's nachts.",
-    ],
-    "raise_risky": [
-        "{bid}. monkaS. De paardendans begint te wiebelen.",
-        "{bid}... *zweet in een smoking*",
-        "Eh... {bid}? Kijk alsjeblieft niemand naar mij.",
-        "{bid}. Als dit misgaat, ben ik hier nooit geweest.",
-        "{bid}. Ik ben niet bang, mijn benen trillen altijd als ik dans.",
-    ],
-    "raise_paco": [
-        "{bid}! Paco-tijd, het paard is uit de stal.",
-        "Over op Paco's: {bid}. Galopperen!",
-    ],
-    "dudo_sure": [
-        "DUDO! {bid}? Jij bluft harder dan mijn dansmoves.",
-        "{bid}?? DUDO! Niet onder mijn toezicht, {who}.",
-        "Dudo! {who}, die stenen bestaan alleen in je dromen.",
-        "{bid}... wat schattig. DUDO!",
-    ],
-    "dudo_forced": [
-        "Dudo... ik geloof het niet, maar ik geloof ook niet in mezelf.",
-        "Dudo, denk ik? Nog hoger gaan zou nog gekker zijn.",
-    ],
-    "calza": [
-        "CALZA! Precies {bid}. Ik voel het in mijn paardenbotten.",
-        "Calza! Precies {bid}, als een perfect synchrone dansmove.",
-    ],
-    "palifico": [
-        "Palifico-ronde! Geen wilde Paco's, dus ook geen wilde Oppa. Focus.",
-        "Palifico... de muziek stopt, iedereen bevriezen.",
-    ],
-    "big_bid_seen": [
-        "Wow {who}, {bid}? Iemand heeft aan de soju gezeten.",
-        "{bid}, {who}? Gedurfd. Ik hou van gedurfd. Ik hou ook van Dudo.",
-    ],
-    "small_bid_seen": [
-        "{who} gaat voor {bid}. Bang voor Oppa, hè?",
-        "{bid}, {who}? Op je tenen lopen als een kat. Miauw.",
-    ],
-    "won_challenge": [
-        "POGGERS! {who} verliest een steen. Oppa Gangnam style!",
-        "Hah! {who} verliest een steen. Oppa Gangnam style!",
-        "Zei ik toch. {who}, geef die steen maar aan de dansvloer.",
-        "Ik las je als een songtekst, {who}.",
-    ],
-    "lost_challenge": [
-        "Au. Die steen was mijn favoriete achtergronddanser.",
-        "Ik ben een steen kwijt... ik huil niet, het is zweet van het dansen.",
-        "Oké, oké, die is voor mij. Videoclip terugspoelen.",
-    ],
-    "gained_die": [
-        "Er komt een steen terug! De comebacktour begint NU.",
-        "Calza gelukt! Encore, encore!",
-    ],
-    "eliminated_other": [
-        "{who} ligt eruit. F in de chat. Oké, genoeg, catJAM verder.",
-        "Dag dag {who}! Jij bent van het podium afgedanst.",
-        "{who} ligt eruit. Moment van stilte... oké, genoeg geweest.",
-    ],
-    "eliminated_me": [
-        "Oppa ligt eruit... onthoud mijn moves, onthoud mij.",
-    ],
-    "won_game": [
-        "WINNAAR! PogChamp! Oppa Gangnam style, helemaal naar de top!",
-        "WINNAAR! Oppa Gangnam style, helemaal naar de top!",
-    ],
-}
+BOT_NAME = "Oppa Style"
 
 
 class OppaStyleBot:
@@ -138,7 +42,6 @@ class OppaStyleBot:
     def __init__(self):
         self.name = BOT_NAME
         self.rng = random.Random()
-        self.mouth = Mouth(self, QUOTES)
 
         # Per opponent (by name): how much more of the bid face they held than
         # chance would predict, summed over reveals. Prior = mild honesty.
@@ -150,17 +53,6 @@ class OppaStyleBot:
         self.last_bidder = None
         self.round_opener = None
         self.my_dice_count = 5
-
-    # -- talking --------------------------------------------------------
-
-    def _say(self, key, announce=None, **kw):
-        self.mouth.say(key, announce, **kw)
-
-    @staticmethod
-    def _fmt(bid):
-        if bid is None:
-            return "niks"
-        return f"{bid.quantity}x {'paco' if bid.face == PACO else bid.face}"
 
     # -- probability helpers ------------------------------------------------
 
@@ -250,9 +142,6 @@ class OppaStyleBot:
         can_dudo = any(isinstance(a, Dudo) for a in state.legal_actions)
         can_calza = any(isinstance(a, Calza) for a in state.legal_actions)
 
-        if state.palifico and not state.history:
-            self._say("palifico")
-
         if cur is None:
             return self._open(state, n_unknown)
 
@@ -286,26 +175,15 @@ class OppaStyleBot:
             gain = 1.0 if (state.my_dice_count < 5 and len(alive) == len(state.players)) else 0.0
             calza_value = p_exact * gain - (1 - p_exact)
             if calza_value > -min(dudo_loss, raise_loss) + 0.05 and p_exact > self.CALZA_MIN:
-                self._say("calza", "Calza!", bid=self._fmt(cur))
                 return Calza()
 
         if can_dudo and (dudo_loss < raise_loss or best is None):
-            key = "dudo_sure" if p_cur < 0.35 else "dudo_forced"
-            self._say(key, "Dudo!", bid=self._fmt(cur), who=self.last_bidder or "vriend")
             return Dudo()
 
         if best is None:
-            self._say("dudo_forced", "Dudo!")
             return Dudo()
 
         pt, b = best
-        self._react_to_bid(state, cur, n_unknown)
-        if b.face == PACO and not state.palifico and cur.face != PACO:
-            self._say("raise_paco", self._fmt(b), bid=self._fmt(b))
-        elif pt >= 0.6:
-            self._say("raise_safe", self._fmt(b), bid=self._fmt(b))
-        else:
-            self._say("raise_risky", self._fmt(b), bid=self._fmt(b))
         return b
 
     def _open(self, state, n_unknown):
@@ -324,20 +202,7 @@ class OppaStyleBot:
             lower = Bid(b.quantity - 1, b.face)
             if lower in state.legal_actions:
                 b = lower
-        mine = self._mine(state.my_dice, b.face, state.palifico)
-        self._say("open" if mine > 0 else "open_bluff", self._fmt(b), bid=self._fmt(b))
         return b
-
-    def _react_to_bid(self, state, cur, n_unknown):
-        # Commentary on what the previous player did, if it stood out.
-        if self.last_bidder is None:
-            return
-        p = self._face_p(cur.face, state.palifico)
-        expected = state.my_dice_count * p + n_unknown * p
-        if cur.quantity >= expected + 2:
-            self._say("big_bid_seen", bid=self._fmt(cur), who=self.last_bidder)
-        elif cur.quantity <= expected - 2:
-            self._say("small_bid_seen", bid=self._fmt(cur), who=self.last_bidder)
 
     # -- learning from public events --------------------------------------
 
@@ -356,28 +221,14 @@ class OppaStyleBot:
 
         if isinstance(event, RevealEvent):
             self._learn(event)
-            if event.challenger == self.name or event.bidder == self.name:
-                if event.challenge_type == "dudo":
-                    i_won = (event.challenger == self.name) == (event.result == "bidder_wrong")
-                    if i_won:
-                        loser = event.bidder if event.challenger == self.name else event.challenger
-                        self._say("won_challenge", who=loser)
             self.round_bids = {}
             self.last_bidder = None
             return
 
         if isinstance(event, DieLostEvent) and event.player == self.name:
             self.my_dice_count = event.dice_count
-            if event.dice_count > 0:
-                self._say("lost_challenge")
         elif isinstance(event, DieGainedEvent) and event.player == self.name:
             self.my_dice_count = event.dice_count
-            self._say("gained_die")
-        elif isinstance(event, PlayerEliminatedEvent):
-            if event.player == self.name:
-                self._say("eliminated_me")
-            else:
-                self._say("eliminated_other", who=event.player)
 
     def _learn(self, event):
         # Palifico-ness isn't in the reveal; infer it from the counting rule:
@@ -403,5 +254,4 @@ class OppaStyleBot:
             self.hint_n[who] = self.hint_n.get(who, 0) + 1
 
     def on_game_end(self, result):
-        if result.winner == self.name:
-            self._say("won_game")
+        pass

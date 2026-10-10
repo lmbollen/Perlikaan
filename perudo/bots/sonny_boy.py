@@ -1,5 +1,5 @@
 """
-Sonny Boy: een kansrekenende Perudo-bot met een grote mond.
+Sonny Boy: een kansrekenende Perudo-bot.
 
 Strategie in het kort:
   * Voor elk bod schatten we met de binomiaalverdeling hoe groot de kans is dat
@@ -9,26 +9,12 @@ Strategie in het kort:
   * Zit het bod er precies op (hoogste kans op "exact") -> Calza.
   * Anders: het bod met de grootste kans op waarheid, met af en toe een bluf.
   * We onthouden per tegenstander (op naam) hoe vaak ze bij een Dudo bluften.
-
-Zet de omgevingsvariabele TALK_TO_ME=true om Sonny Boy te laten praten, en
-TTS=true om hem dat ook echt hardop te laten zeggen (Piper).
 """
 
 import random
 from math import comb
 
-from perudo.models import (
-    Bid,
-    BidEvent,
-    Calza,
-    CalzaEvent,
-    DieLostEvent,
-    Dudo,
-    DudoEvent,
-    PlayerEliminatedEvent,
-    RevealEvent,
-)
-from perudo.talk import Mouth
+from perudo.models import Bid, Calza, Dudo, RevealEvent
 
 PACO = 1
 
@@ -48,88 +34,6 @@ def _p_exact(n: int, p: float, k: int) -> float:
     return comb(n, k) * p**k * (1 - p) ** (n - k)
 
 
-def _fmt_bid(bid) -> str:
-    return f"{bid.quantity}x {'Paco' if bid.face == PACO else bid.face}"
-
-
-QUOTES = {
-    "open": [
-        "{bid}. Ik open zacht. Als een kat die net uit bed komt.",
-        "Ik open met {bid}. Mijn dobbelstenen zeggen: 'vertrouw ons'. Dat is verdacht.",
-        "{bid}. Een bescheiden openingsbod. Ik ben nederigheid in een bekertje.",
-    ],
-    "safe_bid": [
-        "{bid}. Ik bied laag. Niet bang hoor, gewoon... voorzichtig. Heel voorzichtig.",
-        "{bid}. Een veilig bodje. Mijn moeder noemde mij altijd 'verstandig'. Of was het 'saai'?",
-        "{bid}. Klein bod, grote vibes.",
-    ],
-    "raise": [
-        "Ik verhoog naar {bid}! De dobbelstenen en ik hebben een afspraak.",
-        "{bid}! Hoger! Zwaartekracht is maar een suggestie.",
-        "{bid}. Ik ruik zwakte. Of het is mijn sok. We gaan door.",
-    ],
-    "bluff": [
-        "{bid}. Helemaal waar. Kappa",
-        "{bid}. Dat is honderd procent waar. Ik kruis mijn vingers niet. Echt niet.",
-        "{bid}. Mijn bekertje zit er vol mee. Eerlijk. Ik zweer het op mijn bekertje.",
-        "{bid}. Bluffen? IK? Ik kan niet eens liegen over mijn leeftijd.",
-    ],
-    "dudo": [
-        "DUDO! Jebaited, jij, niet ik.",
-        "DUDO! Dat bod is zo dun dat je er doorheen kunt lezen.",
-        "Nee. Nee nee nee. DUDO.",
-        "Ik geloof je net zoveel als een verzekeringsagent met een gratis cruise.",
-    ],
-    "dudo_unsure": [
-        "Dudo, op gevoel. Mijn gevoel is vaak fout, maar het is wel zelfverzekerd.",
-        "Ik zeg Dudo en hoop dat het universum meewerkt.",
-    ],
-    "calza": [
-        "CALZA! Precies zoveel. Ik voel het in mijn dobbelstenen.",
-        "Calza! Als het klopt ben ik een genie, anders... gewoon een pechvogel.",
-    ],
-    "won_dudo": [
-        "KEKW. Ik wist het! (Ik wist het niet.)",
-        "Haha! Ik wist het. Ik wist het altijd al. (Dat is gelogen, maar het voelt goed.)",
-        "Gebluft en betrapt. Op naar de volgende!",
-    ],
-    "lost_dudo": [
-        "Au. PepeHands. Mijn dobbelsteen-ziel.",
-        "Au. Dat deed pijn in mijn dobbelsteen-ziel.",
-        "Oké, die zag ik niet aankomen. Mijn dobbelstenen zijn verraders.",
-    ],
-    "calza_win": [
-        "CALZA GERAAKT! Buigen graag. Dieper. Nog dieper.",
-    ],
-    "calza_lose": [
-        "Calza mislukt. We doen alsof dit nooit gebeurd is.",
-    ],
-    "scared_opponent": [
-        "{who} biedt zo laag, volgens mij is {who} bang voor het eigen bekertje.",
-        "{who} fluistert een bod. Bang voor de dobbelstenen?",
-    ],
-    "bold_opponent": [
-        "{who} biedt hoog. PogChamp of KEKW? We gaan het zien.",
-        "{who} gaat hoog in. Dapper of dwaas? Ik ga voor dwaas.",
-        "{who} biedt alsof er geen morgen is. Er is wel een morgen, namelijk met minder dobbelstenen.",
-    ],
-    "opp_lost": [
-        "{who} verliest een dobbelsteen. Een moment stilte... en nu lachen.",
-        "Een minuutje stilte voor {who}'s dobbelsteen. Klaar. Verder.",
-    ],
-    "opp_out": [
-        "{who} is eruit. F in de chat.",
-        "{who} is eruit. Dag {who}, schrijf nog eens!",
-    ],
-    "opp_dudo_me": [
-        "{who} roept Dudo op mij. Brutaal!",
-    ],
-    "palifico": [
-        "Palifico! Alle regels zijn anders. Ik ook. Ik ben ook anders.",
-    ],
-}
-
-
 class SonnyBoy:
     CREDIT = 1
     CALZA_MIN = 0.5
@@ -140,16 +44,11 @@ class SonnyBoy:
         self.count = 1
         # Per tegenstander: [aantal bods dat bij Dudo-reveal klopte, totaal bods onthuld]
         self.bluff_stats = {}
-        self.mouth = Mouth(self, QUOTES)
         self._rng = random.Random()
         self._round_bids = []  # (player, Bid) deze ronde -- via observe()
-        self._last_event_quote_turn = 0
 
-    # ------------------------------------------------------------------
-    # praatjes
-    # ------------------------------------------------------------------
-    def _say(self, key, announce=None, **fmt):
-        self.mouth.say(key, announce, **fmt)
+    def on_game_start(self, info):
+        pass
 
     # ------------------------------------------------------------------
     # kansberekening
@@ -207,9 +106,6 @@ class SonnyBoy:
         cur = state.current_bid
         total = sum(p.dice_count for p in state.players if p.alive)
 
-        if palifico and cur is None and state.round_number is not None:
-            self._say("palifico")
-
         # Beoordeel het huidige bod.
         if cur is not None and can_dudo:
             p_true = self._p_true(state, cur, palifico, credit=self.CREDIT)
@@ -226,26 +122,22 @@ class SonnyBoy:
                 pe = self._p_exact(state, cur, palifico, credit=self.CREDIT)
                 threshold = self.CALZA_MIN
                 if pe >= threshold:
-                    self._say("calza", "Calza!")
                     return Calza()
 
             # Dudo als het bod waarschijnlijker fout dan goed is, of als
             # doorbieden nauwelijks veiliger is.
             if best_bid is None:
-                self._say("dudo", "Dudo!")
                 return Dudo()
             dudo_threshold = self.DUDO_AT
             # Met weinig dobbelstenen is verliezen duurder: iets voorzichtiger bluffen.
             if p_true < dudo_threshold or p_true < best_p - 0.25:
-                self._say("dudo" if p_true < 0.3 else "dudo_unsure", "Dudo!")
                 return Dudo()
-            return self._bid(state, best_bid, best_p, cur)
+            return best_bid
 
         # Openen.
         if not bids:
             return Calza() if can_calza else Dudo()
         best_bid, best_p = self._best_bid(state, bids, palifico, opening=True)
-        self._say("open", _fmt_bid(best_bid), bid=_fmt_bid(best_bid))
         return best_bid
 
     def _best_bid(self, state, bids, palifico, opening=False):
@@ -274,17 +166,6 @@ class SonnyBoy:
         p, b = cands[0]
         return b, p
 
-    def _bid(self, state, best_bid, best_p, cur):
-        # Bluf af en toe: ga bewust één stap hoger op een getal dat we zelf hebben.
-        bid = _fmt_bid(best_bid)
-        if best_p < 0.45:
-            self._say("bluff", bid, bid=bid)
-        elif best_p > 0.75:
-            self._say("safe_bid", bid, bid=bid)
-        else:
-            self._say("raise", bid, bid=bid)
-        return best_bid
-
     # ------------------------------------------------------------------
     # leren / reageren
     # ------------------------------------------------------------------
@@ -296,20 +177,6 @@ class SonnyBoy:
             st[1] += 1
             if correct:
                 st[0] += 1
-            if event.challenger == self.name:
-                self._say("won_dudo" if not correct and event.challenge_type == "dudo" else
-                          "calza_win" if event.challenge_type == "calza" and event.result == "correct"
-                          else "calza_lose" if event.challenge_type == "calza" else "lost_dudo")
-            elif event.bidder == self.name and event.challenge_type == "dudo" and correct:
-                self._say("won_dudo")
-        elif isinstance(event, DudoEvent) and event.player != self.name:
-            pass
-        elif isinstance(event, BidEvent) and event.player != self.name:
-            self._say("bold_opponent" if event.bid.quantity >= 6 else "scared_opponent",
-                      who=event.player)
-        elif isinstance(event, DieLostEvent) and event.player != self.name:
-            self._say("opp_lost", who=event.player)
-        elif isinstance(event, PlayerEliminatedEvent) and event.player != self.name:
-            self._say("opp_out", who=event.player)
-        elif isinstance(event, CalzaEvent) or isinstance(event, DudoEvent):
-            pass
+
+    def on_game_end(self, result):
+        pass
