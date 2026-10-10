@@ -44,6 +44,7 @@ with FOLLOW_WEIGHT).
 Set TALK_TO_ME=true to hear it over the radio.
 """
 
+import math
 import random
 
 from perudo.bots.sniper import QUOTES as SNIPER_QUOTES
@@ -132,6 +133,19 @@ class PokerfaceBot(SniperBot):
     # bid when P(exact) * their learned Calza rate exceeds CALZA_RISK.
     AVOID_CALZA = True
     CALZA_RISK = 0.1
+    # Pick bids by a one-step lookahead instead of "strongest bid that is
+    # TARGET likely": for every hand the next player may hold, how likely is
+    # our bid (to us) and how likely does it look to them? With their learned
+    # Dudo threshold and Calza rate that gives the expected dice of each bid.
+    # Bids that are true but look false to them (traps) score best; bids
+    # that hand them an easy Dudo or Calza score worst.
+    LOOKAHEAD = False
+    # Only bids at least this likely (to us) are considered.
+    LOOKAHEAD_MIN = 0.5
+    # How sharp an opponent's Dudo threshold is (logistic width).
+    DUDO_SOFTNESS = 0.07
+    # Dudo threshold assumed for an opponent we know nothing about yet.
+    DEFAULT_DUDO_AT = 0.3
     # Set to a list to record every decision with what we believed at the
     # time (see analyze_endgame.py). None = no logging.
     decision_log = None
@@ -147,6 +161,7 @@ class PokerfaceBot(SniperBot):
         # (table size class, estimate bucket) -> [times true, times seen]
         self._calibration = {}
         self._pending = []   # (key, bid, palifico) of bids faced this round
+        self._thr_cache = {}
 
     # -- reading the others ------------------------------------------------
 
@@ -162,6 +177,10 @@ class PokerfaceBot(SniperBot):
         were worth in earlier rounds (OpponentProfiler.bid_excess): a lot for
         an honest bidder, nothing or less than nothing for a bluffer.
         """
+        return sum(self._hint_by_player(state, face).values())
+
+    def _hint_by_player(self, state, face):
+        """Per opponent: extra dice of `face` we credit them for their bids."""
         bid_faces, chosen = {}, {}
         prev = None
         for rec in state.history:
@@ -176,7 +195,7 @@ class PokerfaceBot(SniperBot):
 
         dice_of = {p.name: p.dice_count for p in state.players}
         p = self._p_face(face, False)
-        total = 0.0
+        out = {}
         for who, faces in bid_faces.items():
             extra = 0.0
             # Natural dice of the face itself, and Pacos (wild for any face).
@@ -184,8 +203,8 @@ class PokerfaceBot(SniperBot):
                 extra += self.profiler.bid_excess(who, bid_kind(f, f in chosen.get(who, ())))
             n = dice_of.get(who, 0)
             # They hold between 0 and n matches: expectation is n * p.
-            total += min(max(extra, -n * p), n * (1 - p))
-        return total
+            out[who] = min(max(extra, -n * p), n * (1 - p))
+        return out
 
     def _static_hint(self, state, face):
         """Extra dice of `face` we expect among opponents, based on their bids."""
@@ -303,6 +322,10 @@ class PokerfaceBot(SniperBot):
             low_risk = [(pt, b) for pt, b in safe
                         if rate * self._prob_exact(state, b, n_unknown, hints) <= self.CALZA_RISK]
             safe = low_risk or safe
+        if self.LOOKAHEAD and not state.palifico and scored:
+            picked = self._lookahead_pick(state, scored, n_unknown, hints)
+            if picked is not None:
+                safe = [picked]
         if safe:
             best_p, best = max(safe, key=lambda s: (self._strength(s[1], state.palifico), s[0]))
         elif scored:
@@ -339,6 +362,64 @@ class PokerfaceBot(SniperBot):
         self._log(state, best, p_cur, best, self._prob_true(state, best, n_unknown, hints), hints,
                   bluff is not None)
         return best
+
+    # -- lookahead ----------------------------------------------------------
+
+    def _dudo_at(self, name):
+        """Learned Dudo threshold of `name` on the own-dice scale, cached."""
+        prof = self.profiler.profiles.get(name)
+        if prof is None or len(prof.facing) < 20:
+            return self.DEFAULT_DUDO_AT
+        cache = self._thr_cache.get(name)
+        if cache is None or len(prof.facing) - cache[0] >= 25:
+            t, _ = prof.dudo_threshold()
+            cache = (len(prof.facing), t)
+            self._thr_cache[name] = cache
+        return cache[1]
+
+    def _bid_ev(self, state, bid, n_unknown, hints, nxt, dice_next, h_next, t_next, calza_next, gain_next):
+        """Expected dice for us of putting `bid` in front of the next player."""
+        p = self._p_face(bid.face, False)
+        total = n_unknown + state.my_dice_count
+        mine = count_matches(state.my_dice, bid.face, False)
+        h_rest = hints[bid.face] - h_next
+        m = n_unknown - dice_next          # unknown dice outside the next player
+        # Their matches: binomial, nudged by what their own bids told us.
+        q_next = min(max(p + (h_next / dice_next if dice_next else 0), 0.01), 0.99)
+        ev = 0.0
+        for k in range(dice_next + 1):
+            pk = math.comb(dice_next, k) * q_next**k * (1 - q_next) ** (dice_next - k)
+            need = bid.quantity - mine - k - h_rest
+            p_true = self._tail(m, p, need)
+            p_exact = p_true - self._tail(m, p, need + 1)
+            # How likely the bid looks to them: their k plus chance elsewhere.
+            their_view = self._tail(total - dice_next, p, bid.quantity - k)
+            p_dudo = 1 / (1 + math.exp((their_view - t_next) / self.DUDO_SOFTNESS))
+            p_calza = (1 - p_dudo) * calza_next
+            ev += pk * (p_dudo * (2 * p_true - 1)
+                        + p_calza * ((1 - p_exact) - p_exact * gain_next))
+        return ev
+
+    def _lookahead_pick(self, state, scored, n_unknown, hints):
+        """(P(true), bid) with the best expected dice, or None."""
+        nxt = self._next_player(state)
+        if nxt is None:
+            return None
+        dice_next = next(p.dice_count for p in state.players if p.name == nxt)
+        t_next = self._dudo_at(nxt)
+        calza_next = self.profiler.calza_rate(nxt)
+        gain_next = 1.0 if (all(p.alive for p in state.players) and dice_next < 5) else 0.0
+        by_player = {f: self._hint_by_player(state, f).get(nxt, 0.0) for f in range(1, 7)}
+        best = None
+        for pt, b in scored:
+            if pt < self.LOOKAHEAD_MIN:
+                continue
+            ev = self._bid_ev(state, b, n_unknown, hints, nxt, dice_next, by_player[b.face],
+                              t_next, calza_next, gain_next)
+            key = (ev, self._strength(b, False))
+            if best is None or key > best[0]:
+                best = (key, pt, b)
+        return None if best is None else (best[1], best[2])
 
     def _prob_exact(self, state, bid, n_unknown, hints):
         """P(exactly bid.quantity matching dice on the table)."""

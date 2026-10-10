@@ -100,3 +100,30 @@ def test_target_is_bolder_against_a_player_who_never_challenges():
     state = _state([2, 3, 4])   # seats: Pokerface, A, B -> A is next
     assert bot._next_player(state) == "A"
     assert bot._target(state, bot.TARGET) < bot.TARGET
+
+
+def test_calza_only_when_it_gains_a_die():
+    bot = PokerfaceBot()
+    assert bot._calza_gains(_state([2, 3, 4]))
+    assert not bot._calza_gains(_state([2, 3, 4, 5, 6]))
+
+
+def test_trap_bid_scores_higher_against_a_dudo_happy_opponent():
+    # We hold four 6s: 4x6 is certain for us. To the next player, holding no
+    # 6s, it looks unlikely, so a Dudo-happy player will challenge and lose.
+    bot = PokerfaceBot()
+    state = _state([6, 6, 6, 6, 2])
+    total = 15
+    hints = {f: 0.0 for f in range(1, 7)}
+    args = (state, Bid(4, 6), total - 5, hints, "A", 5, 0.0)
+    happy = bot._bid_ev(*args, 0.8, 0.0, 1.0)
+    shy = bot._bid_ev(*args, 0.05, 0.0, 1.0)
+    assert happy > shy >= 0
+
+
+def test_lookahead_prefers_true_bids():
+    bot = PokerfaceBot()
+    bot.LOOKAHEAD = True
+    action = bot.play(_state([6, 6, 6, 6, 2]))
+    assert isinstance(action, Bid)
+    assert bot._prob_true(_state([6, 6, 6, 6, 2]), action, 10, {f: 0.0 for f in range(1, 7)}) >= 0.5
