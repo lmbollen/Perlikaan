@@ -41,7 +41,7 @@ import math
 from collections import defaultdict
 
 from perudo.models import PACO, Bid, Calza, Dudo, RevealEvent, RoundEndedEvent, GameEndedEvent
-from perudo.models import BidEvent, CalzaEvent, DudoEvent
+from perudo.models import BidEvent, CalzaEvent, DieLostEvent, DudoEvent
 from perudo.profiler import OpponentProfiler
 from perudo.rules import count_matches
 from perudo.talk import Mouth, fmt_bid, last_bidder
@@ -160,6 +160,14 @@ class CarlosBot:
     # bid by how that player really responded to our bids before (per table
     # size and prediction bucket); weight of the prediction in observations.
     RESPONSE_PRIOR = 20
+    # The chain looks only one round of turns ahead, so it underrates the risk
+    # of a bid (later in the round we face higher bids). Learn how often we
+    # really lost a die in rounds where we made a bid with a given predicted
+    # risk (per table size, opening vs raising) and decide on that. Off: it
+    # did not pay off against the core bots (+0.2 +/- 0.9 pp at 5 players,
+    # -1.4 +/- 0.8 pp head-to-head).
+    RISK_CALIBRATION = False
+    RISK_PRIOR = 20
     # When the chain comes back to us, raising is valued as
     # -(1 - P(our best raise true)) * this.
     OUR_RAISE_RISK = 0.5
@@ -181,6 +189,9 @@ class CarlosBot:
         self._own_calibration = {}
         self._own_pending = []
         self._response = {}     # (kind, size, bucket) -> [hits, n]
+        self._risk = {}         # (opening, size, bucket) -> [lost, n]
+        self._risk_pending = []
+        self._lost_this_round = False
         self._awaiting = None   # (size, pd, pc) of our last bid, until the next player acts
 
     # ------------------------------------------------------------------
@@ -200,6 +211,15 @@ class CarlosBot:
             self._awaiting = None
         elif isinstance(event, (RevealEvent, GameEndedEvent)):
             self._awaiting = None
+        if isinstance(event, DieLostEvent) and event.player == self.name:
+            self._lost_this_round = True
+        if isinstance(event, (RoundEndedEvent, GameEndedEvent)):
+            for key in self._risk_pending:
+                stat = self._risk.setdefault(key, [0, 0])
+                stat[0] += self._lost_this_round
+                stat[1] += 1
+            self._risk_pending = []
+            self._lost_this_round = False
         if isinstance(event, BidEvent):
             self._round.append((event.player, event.bid))
         elif isinstance(event, (DudoEvent, CalzaEvent)):
@@ -501,6 +521,21 @@ class CarlosBot:
                 best_raise = max(best_raise, self._p_true(ctx, Bid(q, f)))
         return max(dudo, -(1 - best_raise) * self.OUR_RAISE_RISK)
 
+    def _risk_key(self, ctx, opening, p_lose):
+        return (opening, min(len(ctx["dice"]), 4), min(int(max(p_lose, 0.0) * 20), 19))
+
+    def _calibrated_bid_value(self, ctx, opening, value):
+        """Chain value of a bid with its risk replaced by the learned one."""
+        w = ctx["w"]
+        p_lose = (w - value) / (1 + w)
+        key = self._risk_key(ctx, opening, p_lose)
+        if not self.RISK_CALIBRATION:
+            return value, key
+        lost, n = self._risk.get(key, (0, 0))
+        k = self.RISK_PRIOR
+        p_cal = (lost + k * max(p_lose, 0.0)) / (n + k)
+        return w - (1 + w) * p_cal, key
+
     @staticmethod
     def _resp_bucket(p):
         return min(int(p * 20), 19)
@@ -620,10 +655,15 @@ class CarlosBot:
                 gain = self.CALZA_GAIN if (ctx["gain_ok"] and state.my_dice_count < 5) else 0.0
                 p_ex = self._calibrated(state, cur, self._p_exact(ctx, cur), exact=True)
                 options.append((p_ex * gain - (1 - p_ex), Calza()))
+        risk_keys = {}
         for b in self._candidates(ctx, state):
-            options.append((self._chain(ctx, b, self.name, 0, 0), b))
+            value, key = self._calibrated_bid_value(ctx, cur is None, self._chain(ctx, b, self.name, 0, 0))
+            risk_keys[b] = key
+            options.append((value, b))
 
         value, action = max(options, key=lambda o: (o[0], -getattr(o[1], "quantity", 0)))
+        if isinstance(action, Bid):
+            self._risk_pending.append(risk_keys[action])
         if isinstance(action, Bid):
             p = min(max(self._p_true(ctx, action), 1e-4), 1 - 1e-4)
             self._own_pending.append((self._own_key(ctx, p), action, state.palifico))
