@@ -128,7 +128,7 @@ class PokerfaceBot(SniperBot):
     # Call Calza ourselves when a correct one gains a die, P(exact) is at
     # least CALZA_AT and it beats Dudo in expected dice.
     CALZA = True
-    CALZA_AT = 0.5
+    CALZA_AT = 0.4
     # Avoid bids that the next player is likely to Calza correctly: skip a
     # bid when P(exact) * their learned Calza rate exceeds CALZA_RISK.
     AVOID_CALZA = True
@@ -141,9 +141,9 @@ class PokerfaceBot(SniperBot):
     # that hand them an easy Dudo or Calza score worst.
     LOOKAHEAD = True
     # Only bids at least this likely (to us) are considered.
-    LOOKAHEAD_MIN = 0.5
+    LOOKAHEAD_MIN = 0.3
     # How sharp an opponent's Dudo threshold is (logistic width).
-    DUDO_SOFTNESS = 0.07
+    DUDO_SOFTNESS = 0.04
     # Dudo threshold assumed for an opponent we know nothing about yet.
     DEFAULT_DUDO_AT = 0.3
     # CALIBRATE, CALZA, AVOID_CALZA and LOOKAHEAD only kick in once at most
