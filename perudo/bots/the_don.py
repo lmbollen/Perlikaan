@@ -6,8 +6,8 @@ The Don only cares about the two players next to him: the one on his left
 
   * A neighbour who is still strong gets hit. Toward the right neighbour
     The Don favours bids that are probably true but that the neighbour is
-    likely to challenge, so they lose a die. Toward the left neighbour he is
-    quicker to call Dudo on their bid.
+    likely to challenge, so they lose a die (ATTACK_DUDO would also make him
+    quicker to Dudo the left neighbour; off, it did not pay).
   * A neighbour who is down to at least 2 dice fewer than The Don (1 fewer
     once The Don has 2 dice or less) is under his protection: a bodyguard.
     The right one gets an easy bid (very likely true, unlikely to be
@@ -76,7 +76,9 @@ class TheDonBot(Trihard):
     ATTACK = True
     PROTECT = True
     # Attack through Dudo on a strong neighbour's bid (besides trap bids).
-    ATTACK_DUDO = True
+    # Off: the extra Dudos cost about 5 pp at 5 players; trap bids alone do
+    # slightly better than no attack (+5.3 vs +3.9 pp over the old Don).
+    ATTACK_DUDO = False
     # Value of a strong neighbour losing a die, on top of the normal +1.
     ATTACK_BONUS = 0.6
     # Toward a protected right neighbour: penalty per unit of chance that
