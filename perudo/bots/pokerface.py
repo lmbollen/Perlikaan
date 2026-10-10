@@ -132,6 +132,9 @@ class PokerfaceBot(SniperBot):
     # Value of a correct Calza once it gains no die (someone is out, or we
     # have 5): nobody loses a die and we start the next round.
     CALZA_FREE_PASS = 0.3
+    # Consider Calza up to this many players left (it is judged on expected
+    # value, so at big tables with many dice it rarely wins anyway).
+    CALZA_PLAYERS = 7
     # Avoid bids that the next player is likely to Calza correctly: skip a
     # bid when P(exact) * their learned Calza rate exceeds CALZA_RISK.
     AVOID_CALZA = True
@@ -356,14 +359,18 @@ class PokerfaceBot(SniperBot):
         p_cur = None
         if cur is not None:
             p_cur = self._calibrated(state, cur, self._prob_true(state, cur, n_unknown, hints))
-            if self.CALZA and endgame and Calza() in state.legal_actions:
+            alive = sum(p.alive for p in state.players)
+            if self.CALZA and alive <= self.CALZA_PLAYERS and Calza() in state.legal_actions:
                 p_ex = self._calibrated(state, cur, self._prob_exact(state, cur, n_unknown, hints), exact=True)
                 gains = self._calza_gains(state)
-                # Expected dice: a correct Calza +1 (or a free pass once it no
-                # longer gains a die: nobody loses, we start), a wrong one -1;
-                # Dudo +1 (they lose) / -1; a raise loses if challenged and false.
+                # Expected dice for us: a correct Calza +1 (or a free pass once
+                # it no longer gains a die: nobody loses, we start), a wrong one
+                # -1; Dudo: the bidder losing is worth 1/(opponents), us -1; a
+                # raise loses when it is challenged and false. With few dice
+                # P(exact) is high and Calza wins this comparison more often.
+                w = 1.0 / max(alive - 1, 1)
                 ev_calza = p_ex * (1.0 if gains else self.CALZA_FREE_PASS) - (1 - p_ex)
-                ev_dudo = 1 - 2 * p_cur
+                ev_dudo = (1 - p_cur) * w - p_cur
                 ev_raise = -math.inf if best is None else \
                     -(1 - best_p) * self.profiler.challenge_rate(self._next_player(state))
                 if (p_ex >= self.CALZA_AT or not gains) and ev_calza > max(ev_dudo, ev_raise):

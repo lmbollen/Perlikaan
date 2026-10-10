@@ -144,6 +144,9 @@ class CarlosBot:
     OTHER_WEIGHT = 1.0
     # Value of gaining a die with a correct Calza.
     CALZA_GAIN = 1.0
+    # Value of a correct Calza once it gains no die (someone is out, or we
+    # have 5): nobody loses a die and we start the next round.
+    CALZA_FREE_PASS = 0.3
     # Pseudo-observations for the hand-likelihood histogram (shrinks a player
     # towards the table average, which shrinks towards the base prior).
     SHRINK = 20
@@ -738,9 +741,9 @@ class CarlosBot:
         """Our best move at a later turn of ours, each raise followed by the chain."""
         p_true = self._p_true(ctx, bid)
         best = -p_true + (1 - p_true) * self._lose_value(ctx, bidder)           # Dudo
-        if ctx["gain_ok"] and ctx["state"].my_dice_count < 5:
-            p_ex = self._p_exact(ctx, bid)
-            best = max(best, p_ex * self.CALZA_GAIN - (1 - p_ex))               # Calza
+        gain = self.CALZA_GAIN if (ctx["gain_ok"] and ctx["state"].my_dice_count < 5) else self.CALZA_FREE_PASS
+        p_ex = self._p_exact(ctx, bid)
+        best = max(best, p_ex * gain - (1 - p_ex))                              # Calza
         faces = [ctx["pal_face"] or bid.face] if ctx["pal"] else [2, 3, 4, 5, 6, PACO]
         for f in faces:
             q = min_quantity(bid, f, ctx["pal"])
@@ -852,7 +855,7 @@ class CarlosBot:
             if Dudo() in state.legal_actions:
                 options.append((p_true * -1.0 + (1 - p_true) * self._lose_value(ctx, bidder), Dudo()))
             if Calza() in state.legal_actions:
-                gain = self.CALZA_GAIN if (ctx["gain_ok"] and state.my_dice_count < 5) else 0.0
+                gain = self.CALZA_GAIN if (ctx["gain_ok"] and state.my_dice_count < 5) else self.CALZA_FREE_PASS
                 p_ex = self._calibrated(state, cur, self._p_exact(ctx, cur), exact=True)
                 options.append((p_ex * gain - (1 - p_ex), Calza()))
         risk_keys = {}
