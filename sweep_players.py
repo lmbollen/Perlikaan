@@ -40,7 +40,7 @@ def main():
     parser.add_argument("--tables", type=int, default=60, help="Tables per size.")
     parser.add_argument("--games", type=int, default=40, help="Games per table.")
     parser.add_argument("--seed", type=int, default=None, help="Default: a new random seed per run.")
-    parser.add_argument("--mix", choices=("core", "static", "zoo", "repo", "strong"), default="core")
+    parser.add_argument("--mix", choices=("core", "static", "all", "zoo", "repo", "strong"), default="core")
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--variants", nargs="*", default=None,
                         help="Settings per variant; the baseline (no changes) is always first.")

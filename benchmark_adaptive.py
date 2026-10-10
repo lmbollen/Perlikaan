@@ -44,6 +44,8 @@ REPO_BOTS = ("SniperBot", "Trihard", "Fabulous", "OppaStyleBot", "SonnyBoy", "Hu
 CORE_BOTS = ("SonnyBoy", "OppaStyleBot", "Fabulous", "Trihard")
 # --mix static: the core bots and Sniper.
 STATIC_BOTS = CORE_BOTS + ("SniperBot",)
+# --mix all: the static bots and our learning bots.
+ALL_BOTS = STATIC_BOTS + ("PokerfaceBot", "CarlosBot", "TheDonBot")
 # The strongest bots in the repo; --mix strong seats all three at every table
 # (a random subset at smaller tables).
 STRONG_BOTS = ("SniperBot", "Trihard", "OppaStyleBot")
@@ -52,6 +54,12 @@ STRONG_BOTS = ("SniperBot", "Trihard", "OppaStyleBot")
 def table_spec(seed, table, n_opponents, mix):
     """The opponents of one table, as rebuildable specs."""
     rng = random.Random(seed * 100_003 + table)
+    if mix == "all":
+        # The static bots and our learning bots (copies of our own seat get
+        # a numbered name, and their own memory).
+        picks = rng.sample(ALL_BOTS, min(len(ALL_BOTS), n_opponents))
+        picks += rng.choices(ALL_BOTS, k=n_opponents - len(picks))
+        return [("repo", name) for name in picks]
     if mix == "static":
         # Every non-learning-from-us opponent we know: the core bots + Sniper.
         picks = rng.sample(STATIC_BOTS, min(len(STATIC_BOTS), n_opponents))
@@ -193,7 +201,7 @@ def main():
     parser.add_argument("--games", type=int, default=60, help="Games per table (learning carries over).")
     parser.add_argument("--opponents", type=int, default=5)
     parser.add_argument("--seed", type=int, default=None, help="Default: a new random seed per run.")
-    parser.add_argument("--mix", choices=("core", "static", "zoo", "repo", "strong"), default="core",
+    parser.add_argument("--mix", choices=("core", "static", "all", "zoo", "repo", "strong"), default="core",
                         help="core: only Sonny Boy, Oppa Style, Fabulous and Trihard (copies at "
                              "big tables); zoo: only generated opponents; repo: 2 seats go to "
                              "random repo bots; strong: Sniper, Trihard and Oppa Style, rest zoo.")
