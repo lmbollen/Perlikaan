@@ -613,6 +613,22 @@ class CarlosBot(SharedMemory):
     # 4-7%), and one game is too short to learn that. Paired benchmarks at
     # tables of 2-7: +4.8 and +4.6 +/- 1.6 pp win rate (0.05), +4.7 (0.07).
     RESPONSE_SHIFT = 0.06
+    # Starting point of the response calibration per kind of response and
+    # table size (2 or 3+): prediction bucket (of 0.05) -> how often players
+    # really did it, measured over 480 single games against the other bots.
+    # Replaces RESPONSE_SHIFT when on; buckets not in the table keep the
+    # prediction (plus RESPONSE_SHIFT for Dudo on our bid).
+    RESPONSE_TABLE = False
+    TUNED_RESPONSE = {
+        ('dudo', 2): {0: 0.02, 1: 0.07, 2: 0.17, 3: 0.15, 4: 0.30, 5: 0.35, 6: 0.43, 7: 0.43, 8: 0.51, 9: 0.49, 10: 0.50, 11: 0.67, 12: 0.60, 13: 0.65},
+        ('dudo', 3): {0: 0.06, 1: 0.18, 2: 0.28, 3: 0.32, 4: 0.39, 5: 0.47, 6: 0.48, 7: 0.47, 8: 0.50, 9: 0.60, 10: 0.59, 11: 0.64, 12: 0.71, 13: 0.75, 14: 0.76, 15: 0.77, 16: 0.73, 17: 0.84, 18: 0.88},
+        ('any-dudo', 2): {0: 0.02, 1: 0.07, 2: 0.17, 3: 0.15, 4: 0.30, 5: 0.35, 6: 0.44, 7: 0.43, 8: 0.52, 9: 0.48, 10: 0.50, 11: 0.67, 12: 0.60, 13: 0.62},
+        ('any-dudo', 3): {0: 0.03, 1: 0.16, 2: 0.22, 3: 0.27, 4: 0.33, 5: 0.35, 6: 0.41, 7: 0.42, 8: 0.44, 9: 0.51, 10: 0.51, 11: 0.58, 12: 0.60, 13: 0.62, 14: 0.68, 15: 0.69, 16: 0.68, 17: 0.79, 18: 0.88},
+        ('calza', 2): {0: 0.08, 1: 0.23, 2: 0.38, 3: 0.53, 4: 0.64, 5: 0.51},
+        ('calza', 3): {0: 0.01, 1: 0.23, 2: 0.39},
+        ('any-calza', 2): {0: 0.03, 1: 0.31, 2: 0.40, 3: 0.62, 4: 0.64, 5: 0.63},
+        ('any-calza', 3): {0: 0.01, 1: 0.31, 2: 0.45, 3: 0.49},
+    }
     # The chain looks only one round of turns ahead, so it underrates the risk
     # of a bid (later in the round we face higher bids). Learn how often we
     # really lost a die in rounds where we made a bid with a given predicted
@@ -1229,6 +1245,9 @@ class CarlosBot(SharedMemory):
         # Before data: opponents call Dudo on our bids more often than the
         # model predicts (measured over many games), so start from that.
         prior = min(p + self.RESPONSE_SHIFT, 1.0) if kind == "dudo" else p
+        if self.RESPONSE_TABLE:
+            group = 2 if len(ctx["dice"]) == 2 else 3
+            prior = self.TUNED_RESPONSE.get((kind, group), {}).get(self._resp_bucket(p), prior)
         return ((hits + k * prior) / (n + k)) / p
 
     def _next_response(self, ctx, bid, actor=None):
