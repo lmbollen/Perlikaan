@@ -685,6 +685,12 @@ class CarlosBot(SharedMemory):
     # When the chain comes back to us, raising is valued as
     # -(1 - P(our best raise true)) * this.
     OUR_RAISE_RISK = 0.5
+    # Weigh an opponent's lost die by our share of the dice instead of
+    # 1 / (players - 1): with many dice compared to the rest, others losing
+    # dice is worth more to us.
+    W_SHARE = False
+    # Cost of losing a die ourselves, by the dice we hold (default 1).
+    LOSE_COST = {}
 
     def __init__(self):
         self.name = "Carlos"
@@ -1126,6 +1132,7 @@ class CarlosBot(SharedMemory):
             dice={p.name: p.dice_count for p in alive},
             order=order,
             w=self.OTHER_WEIGHT / max(len(alive) - 1, 1),
+            cost=self.LOSE_COST.get(state.my_dice_count, 1.0),
             gain_ok=all(p.alive for p in state.players),
             post=self._posteriors(state),
             pal=state.palifico,
@@ -1138,12 +1145,15 @@ class CarlosBot(SharedMemory):
         ctx["loo"] = {(n, f): self._sums(ctx["post"], f, exclude=n)
                       for n in ctx["post"] for f in range(1, 7)}
         ctx["mine"] = {f: count_matches(state.my_dice, f, state.palifico) for f in range(1, 7)}
+        if self.W_SHARE:
+            mine = state.my_dice_count
+            ctx["w"] = self.OTHER_WEIGHT * mine / max(ctx["total"] - mine, 1)
         ctx["memo"] = {}
         return ctx
 
     def _lose_value(self, ctx, who):
         """Value for us when `who` loses a die."""
-        return -1.0 if who == self.name else ctx["w"]
+        return -ctx["cost"] if who == self.name else ctx["w"]
 
     def _p_true(self, ctx, bid):
         return tail(ctx["all"][bid.face], bid.quantity - ctx["mine"][bid.face])
@@ -1178,13 +1188,13 @@ class CarlosBot(SharedMemory):
 
     def _our_turn_value(self, ctx, bid, bidder):
         """Approximate value when the chain returns to us facing `bid`."""
-        dudo = (1 - self._p_true(ctx, bid)) * self._lose_value(ctx, bidder) - self._p_true(ctx, bid)
+        dudo = (1 - self._p_true(ctx, bid)) * self._lose_value(ctx, bidder) - self._p_true(ctx, bid) * ctx["cost"]
         best_raise = 0.0
         for f in ([ctx["pal_face"] or bid.face] if ctx["pal"] else [2, 3, 4, 5, 6, PACO]):
             q = min_quantity(bid, f, ctx["pal"])
             if q is not None and q <= ctx["total"]:
                 best_raise = max(best_raise, self._p_true(ctx, Bid(q, f)))
-        return max(dudo, -(1 - best_raise) * self.OUR_RAISE_RISK)
+        return max(dudo, -(1 - best_raise) * self.OUR_RAISE_RISK * ctx["cost"])
 
     def _risk_key(self, ctx, opening, p_lose):
         return (opening, min(len(ctx["dice"]), 4), min(int(max(p_lose, 0.0) * 20), 19))
@@ -1230,10 +1240,10 @@ class CarlosBot(SharedMemory):
     def _our_options(self, ctx, bid, bidder, pos, depth, laps):
         """Our best move at a later turn of ours, each raise followed by the chain."""
         p_true = self._p_true(ctx, bid)
-        best = -p_true + (1 - p_true) * self._lose_value(ctx, bidder)           # Dudo
+        best = -p_true * ctx["cost"] + (1 - p_true) * self._lose_value(ctx, bidder)   # Dudo
         gain = self.CALZA_GAIN if (ctx["gain_ok"] and ctx["state"].my_dice_count < 5) else self.CALZA_FREE_PASS
         p_ex = self._p_exact(ctx, bid)
-        best = max(best, p_ex * gain - (1 - p_ex))                              # Calza
+        best = max(best, p_ex * gain - (1 - p_ex) * ctx["cost"])                # Calza
         faces = [ctx["pal_face"] or bid.face] if ctx["pal"] else [2, 3, 4, 5, 6, PACO]
         for f in faces:
             q = min_quantity(bid, f, ctx["pal"])
@@ -1344,11 +1354,11 @@ class CarlosBot(SharedMemory):
             bidder = last_bidder(state, default=None)
             p_true = self._calibrated(state, cur, self._p_true(ctx, cur), exact=False, record=record)
             if Dudo() in state.legal_actions:
-                options.append((p_true * -1.0 + (1 - p_true) * self._lose_value(ctx, bidder), Dudo()))
+                options.append((-p_true * ctx["cost"] + (1 - p_true) * self._lose_value(ctx, bidder), Dudo()))
             if Calza() in state.legal_actions:
                 gain = self.CALZA_GAIN if (ctx["gain_ok"] and state.my_dice_count < 5) else self.CALZA_FREE_PASS
                 p_ex = self._calibrated(state, cur, self._p_exact(ctx, cur), exact=True, record=record)
-                options.append((p_ex * gain - (1 - p_ex), Calza()))
+                options.append((p_ex * gain - (1 - p_ex) * ctx["cost"], Calza()))
         risk_keys = {}
         for b in self._candidates(ctx, state):
             value, key = self._calibrated_bid_value(ctx, cur is None, self._chain(ctx, b, self.name, 0, 0))
