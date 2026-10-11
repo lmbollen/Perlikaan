@@ -122,6 +122,10 @@ class SniperBot:
     # or only for their latest bid (True): in a chain of raises every player
     # just tops the previous bid, which is not more evidence.
     HINT_ONCE = False
+    # In Palifico every later bid is forced onto the opener's face, but a
+    # player who raises instead of calling Dudo still probably holds some of
+    # it: weight of such a follower's bid (0 = only the opener counts).
+    PALIFICO_FOLLOW_HINT = 0.0
     # Extra dice of the bid face we credit an opponent for, per bid they made
     # on that face, capped by how many dice they actually hold.
     HINT_PER_BID = 0.7
@@ -160,8 +164,9 @@ class SniperBot:
 
     def _hint(self, state, face):
         """Extra dice of `face` we expect among opponents, based on their bids."""
-        # In Palifico only the opener chose the face; later bids are forced.
-        history = state.history[:1] if state.palifico else state.history
+        # In Palifico only the opener chose the face; later bids are forced
+        # (and count at PALIFICO_FOLLOW_HINT).
+        history = state.history[:1] if (state.palifico and not self.PALIFICO_FOLLOW_HINT) else state.history
         dice_of = {p.name: p.dice_count for p in state.players}
 
         bids_by_player = {}
@@ -173,11 +178,12 @@ class SniperBot:
             bids_by_player = {who: bids[-1:] for who, bids in bids_by_player.items()}
 
         total = 0.0
+        opener = history[0].player if history else None
         for who, bids in bids_by_player.items():
             weight = 0.0
             for bid in bids:
                 if bid.face == face:
-                    weight += 1.0
+                    weight += 1.0 if (not state.palifico or who == opener) else self.PALIFICO_FOLLOW_HINT
                 elif not state.palifico and bid.face == PACO and face != PACO:
                     weight += self.PACO_HINT_WEIGHT
             if weight == 0.0:
