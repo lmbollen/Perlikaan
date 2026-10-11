@@ -134,6 +134,15 @@ class SonnyBoy:
     CREDIT = 1
     CALZA_MIN = 0.5
     DUDO_AT = 0.45
+    # A shaky raise only costs a die when it is challenged and false: how
+    # likely the challenge is, for the Dudo-vs-raise comparison.
+    CHALLENGE_FACTOR = 0.6
+    # Now and then, on a face we hold, bid one step higher than the safest
+    # raise (the occasional bluff), when that raise is still likely enough.
+    BLUFF_RATE = 0.12
+    BLUFF_MIN_P = 0.6
+    # Most dice we credit the bidders on a face with, all together.
+    CREDIT_CAP = 3.0
 
     def __init__(self):
         self.name = "Sonny Boy"
@@ -172,16 +181,36 @@ class SonnyBoy:
         """
         return 0.0
 
+    def _credit(self, state, face):
+        """Dobbelstenen die we de tegenstanders die op dit getal boden toekennen:
+        CREDIT per bieder (hun laatste bod), gewogen met hoe eerlijk ze bleken."""
+        if state.current_bid is None:
+            return 0.0
+        latest = {}
+        for rec in state.history:
+            if isinstance(rec.action, Bid) and rec.player != self.name:
+                latest[rec.player] = rec.action.face
+        credit = 0.0
+        for player, f in latest.items():
+            if f == face or (f == PACO and face != PACO and not state.palifico):
+                honesty = min(1.5, max(0.5, 2 * (1 - self._bluff_rate(player))))
+                credit += self.CREDIT * honesty
+        return min(credit, self.CREDIT_CAP)
+
     def _p_true(self, state, bid, palifico, credit=0):
-        """credit: aantal dobbelstenen dat we de laatste bieder op dit getal toekennen."""
+        """credit: dobbelstenen die we de bieders op dit getal toekennen (True = bereken)."""
+        if credit is True:
+            credit = self._credit(state, bid.face)
         mine = self._matches_mine(state, bid.face, palifico) + credit
         unknown, p = self._unknown_and_p(state, bid.face, palifico)
-        return _p_at_least(max(unknown - credit, 0), p, bid.quantity - mine)
+        return _p_at_least(max(int(round(unknown - credit)), 0), p, int(round(bid.quantity - mine)))
 
     def _p_exact(self, state, bid, palifico, credit=0):
+        if credit is True:
+            credit = self._credit(state, bid.face)
         mine = self._matches_mine(state, bid.face, palifico) + credit
         unknown, p = self._unknown_and_p(state, bid.face, palifico)
-        return _p_exact(max(unknown - credit, 0), p, bid.quantity - mine)
+        return _p_exact(max(int(round(unknown - credit)), 0), p, int(round(bid.quantity - mine)))
 
     def _last_bidder(self, state):
         for rec in reversed(state.history):
@@ -212,7 +241,7 @@ class SonnyBoy:
 
         # Beoordeel het huidige bod.
         if cur is not None and can_dudo:
-            p_true = self._p_true(state, cur, palifico, credit=self.CREDIT)
+            p_true = self._p_true(state, cur, palifico, credit=True)
             # Tegenstanders die vaak bluffen: iets sneller Dudo.
             bidder = self._last_bidder(state)
             if bidder:
@@ -223,7 +252,7 @@ class SonnyBoy:
 
             # Calza: alleen als precies-kans echt hoog is.
             if can_calza:
-                pe = self._p_exact(state, cur, palifico, credit=self.CREDIT)
+                pe = self._p_exact(state, cur, palifico, credit=True)
                 threshold = self.CALZA_MIN
                 if pe >= threshold:
                     self._say("calza", "Calza!")
@@ -234,9 +263,10 @@ class SonnyBoy:
             if best_bid is None:
                 self._say("dudo", "Dudo!")
                 return Dudo()
-            dudo_threshold = self.DUDO_AT
-            # Met weinig dobbelstenen is verliezen duurder: iets voorzichtiger bluffen.
-            if p_true < dudo_threshold or p_true < best_p - 0.25:
+            # Dudo als het bod waarschijnlijk vals is, of als een Dudo minder
+            # vaak een steen kost dan doorbieden (dat kost er pas een als het
+            # bod wordt aangevochten EN vals is).
+            if p_true < self.DUDO_AT or p_true < (1 - best_p) * self.CHALLENGE_FACTOR:
                 self._say("dudo" if p_true < 0.3 else "dudo_unsure", "Dudo!")
                 return Dudo()
             return self._bid(state, best_bid, best_p, cur)
@@ -276,6 +306,10 @@ class SonnyBoy:
 
     def _bid(self, state, best_bid, best_p, cur):
         # Bluf af en toe: ga bewust één stap hoger op een getal dat we zelf hebben.
+        if best_p >= self.BLUFF_MIN_P and self._rng.random() < self.BLUFF_RATE:
+            higher = Bid(best_bid.quantity + 1, best_bid.face)
+            if higher in state.legal_actions and self._matches_mine(state, best_bid.face, state.palifico) > 0:
+                best_bid, best_p = higher, self._p_true(state, higher, state.palifico)
         bid = _fmt_bid(best_bid)
         if best_p < 0.45:
             self._say("bluff", bid, bid=bid)
