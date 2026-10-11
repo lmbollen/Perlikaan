@@ -108,6 +108,9 @@ class BluffoBoyyo:
     # A bid that is not challenged passes the turn; a false one may still be
     # caught later in the round: that risk, per unit of P(false).
     LATER_RISK = 0.35
+    # Cost per unit of P(false) for any bid, whether or not it gets called:
+    # a bid that is not on the table is a bad bid.
+    FALSE_PENALTY = 0.0
     # Worth of misleading the table: per die the bid overstates our holding
     # of its face (as a share of our dice), times how much the table reads
     # bids (0..1).
@@ -328,7 +331,7 @@ class BluffoBoyyo:
         challenged = pt * t["w"] - (1 - pt)
         calza_out = pe * (-t["w"] if t["gain_ok"] else 0.0) + (1 - pe) * t["w"]
         passed = -self.LATER_RISK * (1 - pt) + deceive
-        return pc * challenged + calza * calza_out + (1 - pc - calza) * passed
+        return pc * challenged + calza * calza_out + (1 - pc - calza) * passed - self.FALSE_PENALTY * (1 - pt)
 
     def _options(self, state):
         """(value, action) for every legal action."""

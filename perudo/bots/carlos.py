@@ -597,6 +597,10 @@ class CarlosBot(SharedMemory):
 
     # Value of an opponent losing a die, divided by the number of opponents.
     OTHER_WEIGHT = 1.0
+    # A bid that is not on the table costs this much per unit of P(false),
+    # on top of what the chain expects from challenges: a false bid is a bad
+    # bid even at a table that never calls it.
+    FALSE_PENALTY = 0.0
     # Value of gaining a die with a correct Calza.
     CALZA_GAIN = 1.0
     # Value of a correct Calza once it gains no die (someone is out, or we
@@ -1429,6 +1433,7 @@ class CarlosBot(SharedMemory):
         risk_keys = {}
         for b in self._candidates(ctx, state):
             value, key = self._calibrated_bid_value(ctx, cur is None, self._chain(ctx, b, self.name, 0, 0))
+            value -= self.FALSE_PENALTY * (1 - self._p_true(ctx, b))
             risk_keys[b] = key
             options.append((value, b))
         return ctx, options, risk_keys

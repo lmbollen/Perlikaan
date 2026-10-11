@@ -60,6 +60,7 @@ OPP_CHALLENGE_THRESHOLD = 0.5   # starting guess: opponents call Dudo when (from
 OPP_CHALLENGE_SOFTNESS = 0.10   # how fuzzy that threshold is (logistic scale)
 CALL_LEARN_RATE = 0.08          # how fast the per-opponent threshold adapts to observed calls/raises
 CONTINUE_VALUE = 0.3            # value (in dice) of a bid that simply passes the turn along
+FALSE_PENALTY = 0.0             # cost per unit of P(bid false), called or not: a false bid is a bad bid
 GAIN_VALUE = 1.0                # value of winning a die with Calza (recovery on); 2.5 made it Calza at 29% odds, paired benchmark: -2.5 pp win rate
 FREE_PASS_VALUE = 0.3           # value of a correct Calza when recovery is off (nothing happens, I start)
 BID_EV_TOLERANCE = 0.0          # bids within this EV of the best are tied; prefer the higher quantity
@@ -336,6 +337,7 @@ class Trihard(BaseBot):
                 their_estimate = self._at_least(their_at_least, q - m)
                 c = _sigmoid((theta - their_estimate) / OPP_CHALLENGE_SOFTNESS)
                 ev += pm * (c * (2.0 * p_true_m - 1.0) + (1.0 - c) * CONTINUE_VALUE)
+            ev -= FALSE_PENALTY * (1.0 - p_true_total)
             scored.append((ev, p_true_total, bid))
 
         if not scored:
