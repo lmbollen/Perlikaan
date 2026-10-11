@@ -7,8 +7,10 @@ if that were true; in an honest round he bids on what he really holds.
 
 When he raises he alternates between two styles, one per bid:
 
-  * min raise: the smallest legal raise (a Paco bid counts double); in a
-    bluff round it goes to the bluff face when that is among the smallest;
+  * min raise: the lowest legal bid on each face, taking the one most
+    likely to be true (MIN_RAISE_LIKELY; off: the smallest claim, a Paco
+    bid counting double); in a bluff round the bluff face when it is
+    plausible enough;
   * max raise: the highest bid that is still very likely on the table for
     real (MAX_TARGET, raised against a next player who challenges a lot), by
     preference on a six so the next player must raise the quantity; in a
@@ -90,6 +92,9 @@ class BluffoBoyyo:
     DUDO_AT = 0.45
     # A min raise less likely than this is not made: Dudo instead.
     MIN_RAISE_P = 0.35
+    # Min raise: the most likely of the lowest bids per face (True), or the
+    # smallest claim (False).
+    MIN_RAISE_LIKELY = False
     # Also Dudo when the raise we would make is less likely to be true than
     # the bid we face is to be false (do not raise on a coin flip).
     DUDO_VS_RAISE = False
@@ -271,13 +276,24 @@ class BluffoBoyyo:
     def _strength(bid):
         return bid.quantity * 2 if bid.face == PACO else bid.quantity
 
-    def _min_raise(self, state, bids):
-        """The smallest legal raise; ties go to the bluff face, else the face we hold most."""
-        least = min(self._strength(b) for b in bids)
-        smallest = [b for b in bids if self._strength(b) == least]
-        if self._bluffing and any(b.face == self._bluff_face for b in smallest):
-            return next(b for b in smallest if b.face == self._bluff_face)
-        return max(smallest, key=lambda b: (self._my_matches(state, b.face, True), -(b.face == PACO), -b.face))
+    def _min_raise(self, state, bids, hints):
+        """The smallest raise: the most likely of the lowest bids per face, or the
+        smallest claim; in a bluff round the bluff face when plausible enough."""
+        if not self.MIN_RAISE_LIKELY:
+            least = min(self._strength(b) for b in bids)
+            smallest = [b for b in bids if self._strength(b) == least]
+            if self._bluffing and any(b.face == self._bluff_face for b in smallest):
+                return next(b for b in smallest if b.face == self._bluff_face)
+            return max(smallest, key=lambda b: (self._my_matches(state, b.face, True), -(b.face == PACO), -b.face))
+        lowest = {}
+        for b in bids:
+            if b.face not in lowest or b.quantity < lowest[b.face].quantity:
+                lowest[b.face] = b
+        if self._bluffing and self._bluff_face in lowest:
+            bluff = lowest[self._bluff_face]
+            if self._p_true(state, bluff, hints, pretend=True) >= self.MIN_RAISE_P:
+                return bluff
+        return max(lowest.values(), key=lambda b: (self._p_true(state, b, hints), -self._strength(b)))
 
     def _max_raise(self, state, bids, hints):
         """The highest bid still likely enough for real; ties go to the bluff face
@@ -292,7 +308,7 @@ class BluffoBoyyo:
     def _raise(self, state, bids, hints):
         self._max_next = not self._max_next
         bid = self._max_raise(state, bids, hints) if self._max_next else None
-        return bid if bid is not None else self._min_raise(state, bids)
+        return bid if bid is not None else self._min_raise(state, bids, hints)
 
     def _open(self, state):
         bids = [a for a in state.legal_actions if isinstance(a, Bid)]
