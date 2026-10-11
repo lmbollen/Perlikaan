@@ -28,7 +28,8 @@ from multiprocessing import Pool
 from benchmark_adaptive import RoundLimit, TooManyRounds, fresh_seed
 from perudo.bot_loader import discover_bot_classes_by_name
 from perudo.game import PerudoGame
-from perudo.models import DieLostEvent, RevealEvent
+from perudo.models import Bid, BidEvent, DieLostEvent, RevealEvent
+from perudo.rules import count_matches
 
 POOL = ("PokerfaceBot", "CarlosBot", "TheDonBot", "BluffoBoyyo", "Trihard", "SniperBot",
         "Fabulous", "OppaStyleBot", "SonnyBoy")
@@ -51,14 +52,32 @@ def apply(cls, settings):
 
 
 class Loss:
+    """Dice lost, fair share, and every bid of the bot that was NOT on the
+    table (false), whether or not anyone called it."""
+
     def __init__(self, name):
         self.name, self.lost, self.fair = name, 0, 0.0
+        self.bids, self.false, self._round, self._pal = 0, 0, [], False
 
     def __call__(self, e):
-        if isinstance(e, RevealEvent):
+        if isinstance(e, BidEvent) and e.player == self.name:
+            self._round.append(e.bid)
+        elif isinstance(e, RevealEvent):
             self.fair += 1 / len(e.dice)
+            dice = [d for _, hand in e.dice for d in hand]
+            for b in self._round:
+                self.bids += 1
+                # Palifico is not in the reveal: a bid's own count rule tells
+                # (the engine counted the challenged bid the same way).
+                pal = self._pal
+                self.false += count_matches(dice, b.face, pal) < b.quantity
+            self._round = []
         elif isinstance(e, DieLostEvent) and e.player == self.name:
             self.lost += 1
+        elif type(e).__name__ == "RoundEndedEvent":
+            self._pal = e.palifico_next
+        elif type(e).__name__ == "GameEndedEvent":
+            self._pal = False
 
 
 def job(a):
@@ -91,7 +110,8 @@ def job(a):
             out.append(None)
             continue
         pos = res.standings.index(me_name)
-        out.append((size, pos == 0, (size - 1 - pos) / (size - 1), loss.lost, loss.fair))
+        out.append((size, pos == 0, (size - 1 - pos) / (size - 1), loss.lost, loss.fair,
+                    loss.false, loss.bids))
     return out
 
 
@@ -107,6 +127,9 @@ def main():
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--pool", nargs="*", default=None, help="Opponent class names (default: all).")
+    parser.add_argument("--false-penalty", type=float, default=0.5,
+                        help="Penalised score = score - this * (false bids per bid): a bid not on the "
+                             "table counts against the bot even when nobody called it.")
     parser.add_argument("variants", nargs="*", help='Settings per variant, e.g. "A=1; B=0.5".')
     args = parser.parse_args()
     seed = fresh_seed(args.seed)
@@ -121,16 +144,28 @@ def main():
     ok = [i for i in range(len(per[0])) if all(v[i] is not None for v in per)]
     base = per[0]
     print(f"{args.bot}: {len(ok)} paired games, tables of 2-7")
-    print(f"{'variant':<44}{'win %':>8}{'score':>8}{'lose/fair':>10}{'d win':>14}{'d score':>16}")
+    lam = args.false_penalty
+
+    def penalised(row):
+        false_share = row[5] / row[6] if row[6] else 0.0
+        return row[2] - lam * false_share
+
+    print(f"{'variant':<44}{'win %':>8}{'score':>8}{'false%':>8}{'pen':>8}{'lose/fair':>10}"
+          f"{'d win':>12}{'d score':>14}{'d pen':>14}")
     for v, p in zip(variants, per):
         w = [100 * p[i][1] for i in ok]
         sc = [p[i][2] for i in ok]
         lf = sum(p[i][3] for i in ok) / max(sum(p[i][4] for i in ok), 1e-9)
+        false_pct = 100 * sum(p[i][5] for i in ok) / max(sum(p[i][6] for i in ok), 1)
+        pen = [penalised(p[i]) for i in ok]
         dw = mean_se([100 * (p[i][1] - base[i][1]) for i in ok])
         ds = mean_se([p[i][2] - base[i][2] for i in ok])
-        print(f"{v or 'baseline':<44}{mean_se(w)[0]:>7.1f}%{mean_se(sc)[0]:>8.3f}{lf:>10.3f}"
-              f"{dw[0]:>+9.1f}±{dw[1]:.1f}{ds[0]:>+10.3f}±{ds[1]:.3f}", flush=True)
-    print("score = share of opponents finished ahead of; lose/fair = dice lost per round / (1/players)")
+        dp = mean_se([penalised(p[i]) - penalised(base[i]) for i in ok])
+        print(f"{v or 'baseline':<44}{mean_se(w)[0]:>7.1f}%{mean_se(sc)[0]:>8.3f}{false_pct:>7.1f}%"
+              f"{mean_se(pen)[0]:>8.3f}{lf:>10.3f}"
+              f"{dw[0]:>+7.1f}±{dw[1]:.1f}{ds[0]:>+8.3f}±{ds[1]:.3f}{dp[0]:>+8.3f}±{dp[1]:.3f}", flush=True)
+    print("score = share of opponents finished ahead of; false% = the bot's bids that were not on the table"
+          f" (called or not); pen = score - {lam} * false share; lose/fair = dice lost per round / (1/players)")
 
 
 if __name__ == "__main__":
