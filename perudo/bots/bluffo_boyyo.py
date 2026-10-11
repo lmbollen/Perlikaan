@@ -9,9 +9,10 @@ When he raises he alternates between two styles, one per bid:
 
   * min raise: the smallest legal raise (a Paco bid counts double); in a
     bluff round it goes to the bluff face when that is among the smallest;
-  * max raise: the highest bid that is still very likely on the table
-    (MAX_TARGET, raised against a next player who challenges a lot), by
-    preference on a six so the next player must raise the quantity.
+  * max raise: the highest bid that is still very likely on the table for
+    real (MAX_TARGET, raised against a next player who challenges a lot), by
+    preference on a six so the next player must raise the quantity; in a
+    bluff round the bluff face wins that preference.
 
 Facing a bid he calls Calza when the exact count is likely: easily while
 nobody is out yet and it gains him a die (CALZA_AT_GAIN), only when it beats
@@ -273,12 +274,14 @@ class BluffoBoyyo:
         return max(smallest, key=lambda b: (self._my_matches(state, b.face, True), -(b.face == PACO), -b.face))
 
     def _max_raise(self, state, bids, hints):
-        """The highest bid still likely enough (as we pretend to see it), on a six by preference."""
+        """The highest bid still likely enough for real; ties go to the bluff face
+        in a bluff round, else to a six (the next player must raise the quantity)."""
         target = self._target(state)
-        likely = [b for b in bids if self._p_true(state, b, hints, pretend=True) >= target]
+        likely = [b for b in bids if self._p_true(state, b, hints) >= target]
         if not likely:
             return None
-        return max(likely, key=lambda b: (self._strength(b), b.face == 6, b.face != PACO, b.face))
+        preferred = self._bluff_face if self._bluffing else 6
+        return max(likely, key=lambda b: (self._strength(b), b.face == preferred, b.face != PACO, b.face))
 
     def _raise(self, state, bids, hints):
         self._max_next = not self._max_next
