@@ -99,13 +99,15 @@ class BluffoBoyyo:
     MIN_RAISE_LIKELY = True
     # The bluff face is only bid when plausible with our real dice (True) or
     # as we pretend to see it (False: it got caught at 10-20% real odds).
-    BLUFF_REAL_ODDS = False
+    BLUFF_REAL_ODDS = True
     BLUFF_PRETEND_ODDS = True
     # Learn how often the bids we face were really true, per bucket of our
     # estimate, and correct the estimate with it (quick learner: the data
     # soon outweighs the starting shift). FACED_SHIFT is the starting
     # correction, measured: bids we rated 0.1-0.45 were true 0.25 more often.
-    CALIBRATE_FACED = False
+    # Paired benchmark of both together: +3.5 +/- 1.8 pp win rate and
+    # +0.078 +/- 0.019 score (share of opponents beaten).
+    CALIBRATE_FACED = True
     FACED_SHIFT = 0.2
     CALIBRATION_PRIOR = 8
     # Also Dudo when the raise we would make is less likely to be true than
