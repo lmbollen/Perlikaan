@@ -33,6 +33,7 @@ def test_dudo_on_a_bid_it_does_not_believe():
 
 def test_calza_when_exact_is_likely_and_gains_a_die():
     bot = BluffoBoyyo()
+    bot._hints = lambda state, weight=None: {f: 0.0 for f in range(1, 7)}   # read no bids
     # We hold 4 sixes of a 4x6 bid; one unknown die: exact with 2/3.
     state = _state([6, 6, 6, 6], [ActionRecord("B", Bid(4, 6))], Bid(4, 6), others=(("B", 1),))
     assert bot.play(state) == Calza()

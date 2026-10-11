@@ -10,7 +10,9 @@ When he raises he alternates between two styles, one per bid:
   * min raise: the lowest legal bid on each face, taking the one most
     likely to be true (MIN_RAISE_LIKELY; off: the smallest claim, a Paco
     bid counting double); in a bluff round the bluff face when it is
-    plausible enough;
+    plausible enough. Paired benchmarks: the smallest claim got caught
+    far more (true 27-42% when forced), this +2.3 +/- 1.6 pp win rate
+    together with HINT_FACED = 1.0;
   * max raise: the highest bid that is still very likely on the table for
     real (MAX_TARGET, raised against a next player who challenges a lot), by
     preference on a six so the next player must raise the quantity; in a
@@ -94,7 +96,7 @@ class BluffoBoyyo:
     MIN_RAISE_P = 0.35
     # Min raise: the most likely of the lowest bids per face (True), or the
     # smallest claim (False).
-    MIN_RAISE_LIKELY = False
+    MIN_RAISE_LIKELY = True
     # Also Dudo when the raise we would make is less likely to be true than
     # the bid we face is to be false (do not raise on a coin flip).
     DUDO_VS_RAISE = False
@@ -114,7 +116,7 @@ class BluffoBoyyo:
     # choosing our own raise (1 = all of it), and when judging the bid we
     # face for a Dudo or Calza (bids are more honest than that).
     HINT_PER_BID = 0.5
-    HINT_FACED = 0.5
+    HINT_FACED = 1.0
 
     # Learned state, shared by every instance of this class (per bot name).
     _MEMORY = {}
