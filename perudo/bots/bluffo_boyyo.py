@@ -90,6 +90,9 @@ class BluffoBoyyo:
     DUDO_AT = 0.45
     # A min raise less likely than this is not made: Dudo instead.
     MIN_RAISE_P = 0.35
+    # Also Dudo when the raise we would make is less likely to be true than
+    # the bid we face is to be false (do not raise on a coin flip).
+    DUDO_VS_RAISE = False
     # Calza when the exact count is at least this likely, while it gains a
     # die (nobody out, fewer than 5 dice) / once it gains nothing.
     CALZA_AT_GAIN = 0.30
@@ -311,7 +314,10 @@ class BluffoBoyyo:
             return Dudo()
         if bids:
             bid = self._raise(state, bids, hints)
-            if self._p_true(state, bid, hints) < self.MIN_RAISE_P and can_dudo and p < 0.5:
+            p_bid = self._p_true(state, bid, hints)
+            if p_bid < self.MIN_RAISE_P and can_dudo and p < 0.5:
+                return Dudo()
+            if self.DUDO_VS_RAISE and can_dudo and p_bid < 1 - p:
                 return Dudo()
             return bid
         return Dudo() if can_dudo else Calza()
