@@ -97,6 +97,17 @@ class BluffoBoyyo:
     # Min raise: the most likely of the lowest bids per face (True), or the
     # smallest claim (False).
     MIN_RAISE_LIKELY = True
+    # The bluff face is only bid when plausible with our real dice (True) or
+    # as we pretend to see it (False: it got caught at 10-20% real odds).
+    BLUFF_REAL_ODDS = False
+    BLUFF_PRETEND_ODDS = True
+    # Learn how often the bids we face were really true, per bucket of our
+    # estimate, and correct the estimate with it (quick learner: the data
+    # soon outweighs the starting shift). FACED_SHIFT is the starting
+    # correction, measured: bids we rated 0.1-0.45 were true 0.25 more often.
+    CALIBRATE_FACED = False
+    FACED_SHIFT = 0.2
+    CALIBRATION_PRIOR = 8
     # Also Dudo when the raise we would make is less likely to be true than
     # the bid we face is to be false (do not raise on a coin flip).
     DUDO_VS_RAISE = False
@@ -136,6 +147,7 @@ class BluffoBoyyo:
         self._max_next = False       # alternates: next raise is a max raise?
         self._actions = []           # (player, bid or None, "dudo"/"calza"/None) this round
         self._palifico = False
+        self._faced_pending = []     # (bid faced, our raw estimate, palifico) this round
 
     # -- memory -------------------------------------------------------------
 
@@ -188,6 +200,7 @@ class BluffoBoyyo:
         elif isinstance(event, GameEndedEvent):
             self._palifico = False
             self._actions = []
+            self._faced_pending = []
 
     def on_game_end(self, result):
         pass
@@ -293,7 +306,8 @@ class BluffoBoyyo:
                 lowest[b.face] = b
         if self._bluffing and self._bluff_face in lowest:
             bluff = lowest[self._bluff_face]
-            if self._p_true(state, bluff, hints, pretend=True) >= self.MIN_RAISE_P:
+            judge = self.BLUFF_REAL_ODDS or not self.BLUFF_PRETEND_ODDS
+            if self._p_true(state, bluff, hints, pretend=not judge) >= self.MIN_RAISE_P:
                 return bluff
         return max(lowest.values(), key=lambda b: (self._p_true(state, b, hints), -self._strength(b)))
 
@@ -317,12 +331,24 @@ class BluffoBoyyo:
         hints = self._hints(state)
         return self._raise(state, bids, hints)
 
+    def _calibrated(self, p):
+        """Our estimate of a bid we face, corrected by how often such bids were true."""
+        if not self.CALIBRATE_FACED:
+            return p
+        key = ("faced", min(int(p * 10), 9))
+        stats = self.learned.setdefault(key, [0.0, 0.0])
+        prior = min(1.0, p + self.FACED_SHIFT * (1 - p))
+        k = self.CALIBRATION_PRIOR
+        return (stats[0] + k * prior) / (stats[1] + k)
+
     def _respond(self, state):
         bids = [a for a in state.legal_actions if isinstance(a, Bid)]
         hints = self._hints(state)
         faced = self._hints(state, self.HINT_FACED)
         cur = state.current_bid
-        p = self._p_true(state, cur, faced)            # judged from our real dice
+        p_raw = self._p_true(state, cur, faced)        # judged from our real dice
+        p = self._calibrated(p_raw)
+        self._faced_pending.append((cur, p_raw, state.palifico))
         can_dudo = any(isinstance(a, Dudo) for a in state.legal_actions)
         can_calza = any(isinstance(a, Calza) for a in state.legal_actions)
 
@@ -350,6 +376,12 @@ class BluffoBoyyo:
         dice = event.dice_by_player()
         total = sum(len(d) for d in dice.values())
         palifico = self._palifico
+        all_dice = [d for hand in dice.values() for d in hand]
+        for bid, p_raw, pal in self._faced_pending:
+            stats = self.learned.setdefault(("faced", min(int(p_raw * 10), 9)), [0.0, 0.0])
+            stats[0] += _count_matches(all_dice, bid.face, pal) >= bid.quantity
+            stats[1] += 1
+        self._faced_pending = []
         # What they really held behind their last bid on each face.
         last = {}
         prev = None
