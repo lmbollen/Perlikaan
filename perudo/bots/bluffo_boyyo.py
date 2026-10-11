@@ -105,9 +105,11 @@ class BluffoBoyyo:
     PRIOR_EXCESS = {"choice": 0.5, "follow": 0.0}
     PRIOR_CHALLENGE = 0.4
     PRIOR_CALZA = 0.03
-    # How much of what a bid suggests about the bidder's hand we count
-    # (1 = all of it).
+    # How much of what a bid suggests about the bidder's hand we count when
+    # choosing our own raise (1 = all of it), and when judging the bid we
+    # face for a Dudo or Calza (bids are more honest than that).
     HINT_PER_BID = 0.5
+    HINT_FACED = 0.5
 
     # Learned state, shared by every instance of this class (per bot name).
     _MEMORY = {}
@@ -201,8 +203,9 @@ class BluffoBoyyo:
             k += self.BLUFF_DICE
         return k
 
-    def _hints(self, state):
+    def _hints(self, state, weight=None):
         """face -> extra matches beyond chance that the others' bids this round suggest."""
+        weight = self.HINT_PER_BID if weight is None else weight
         total = sum(p.dice_count for p in state.players if p.alive)
         dice = {p.name: p.dice_count for p in state.players}
         hints = {f: 0.0 for f in range(1, 7)}
@@ -226,7 +229,7 @@ class BluffoBoyyo:
                 continue                     # a bid chance alone explains says nothing
             stats = self._player(who)
             expected = max(0.0, min(float(n), implied + stats["choice" if chosen else "follow"]))
-            extra = (expected - n * p) * self.HINT_PER_BID
+            extra = (expected - n * p) * weight
             hints[face] += extra
             if face == PACO and not state.palifico:
                 for f in range(2, 7):        # extra Pacos count for every face
@@ -299,13 +302,14 @@ class BluffoBoyyo:
     def _respond(self, state):
         bids = [a for a in state.legal_actions if isinstance(a, Bid)]
         hints = self._hints(state)
+        faced = self._hints(state, self.HINT_FACED)
         cur = state.current_bid
-        p = self._p_true(state, cur, hints)            # judged from our real dice
+        p = self._p_true(state, cur, faced)            # judged from our real dice
         can_dudo = any(isinstance(a, Dudo) for a in state.legal_actions)
         can_calza = any(isinstance(a, Calza) for a in state.legal_actions)
 
         if can_calza:
-            pe = self._p_exact(state, cur, hints)
+            pe = self._p_exact(state, cur, faced)
             gains = all(pl.alive for pl in state.players) and state.my_dice_count < 5
             threshold = self.CALZA_AT_GAIN if gains else self.CALZA_AT_FREE
             if pe >= threshold and (gains or pe > 1 - p):
