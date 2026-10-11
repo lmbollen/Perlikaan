@@ -7,6 +7,13 @@ our bot loses:
 
   * the decision that cost the die is the bot's last call in that round (the
     bid that got caught, or the wrong Dudo / Calza);
+  * only a call the bot could have known was bad is tuned. That is judged from
+    its own dice and chance alone, never from the others' bids (they may have
+    bluffed or not, the bot cannot know): every legal action gets its chance
+    of not losing a die, and the call counts as a mistake only when it was
+    more likely wrong than right (below --likely) and another action was at
+    least --margin more likely to be right. Otherwise the die was bad luck or
+    a bluff the bot could not see, and it is skipped;
   * every parameter in PARAMS is moved a little at a time (smallest change
     first), and the game is replayed up to that decision;
   * a change is accepted when all of the bot's earlier calls stay exactly the
@@ -31,6 +38,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import math
 import random
 from multiprocessing import Pool
 
@@ -75,6 +83,12 @@ PARAMS = {
 STEPS = (0.05, 0.1, 0.2, 0.35, 0.5, 0.75, 1.0)
 # Absolute steps for a parameter that is 0.
 ZERO_STEPS = (0.02, 0.05, 0.1, 0.2)
+# A losing call is a mistake the bot could know about when, from its own dice
+# and chance alone, it was less likely to be right than LIKELY (--likely) and
+# MARGIN less likely than the best legal action (--margin). A call that was
+# more likely right than wrong is defensible, however it turned out.
+LIKELY = 0.5
+MARGIN = 0.1
 
 
 class Reached(Exception):
@@ -191,6 +205,31 @@ def correct(state, action, dice):
     return False
 
 
+def own_view(state, action):
+    """Chance that `action` does not lose a die, from our own dice and chance alone
+    (the others' bids are ignored: we cannot know whether they bluffed)."""
+    total = sum(p.dice_count for p in state.players if p.alive)
+    unknown = total - state.my_dice_count
+    bid = action if isinstance(action, Bid) else state.current_bid
+    p = 1 / 6 if (state.palifico or bid.face == 1) else 1 / 3
+    need = bid.quantity - count_matches(state.my_dice, bid.face, state.palifico)
+    pmf = [math.comb(unknown, k) * p ** k * (1 - p) ** (unknown - k) for k in range(unknown + 1)]
+    true = sum(pmf[max(need, 0):])
+    if isinstance(action, Bid):
+        return true
+    if isinstance(action, Dudo):
+        return 1 - true
+    return pmf[need] if 0 <= need <= unknown else 0.0     # Calza: exactly right
+
+
+def knowable(state, action, likely, margin):
+    """(was it a mistake the bot could know about?, its chance, best chance, best action)"""
+    chance = own_view(state, action)
+    best = max(state.legal_actions, key=lambda a: own_view(state, a))
+    best_chance = own_view(state, best)
+    return chance < likely and chance < best_chance - margin, chance, best_chance, best
+
+
 def try_candidate(job):
     """("fixed" | "wrong" | "earlier", call at k): what this change does to decision k."""
     seed, bot_name, names, values, k, before, dice = job
@@ -229,6 +268,12 @@ def main():
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--players", type=int, default=5, help="Table size (with random opponents).")
     parser.add_argument("--opponents", nargs="*", default=None, help="Opponent class names.")
+    parser.add_argument("--likely", type=float, default=LIKELY,
+                        help="A losing call this likely to be right (from the bot's own dice) "
+                             "or more was defensible and is not tuned.")
+    parser.add_argument("--margin", type=float, default=MARGIN,
+                        help="How much less likely to be right (from the bot's own dice) a "
+                             "losing call must be than the best action to count as a mistake.")
     parser.add_argument("--max-fixes", type=int, default=20)
     parser.add_argument("--jobs", type=int, default=4)
     args = parser.parse_args()
@@ -252,6 +297,15 @@ def main():
             print(f"\nLost a die in round {rnd + 1} on {fmt(action)} "
                   f"(facing {fmt(state.current_bid) if state.current_bid else 'nothing'}, "
                   f"call {k + 1} of the bot)")
+            mistake, chance, best_chance, best = knowable(state, action, args.likely, args.margin)
+            if not mistake:
+                print(f"  The bot could not know: from its own dice this call was "
+                      f"{chance:.0%} likely to be right, the best action ({fmt(best)}) "
+                      f"{best_chance:.0%}. Skipped.")
+                fixed_upto = k
+                continue
+            print(f"  A mistake it could know: {chance:.0%} likely to be right from its own "
+                  f"dice, {fmt(best)} was {best_chance:.0%}.")
             before = [a for _, _, a in decisions[:k]]
             jobs, moves = [], []
             for move in candidates(values):
