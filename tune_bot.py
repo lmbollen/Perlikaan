@@ -52,26 +52,33 @@ def apply(cls, settings):
 
 
 class Loss:
-    """Dice lost, fair share, and every bid of the bot that was NOT on the
-    table (false), whether or not anyone called it."""
+    """Dice lost, fair share, every bid of the bot that was NOT on the table
+    (false, whether or not anyone called it), and every false bid the bot
+    faced and raised on instead of calling (a missed Dudo)."""
 
     def __init__(self, name):
         self.name, self.lost, self.fair = name, 0, 0.0
-        self.bids, self.false, self._round, self._pal = 0, 0, [], False
+        self.bids, self.false, self.faced, self.missed = 0, 0, 0, 0
+        self._round, self._faced, self._last, self._pal = [], [], None, False
 
     def __call__(self, e):
-        if isinstance(e, BidEvent) and e.player == self.name:
-            self._round.append(e.bid)
+        if isinstance(e, BidEvent):
+            if e.player == self.name:
+                self._round.append(e.bid)
+                if self._last is not None:
+                    self._faced.append(self._last)      # we raised on this bid
+            self._last = e.bid
         elif isinstance(e, RevealEvent):
             self.fair += 1 / len(e.dice)
             dice = [d for _, hand in e.dice for d in hand]
+            pal = self._pal
             for b in self._round:
                 self.bids += 1
-                # Palifico is not in the reveal: a bid's own count rule tells
-                # (the engine counted the challenged bid the same way).
-                pal = self._pal
                 self.false += count_matches(dice, b.face, pal) < b.quantity
-            self._round = []
+            for b in self._faced:
+                self.faced += 1
+                self.missed += count_matches(dice, b.face, pal) < b.quantity
+            self._round, self._faced, self._last = [], [], None
         elif isinstance(e, DieLostEvent) and e.player == self.name:
             self.lost += 1
         elif type(e).__name__ == "RoundEndedEvent":
@@ -111,7 +118,7 @@ def job(a):
             continue
         pos = res.standings.index(me_name)
         out.append((size, pos == 0, (size - 1 - pos) / (size - 1), loss.lost, loss.fair,
-                    loss.false, loss.bids))
+                    loss.false, loss.bids, loss.missed, loss.faced))
     return out
 
 
@@ -128,8 +135,9 @@ def main():
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--pool", nargs="*", default=None, help="Opponent class names (default: all).")
     parser.add_argument("--false-penalty", type=float, default=0.5,
-                        help="Penalised score = score - this * (false bids per bid): a bid not on the "
-                             "table counts against the bot even when nobody called it.")
+                        help="Penalised score = score - this * (false bids per bid + missed calls per "
+                             "faced bid): a bid not on the table counts against the bot even when "
+                             "nobody called it, and so does raising on one instead of calling Dudo.")
     parser.add_argument("variants", nargs="*", help='Settings per variant, e.g. "A=1; B=0.5".')
     args = parser.parse_args()
     seed = fresh_seed(args.seed)
@@ -148,24 +156,27 @@ def main():
 
     def penalised(row):
         false_share = row[5] / row[6] if row[6] else 0.0
-        return row[2] - lam * false_share
+        missed_share = row[7] / row[8] if row[8] else 0.0
+        return row[2] - lam * (false_share + missed_share)
 
-    print(f"{'variant':<44}{'win %':>8}{'score':>8}{'false%':>8}{'pen':>8}{'lose/fair':>10}"
-          f"{'d win':>12}{'d score':>14}{'d pen':>14}")
+    print(f"{'variant':<40}{'win %':>7}{'score':>7}{'false%':>8}{'missed%':>8}{'pen':>7}{'lose/f':>7}"
+          f"{'d win':>11}{'d score':>13}{'d pen':>13}")
     for v, p in zip(variants, per):
         w = [100 * p[i][1] for i in ok]
         sc = [p[i][2] for i in ok]
         lf = sum(p[i][3] for i in ok) / max(sum(p[i][4] for i in ok), 1e-9)
         false_pct = 100 * sum(p[i][5] for i in ok) / max(sum(p[i][6] for i in ok), 1)
+        missed_pct = 100 * sum(p[i][7] for i in ok) / max(sum(p[i][8] for i in ok), 1)
         pen = [penalised(p[i]) for i in ok]
         dw = mean_se([100 * (p[i][1] - base[i][1]) for i in ok])
         ds = mean_se([p[i][2] - base[i][2] for i in ok])
         dp = mean_se([penalised(p[i]) - penalised(base[i]) for i in ok])
-        print(f"{v or 'baseline':<44}{mean_se(w)[0]:>7.1f}%{mean_se(sc)[0]:>8.3f}{false_pct:>7.1f}%"
-              f"{mean_se(pen)[0]:>8.3f}{lf:>10.3f}"
-              f"{dw[0]:>+7.1f}±{dw[1]:.1f}{ds[0]:>+8.3f}±{ds[1]:.3f}{dp[0]:>+8.3f}±{dp[1]:.3f}", flush=True)
-    print("score = share of opponents finished ahead of; false% = the bot's bids that were not on the table"
-          f" (called or not); pen = score - {lam} * false share; lose/fair = dice lost per round / (1/players)")
+        print(f"{v or 'baseline':<40}{mean_se(w)[0]:>6.1f}%{mean_se(sc)[0]:>7.3f}{false_pct:>7.1f}%"
+              f"{missed_pct:>7.1f}%{mean_se(pen)[0]:>7.3f}{lf:>7.3f}"
+              f"{dw[0]:>+6.1f}±{dw[1]:.1f}{ds[0]:>+7.3f}±{ds[1]:.3f}{dp[0]:>+7.3f}±{dp[1]:.3f}", flush=True)
+    print("score = share of opponents finished ahead of; false% = the bot's bids not on the table (called or"
+          " not); missed% = false bids it faced and raised on instead of calling;"
+          f" pen = score - {lam} * (false share + missed share); lose/f = dice lost per round / (1/players)")
 
 
 if __name__ == "__main__":
