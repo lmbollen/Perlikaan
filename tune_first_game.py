@@ -7,13 +7,16 @@ our bot loses:
 
   * the decision that cost the die is the bot's last call in that round (the
     bid that got caught, or the wrong Dudo / Calza);
-  * only a call the bot could have known was bad is tuned. That is judged from
-    its own dice and chance alone, never from the others' bids (they may have
-    bluffed or not, the bot cannot know): every legal action gets its chance
-    of not losing a die, and the call counts as a mistake only when it was
-    more likely wrong than right (below --likely) and another action was at
-    least --margin more likely to be right. Otherwise the die was bad luck or
-    a bluff the bot could not see, and it is skipped;
+  * only a call the bot could have known was bad is tuned. It is judged with
+    what a well-informed player could know at that moment: the bot's own dice
+    and all bids so far, read with how each player bids in general (learned
+    by a reference Carlos over --reader-games games against the same pool),
+    but not whether this particular bid was a bluff. Every legal action gets
+    its chance of not losing a die, and the call counts as a mistake only
+    when it was more likely wrong than right (below --likely) and another
+    action was at least --margin more likely to be right. Otherwise the die
+    was bad luck or a bluff nobody could see, and it is skipped
+    (--view own judges from the bot's own dice alone instead);
   * every parameter in PARAMS is moved a little at a time (smallest change
     first), and the game is replayed up to that decision;
   * a change is accepted when all of the bot's earlier calls stay exactly the
@@ -205,6 +208,52 @@ def correct(state, action, dice):
     return False
 
 
+def build_reader(games, seed, pool):
+    """A Carlos that has learned how every bot in `pool` bids, over many games.
+
+    It sits at random tables of 2-7 players and keeps its memory; it is named
+    "Reader" so it can learn about a bot called Carlos too."""
+    classes = discover_bot_classes_by_name()
+    reader_cls = classes["CarlosBot"]
+    reader_cls.reset_memory()
+    reader = reader_cls()
+    reader.name = reader.profiler.me = "Reader"
+    rng = random.Random(seed + 1)
+    for g in range(games):
+        for cls in classes.values():
+            if cls is not reader_cls and hasattr(cls, "reset_memory"):
+                cls.reset_memory()
+        names = rng.sample(pool, min(len(pool), rng.randint(1, 6)))
+        bots = [classes[n]() for n in names] + [reader]
+        rng.shuffle(bots)
+        try:
+            PerudoGame(bots=bots, seed=rng.randrange(2**63)).play()
+        except Exception:
+            pass
+    return reader
+
+
+def informed_view(reader, me_name):
+    """Chance that an action does not lose a die, as the informed reader sees it
+    from `me_name`'s seat: our dice and every bid so far, read with how each
+    player bids in general."""
+    def view(state, action):
+        saved = reader.name
+        reader.name = me_name           # so the reader sits in our seat
+        try:
+            ctx = reader._setup(state)
+            bid = action if isinstance(action, Bid) else state.current_bid
+            true = reader._p_true(ctx, bid)
+            if isinstance(action, Bid):
+                return true
+            if isinstance(action, Dudo):
+                return 1 - true
+            return reader._p_exact(ctx, bid)
+        finally:
+            reader.name = saved
+    return view
+
+
 def own_view(state, action):
     """Chance that `action` does not lose a die, from our own dice and chance alone
     (the others' bids are ignored: we cannot know whether they bluffed)."""
@@ -222,11 +271,11 @@ def own_view(state, action):
     return pmf[need] if 0 <= need <= unknown else 0.0     # Calza: exactly right
 
 
-def knowable(state, action, likely, margin):
+def knowable(state, action, likely, margin, view=own_view):
     """(was it a mistake the bot could know about?, its chance, best chance, best action)"""
-    chance = own_view(state, action)
-    best = max(state.legal_actions, key=lambda a: own_view(state, a))
-    best_chance = own_view(state, best)
+    chance = view(state, action)
+    best = max(state.legal_actions, key=lambda a: view(state, a))
+    best_chance = view(state, best)
     return chance < likely and chance < best_chance - margin, chance, best_chance, best
 
 
@@ -274,6 +323,11 @@ def main():
     parser.add_argument("--margin", type=float, default=MARGIN,
                         help="How much less likely to be right (from the bot's own dice) a "
                              "losing call must be than the best action to count as a mistake.")
+    parser.add_argument("--view", choices=("informed", "own"), default="informed",
+                        help="Judge a losing call from the dice and the bids read with how "
+                             "players bid in general (informed), or from own dice alone.")
+    parser.add_argument("--reader-games", type=int, default=200,
+                        help="Games the informed reader plays to learn how each bot bids.")
     parser.add_argument("--max-fixes", type=int, default=20)
     parser.add_argument("--jobs", type=int, default=4)
     args = parser.parse_args()
@@ -283,6 +337,14 @@ def main():
     values = {(n, w): read_param(cls, n, w) for n, w in PARAMS[args.bot]}
     start = dict(values)
     print(f"seed {args.seed}, table: {', '.join(names)}")
+    me_name = discover_bot_classes_by_name()[args.bot]().name
+    if args.view == "informed":
+        pool = sorted(set(POOL) | set(names))
+        print(f"Informed reader: learning how {len(pool)} bots bid over {args.reader_games} games...")
+        view = informed_view(build_reader(args.reader_games, args.seed, pool), me_name)
+        source = "its dice and the bids"
+    else:
+        view, source = own_view, "its own dice"
 
     fixed_upto = -1
     with Pool(args.jobs) as pool:
@@ -297,15 +359,15 @@ def main():
             print(f"\nLost a die in round {rnd + 1} on {fmt(action)} "
                   f"(facing {fmt(state.current_bid) if state.current_bid else 'nothing'}, "
                   f"call {k + 1} of the bot)")
-            mistake, chance, best_chance, best = knowable(state, action, args.likely, args.margin)
+            mistake, chance, best_chance, best = knowable(state, action, args.likely, args.margin, view)
             if not mistake:
-                print(f"  The bot could not know: from its own dice this call was "
+                print(f"  The bot could not know: from {source} this call was "
                       f"{chance:.0%} likely to be right, the best action ({fmt(best)}) "
                       f"{best_chance:.0%}. Skipped.")
                 fixed_upto = k
                 continue
-            print(f"  A mistake it could know: {chance:.0%} likely to be right from its own "
-                  f"dice, {fmt(best)} was {best_chance:.0%}.")
+            print(f"  A mistake it could know: {chance:.0%} likely to be right from {source}, "
+                  f"{fmt(best)} was {best_chance:.0%}.")
             before = [a for _, _, a in decisions[:k]]
             jobs, moves = [], []
             for move in candidates(values):
