@@ -114,6 +114,14 @@ class SniperBot:
     TARGET = 0.85
     # Below this no raise is acceptable and we call Dudo instead.
     MIN_ACCEPT = 0.3
+    # A raise below MIN_ACCEPT is "not safe enough"; but a Dudo on a bid that
+    # is at least this likely to be true costs a die almost for sure, so
+    # then the risky raise is taken anyway.
+    FORCED_DUDO_BELOW = 0.75
+    # Credit a player for every bid they made on a face (False, the original)
+    # or only for their latest bid (True): in a chain of raises every player
+    # just tops the previous bid, which is not more evidence.
+    HINT_ONCE = False
     # Extra dice of the bid face we credit an opponent for, per bid they made
     # on that face, capped by how many dice they actually hold.
     HINT_PER_BID = 0.7
@@ -161,6 +169,8 @@ class SniperBot:
             if rec.player == self.name or not isinstance(rec.action, Bid):
                 continue
             bids_by_player.setdefault(rec.player, []).append(rec.action)
+        if self.HINT_ONCE:
+            bids_by_player = {who: bids[-1:] for who, bids in bids_by_player.items()}
 
         total = 0.0
         for who, bids in bids_by_player.items():
@@ -221,7 +231,7 @@ class SniperBot:
             return best
 
         p_cur = self._prob_true(state, cur, n_unknown, hints)
-        if best is None or best_p < self.MIN_ACCEPT or p_cur < 1 - best_p:
+        if best is None or (best_p < self.MIN_ACCEPT and p_cur < self.FORCED_DUDO_BELOW) or p_cur < 1 - best_p:
             key = "dudo_confident" if p_cur < 0.3 else "dudo_cornered"
             self.mouth.say(key, announce="Dudo!", bidder=last_bidder(state))
             return Dudo()

@@ -142,7 +142,7 @@ class SonnyBoy:
     BLUFF_RATE = 0.12
     BLUFF_MIN_P = 0.6
     # Most dice we credit the bidders on a face with, all together.
-    CREDIT_CAP = 3.0
+    CREDIT_CAP = 1.0
 
     def __init__(self):
         self.name = "Sonny Boy"
