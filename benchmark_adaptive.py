@@ -45,7 +45,7 @@ CORE_BOTS = ("SonnyBoy", "OppaStyleBot", "Fabulous", "Trihard")
 # --mix static: the core bots and Sniper.
 STATIC_BOTS = CORE_BOTS + ("SniperBot",)
 # --mix all: the static bots and our learning bots.
-ALL_BOTS = STATIC_BOTS + ("PokerfaceBot", "CarlosBot", "TheDonBot")
+ALL_BOTS = STATIC_BOTS + ("PokerfaceBot", "CarlosBot", "TheDonBot", "BluffoBoyyo")
 # The strongest bots in the repo; --mix strong seats all three at every table
 # (a random subset at smaller tables).
 STRONG_BOTS = ("SniperBot", "Trihard", "OppaStyleBot")
