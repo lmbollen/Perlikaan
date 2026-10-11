@@ -8,10 +8,14 @@ Deception is part of that value, so he misleads whenever it is safe enough:
   * a bid is worth: the chance it is true, against the chance the next
     player challenges it (learned per player from how likely the bid looks
     from their seat: a true bid that looks unlikely to them is a trap);
-  * plus its deception: how far the bid overstates what he really holds of
-    that face, weighted by how much this table reads bids (learned from
-    how often players follow the face just bid). Opponents who read bids
-    then believe in dice that are not there;
+  * plus its deception: how far the bid claims more of that face than his
+    hand and the table's bids support, weighted by how much this table
+    reads bids (learned from how often players follow the face just bid).
+    Opponents who read bids then believe in dice that are not there;
+  * consistency: one bluff per round. Once he has bluffed on a face, a
+    misleading bid on another face is out (INCONSISTENT); switching to an
+    honest face (one he holds plenty of, or that the table's bids make
+    plentiful) stays open;
   * Dudo is worth its chance of being right; Calza the chance of an exact
     count, with the die it gains while nobody is out and he has fewer than
     five, or the free pass once it gains nothing.
@@ -114,6 +118,8 @@ class BluffoBoyyo:
     # Options within this value of the best count as equal: one is played at
     # random, so we are hard to read.
     TIE_EPS = 0.02
+    # Penalty on a second bluff face in the same round (one bluff per round).
+    INCONSISTENT = 2.0
 
     # -- learning -----------------------------------------------------------
     # Quick learner: weight of the newest observation in the moving averages.
@@ -150,6 +156,8 @@ class BluffoBoyyo:
         self._actions = []             # (player, bid or None, "dudo"/"calza"/None) this round
         self._palifico = False
         self._faced_pending = []       # (bid faced, our raw estimate, palifico)
+        self._round_no = None
+        self._bluff_face = None        # the face we bluffed on this round, if any
 
     # -- memory -------------------------------------------------------------
 
@@ -180,9 +188,16 @@ class BluffoBoyyo:
 
     def play(self, state):
         self._ensure_memory()
+        if state.round_number != self._round_no:
+            self._round_no = state.round_number
+            self._bluff_face = None
         options = self._options(state)
         best = max(v for v, _ in options)
         value, action = self._rng.choice([o for o in options if o[0] >= best - self.TIE_EPS])
+        if isinstance(action, Bid) and self._bluff_face is None:
+            t = self._table(state)
+            if self._overstated(state, t, action, self._hints(state, self.HINT_PER_BID)) > 0:
+                self._bluff_face = action.face
         return action
 
     def observe(self, event):
@@ -291,6 +306,14 @@ class BluffoBoyyo:
 
     # -- the decision -------------------------------------------------------
 
+    def _overstated(self, state, t, bid, hints):
+        """Dice of this face the bid claims for us beyond what our hand and the
+        table's bids support (0 = an honest bid)."""
+        p = _p_face(bid.face, state.palifico)
+        implied = bid.quantity - (t["total"] - state.my_dice_count) * p - hints[bid.face]
+        held = _count_matches(state.my_dice, bid.face, state.palifico)
+        return max(0.0, min(float(state.my_dice_count), implied) - held)
+
     def _bid_value(self, state, t, bid, hints, reads):
         pt = self._p_true(state, t, bid, hints)
         nxt = t["nxt"]
@@ -298,12 +321,10 @@ class BluffoBoyyo:
         pc = self._p_challenge(nxt, view)
         calza = (1 - pc) * self._player(nxt.name)["calza"]
         pe = self._p_exact(state, t, bid, hints)
-        # Deception: dice of this face the bid claims for us beyond what we hold.
-        p = _p_face(bid.face, state.palifico)
-        implied = bid.quantity - (t["total"] - state.my_dice_count) * p
-        held = _count_matches(state.my_dice, bid.face, state.palifico)
-        overstated = max(0.0, min(float(state.my_dice_count), implied) - held)
+        overstated = self._overstated(state, t, bid, hints)
         deceive = self.DECEIVE * reads * overstated / max(state.my_dice_count, 1)
+        if overstated > 0 and self._bluff_face is not None and bid.face != self._bluff_face:
+            deceive -= self.INCONSISTENT          # a second bluff this round
         challenged = pt * t["w"] - (1 - pt)
         calza_out = pe * (-t["w"] if t["gain_ok"] else 0.0) + (1 - pe) * t["w"]
         passed = -self.LATER_RISK * (1 - pt) + deceive

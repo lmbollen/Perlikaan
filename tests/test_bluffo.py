@@ -90,3 +90,24 @@ def test_learning_survives_a_new_instance():
     other = BluffoBoyyo()
     other._ensure_memory()
     assert other.learned["A"]["calza"] == 0.9
+
+
+def test_one_bluff_face_per_round():
+    """After a bluff on fours, a misleading bid on fives is penalised; an
+    honest bid on the sixes we hold is not."""
+    bot = BluffoBoyyo()
+    bot._round_no = 3
+    bot._bluff_face = 4
+    history = [ActionRecord("A", Bid(5, 2)), ActionRecord("B", Bid(6, 2))]
+    state = _state([6, 6, 6, 6, 6], history, Bid(6, 2), others=(("A", 5), ("B", 5), ("C", 5), ("D", 5)),
+                   round_number=3)
+    t = bot._table(state)
+    hints = bot._hints(state, bot.HINT_PER_BID)
+    assert bot._overstated(state, t, Bid(8, 5), hints) > 0
+    penalised = bot._bid_value(state, t, Bid(8, 5), hints, 0.5)
+    bot._bluff_face = 5
+    same_face = bot._bid_value(state, t, Bid(8, 5), hints, 0.5)
+    assert same_face - penalised > 1.0
+    bot._bluff_face = 4
+    assert bot._overstated(state, t, Bid(7, 6), hints) == 0      # honest: we hold five sixes
+    assert bot._bid_value(state, t, Bid(7, 6), hints, 0.5) > penalised
