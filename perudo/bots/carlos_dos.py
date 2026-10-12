@@ -218,7 +218,7 @@ class CarlosDosBot:
     OTHER_WEIGHT = 1.0
     # A correct Calza of ours while it gains a die, and once it does not.
     CALZA_GAIN = 1.0
-    CALZA_FREE_PASS = 0.3
+    CALZA_FREE_PASS = 0.1
     # A bid that is not on the table costs this per unit of P(false), on top
     # of what the model expects from challenges.
     FALSE_PENALTY = 0.2
