@@ -217,7 +217,7 @@ class _Player:
         self.dudo_w = list(dudo_w)        # logit = w . _dudo_x(...)
         self.calza_w = list(calza_w)      # logit = w0 + w1 * p_exact
         self.source = _Source()
-        self.trust = None                 # share of our revealed bids that were true (EMA)
+        self.trust = None                 # EMA of the share of our bids that were true in the rounds this player saw revealed
         self.n = 0                        # reactions seen
 
 
@@ -238,6 +238,15 @@ class CarlosDosBot:
     # the raise against the next player's reaction model. Beyond that one
     # level, raising is valued as -(1 - P(raise true)) * this.
     RETURN_RISK = 0.5
+    # The continuation updates every player's hand for the raise it assumes
+    # they make (a raise on a face is evidence of holding it), so the bid
+    # that comes back to us is valued with that evidence. False: the hands
+    # stay as they were before the raises, which made Dudo on the returned
+    # bid look too good (heads-up: +0.83 predicted, +0.24 realised).
+    FIX_CONT_HANDS = True
+    # A later player's correct Calza gains THEM a die; False counted every
+    # round-ending action by a later player as an opponent losing a die.
+    FIX_LATER_CALZA = True
     # Weight of the continuation (the rest of the round after the next
     # player raises) in a bid's value. It overrates the rest of the round,
     # most for weak bids. With three or more players that pressure does not
@@ -734,7 +743,18 @@ class CarlosDosBot:
         excl = _conv(mine, others)
         nxt_pmf = hands.get(nxt.name) if nxt is not None else None
         full = _conv(excl, nxt_pmf) if nxt_pmf is not None else excl
-        return full, excl, nxt_pmf, others
+        return full, excl, nxt_pmf, others, hands, mine
+
+    def _condition(self, pmf, name, bid, kind, n, total, pal):
+        """The hand on the bid's face after the player makes `bid`: the
+        likelihood of such a quantity from each hand, when it says something."""
+        implied = self._implied(bid, n, total, pal)
+        if not 1 <= implied <= n:
+            return pmf
+        lam = self._likelihood(name, kind)
+        out = [b * lam[max(-R_MAX, min(R_MAX, implied - k)) + R_MAX] for k, b in enumerate(pmf)]
+        z = sum(out)
+        return [v / z for v in out] if z > 0 else pmf
 
     # ------------------------------------------------------------------
     # deciding
@@ -755,6 +775,7 @@ class CarlosDosBot:
         total = sum(p.dice_count for p in alive)
         n_alive = len(alive)
         self._n_alive = n_alive
+        self._palifico = state.palifico       # also tracked from RoundEndedEvent; the state is authoritative
         order = sorted(alive, key=lambda p: p.id)
         me_i = next(i for i, p in enumerate(order) if p.id == state.my_id)
         nxt = order[(me_i + 1) % n_alive] if n_alive > 1 else None
@@ -793,10 +814,10 @@ class CarlosDosBot:
             return _conv(others, ours[self.name])
 
         for cand in self._candidates(state, alive, total, legal):
-            full, excl, nxt_pmf, others = model(cand.face)
+            full, excl, nxt_pmf, others, hands, mine = model(cand.face)
             options.append((cand, self._bid_value(cand, full, excl, nxt_pmf, nxt, n_alive, total,
                                                   w_other, recovery, pal, state.my_dice_count, 0,
-                                                  lambda c, o=others: public(c, o), bid)))
+                                                  lambda c, o=others: public(c, o), bid, hands, mine)))
         return options
 
     def _candidates(self, state, alive, total, legal):
@@ -854,7 +875,7 @@ class CarlosDosBot:
         return self._rng.choice(unheld)
 
     def _bid_value(self, cand, full, excl, nxt_pmf, nxt, n_alive, total, w_other, recovery, pal,
-                   my_dice, depth, public, before):
+                   my_dice, depth, public, before, hands=None, mine=None):
         q = cand.quantity
         p_true_all = _tail(full, q)
         value = -self.FALSE_PENALTY * (1 - p_true_all)
@@ -885,44 +906,77 @@ class CarlosDosBot:
             if p_raise > 1e-9:
                 if cont is None:
                     cont = self._continuation(cand, full, excl, nxt_pmf, nxt, n_alive, total, w_other,
-                                              recovery, pal, my_dice, depth, public)
+                                              recovery, pal, my_dice, depth, public, hands, mine)
                 v += p_raise * cont * self.CONT_SCALE_BY_ALIVE.get(n_alive, self.CONT_SCALE)
             value += wk * v
         return value
 
     def _continuation(self, cand, full, excl, nxt_pmf, nxt, n_alive, total, w_other, recovery, pal,
-                      my_dice, depth, public):
+                      my_dice, depth, public, hands=None, mine=None):
         """After the next player raises: the players beyond may end the round
-        (an opponent loses a die) or raise; what comes back to us is valued
-        by our best answer to it: Dudo, Calza, or a raise that the next
-        player may call."""
+        (an opponent loses a die, or gains one with a correct Calza) or raise;
+        what comes back to us is valued by our best answer to it: Dudo, Calza,
+        or a raise that the next player may call. Every raise assumed on the
+        way is evidence that the raiser holds the face, and the hands are
+        updated for it."""
         step = max(1, round(self.table["step"]))
+        face = cand.face
+        condition = self.FIX_CONT_HANDS and hands is not None
+        cur = dict(hands) if condition else None
+        q = cand.quantity + step
+        if condition:              # the next player's assumed raise
+            kind = _kind(Bid(q, face), cand, pal)
+            cur[nxt.name] = self._condition(cur[nxt.name], nxt.name, Bid(q, face), kind, nxt.dice_count, total, pal)
+
+        def belief():
+            if not condition:
+                return full
+            out = mine
+            for pmf in cur.values():
+                out = _conv(out, pmf)
+            return out
+
         alive_prob = 1.0
         value = 0.0
-        q = cand.quantity + step
         for pl in getattr(self, "_later", ())[:n_alive - 2]:
-            if self.NAME_ONLY:
-                m = self._player(pl.name)
-                tw, cw = m.dudo_w, m.calza_w
-            else:
-                tw, cw = self.table["dudo_w"], self.table["calza_w"]
-            pt = _tail(full, q)
-            pe = _at(full, q)
+            m = self._player(pl.name) if self.NAME_ONLY else None
+            tw = m.dudo_w if m else self.table["dudo_w"]
+            cw = m.calza_w if m else self.table["calza_w"]
+            now = belief()
+            pt = _tail(now, q)
+            pe = _at(now, q)
             x = self._dudo_x(pt, pl.dice_count / total, pt, step - 1, False, None, n_alive)
-            p_end = _sigmoid(sum(a * b for a, b in zip(tw, x)))
-            p_end += (1 - p_end) * _sigmoid(cw[0] + cw[1] * pe)
-            value += alive_prob * p_end * w_other
-            alive_prob *= 1 - p_end
+            p_dudo = _sigmoid(sum(a * b for a, b in zip(tw, x)))
+            p_calza = (1 - p_dudo) * _sigmoid(cw[0] + cw[1] * pe)
+            if self.FIX_LATER_CALZA:
+                gain_pl = (self.CALZA_GAIN if (recovery and pl.dice_count < 5) else self.CALZA_FREE_PASS) * w_other
+                value += alive_prob * (p_dudo * w_other + p_calza * (pe * -gain_pl + (1 - pe) * w_other))
+            else:
+                value += alive_prob * (p_dudo + p_calza) * w_other
+            alive_prob *= 1 - p_dudo - p_calza
             q += step
+            if condition:          # this player's assumed raise
+                cur[pl.name] = self._condition(cur[pl.name], pl.name, Bid(q, face), _kind(Bid(q, face), Bid(q - step, face), pal),
+                                               pl.dice_count, total, pal)
         # back to us, facing quantity q on the same face
-        pt = _tail(full, q)
-        pe = _at(full, q)
+        now = belief()
+        pt = _tail(now, q)
+        pe = _at(now, q)
         dudo = (1 - pt) * w_other - pt
         gain = self.CALZA_GAIN if (recovery and my_dice < 5) else self.CALZA_FREE_PASS
         calza = pe * gain - (1 - pe)
         if depth == 0 and q + step <= total:
-            raise_ = self._bid_value(Bid(q + step, cand.face), full, excl, nxt_pmf, nxt, n_alive, total,
-                                     w_other, recovery, pal, my_dice, depth + 1, public, Bid(q, cand.face))
+            if condition:
+                nxt_now = cur[nxt.name]
+                others_now = [1.0]
+                for name, pmf in cur.items():
+                    if name != nxt.name:
+                        others_now = _conv(others_now, pmf)
+                excl_now = _conv(mine, others_now)
+            else:
+                nxt_now, excl_now = nxt_pmf, excl
+            raise_ = self._bid_value(Bid(q + step, face), now, excl_now, nxt_now, nxt, n_alive, total,
+                                     w_other, recovery, pal, my_dice, depth + 1, public, Bid(q, face))
         else:
-            raise_ = -self.RETURN_RISK * (1 - _tail(full, q + step))
+            raise_ = -self.RETURN_RISK * (1 - _tail(now, q + step))
         return value + alive_prob * max(dudo, calza, raise_)

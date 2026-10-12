@@ -166,12 +166,16 @@ def fit(games, sizes, seed):
             setattr(CarlosDosBot, k, v)
 
 
-def lambdas(table, prior_w=1.0):
+def lambdas(table, prior_w=10.0, min_bids=200):
+    """Likelihood per residual: observed over chance, smoothed towards 1 with
+    prior_w bids of chance mass per cell, so a cell that a few bids happened
+    to land in does not become a factor of 5. Kinds with fewer than min_bids
+    are left out (the bot falls back to its formula)."""
     src = table["source"]
     out = {}
     for kind in KINDS:
         obs, chance = src.obs[kind], src.chance[kind]
-        if sum(obs) < 30:
+        if sum(obs) < min_bids:
             continue
         lam = [(o + prior_w) / (c + prior_w) for o, c in zip(obs, chance)]
         out[kind] = tuple(round(v, 3) for v in lam)
@@ -187,7 +191,10 @@ def main():
     heads_up = fit(args.games, (2,), args.seed + 1)
     print("# Fitted by fit_generic_prior.py against its generic population "
           f"({args.games} games at 3-7 players, {args.games} heads-up, seed {args.seed}).")
-    print(f"DUDO_PRIOR = {tuple(round(w, 2) for w in multi['dudo_w'])}")
+    dudo = [round(w, 2) for w in multi["dudo_w"]]
+    dudo[6] = 0.0        # our caught-bluff record: the generic players do not keep one,
+    #                      so whatever the fit finds for it is a spurious correlation
+    print(f"DUDO_PRIOR = {tuple(dudo)}")
     print(f"CALZA_PRIOR = {tuple(round(w, 2) for w in multi['calza_w'])}")
     print("GENERIC_LAMBDA = {")
     for label, table in (("2", heads_up), ("3+", multi)):
