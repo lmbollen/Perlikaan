@@ -31,7 +31,7 @@ from perudo.game import PerudoGame
 from perudo.models import Bid, BidEvent, DieLostEvent, RevealEvent
 from perudo.rules import count_matches
 
-POOL = ("PokerfaceBot", "CarlosBot", "TheDonBot", "BluffoBoyyo", "Trihard", "SniperBot",
+POOL = ("PokerfaceBot", "CarlosBot", "CarlosDosBot", "TheDonBot", "BluffoBoyyo", "Trihard", "SniperBot",
         "Fabulous", "OppaStyleBot", "SonnyBoy")
 
 

@@ -36,7 +36,7 @@ from benchmark_adaptive import MAX_ROUNDS, RoundLimit, TooManyRounds, fresh_seed
 from perudo.bot_loader import discover_bot_classes_by_name
 from perudo.game import PerudoGame
 
-POOL = ("PokerfaceBot", "CarlosBot", "TheDonBot", "BluffoBoyyo", "Trihard", "SniperBot", "Fabulous",
+POOL = ("PokerfaceBot", "CarlosBot", "CarlosDosBot", "TheDonBot", "BluffoBoyyo", "Trihard", "SniperBot", "Fabulous",
         "OppaStyleBot", "SonnyBoy", "HundredIQBot")
 
 
