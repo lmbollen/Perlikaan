@@ -239,11 +239,14 @@ class CarlosDosBot:
     # level, raising is valued as -(1 - P(raise true)) * this.
     RETURN_RISK = 0.5
     # Weight of the continuation (the rest of the round after the next
-    # player raises) in a bid's value. It overrates the rest of the round
-    # (most for weak bids, heads-up: +0.83 predicted, +0.24 real) but ranks
-    # the bids right: pressure pays. Heads-up, 640 paired games: 0.6 -9.2,
-    # 0.3 -13.9, 0 -25.6 pp; 1.3 and 1.6 within noise.
-    CONT_SCALE = 1.0
+    # player raises) in a bid's value. It overrates the rest of the round,
+    # most for weak bids. With three or more players that pressure does not
+    # pay: the next player simply calls. Paired, 3 players (1280 games): 0.5
+    # +4.1, 0.3 +4.9 pp; 4-7 players (960): 0.5 +2.5 pp, score +0.031.
+    CONT_SCALE = 0.5
+    # The same per number of players alive, where it differs. Heads-up the
+    # pressure pays (640 paired games: 0.6 -9.2, 0.3 -13.9, 0 -25.6 pp).
+    CONT_SCALE_BY_ALIVE = {2: 1.0}
     # Moves within this of the best count as equally good (picked at random).
     TIE_EPS = 0.01
 
@@ -267,8 +270,12 @@ class CarlosDosBot:
     # believed probability between a player who reads only their dice and
     # one who reads the bids too (learning finds which one each player is),
     # and put the 50% point where calling breaks even, P(true) = w / (1 + w)
-    # for a die worth w: 0.2 at 5 players, 0.33 at 3, 0.5 heads-up.
-    DUDO_PRIOR = (1.0, -5.0, 0.0, -5.0, 0.3, 0.0, 2.0, 4.2)
+    # for a die worth w: 0.2 at 5 players, 0.33 at 3, 0.5 heads-up. Players
+    # call our own bids more than that before they know us: bias 0.5 for
+    # our bids at tables of three or more (paired, with the continuation
+    # above: +1.7 pp at 3 players, score +0.019 at 4-7; heads-up it cost
+    # 3.8 +/- 1.4 pp, so heads-up the feature is 0).
+    DUDO_PRIOR = (1.0, -5.0, 0.0, -5.0, 0.3, 0.5, 2.0, 4.2)
     # Calza: w0 + w1 * P(exact), 50% at P(exact) = 0.5 (break-even: a die
     # won against a die lost).
     CALZA_PRIOR = (-6.0, 12.0)
@@ -613,7 +620,7 @@ class CarlosDosBot:
 
     def _dudo_x(self, p_true, share, p_pub, jump, ours, trust, n_alive):
         t = self.TRUST_START if trust is None else trust
-        return (1.0, p_true, share, p_pub, min(max(jump, 0), 3), 1.0 if ours else 0.0,
+        return (1.0, p_true, share, p_pub, min(max(jump, 0), 3), 1.0 if ours and n_alive >= 3 else 0.0,
                 (1 - t) if ours else 0.0, 1 / max(n_alive - 1, 1))
 
     def _sgd(self, w, x, y, offset):
@@ -859,7 +866,7 @@ class CarlosDosBot:
                 if cont is None:
                     cont = self._continuation(cand, full, excl, nxt_pmf, nxt, n_alive, total, w_other,
                                               recovery, pal, my_dice, depth, public)
-                v += p_raise * cont * self.CONT_SCALE
+                v += p_raise * cont * self.CONT_SCALE_BY_ALIVE.get(n_alive, self.CONT_SCALE)
             value += wk * v
         return value
 
