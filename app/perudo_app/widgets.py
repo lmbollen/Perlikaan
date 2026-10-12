@@ -223,6 +223,34 @@ class Surface(BoxLayout):
     radius = NumericProperty(dp(18))
 
 
+class Collapsible(Surface):
+    """A panel that can be hidden. Hidden, it takes no room and passes no
+    touches on: Kivy hands touches to children without checking the
+    parent's bounds, so the children of a merely shrunk panel would still
+    catch taps meant for whatever is drawn where they used to be."""
+    shown = BooleanProperty(True)
+    full_height = NumericProperty(0)
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.size_hint_y = None
+        self.bind(shown=self._fit, full_height=self._fit)
+        self._fit()
+
+    def _fit(self, *_):
+        self.height = self.full_height if self.shown else 0
+        self.opacity = 1 if self.shown else 0
+
+    def on_touch_down(self, touch):
+        return super().on_touch_down(touch) if self.shown else False
+
+    def on_touch_move(self, touch):
+        return super().on_touch_move(touch) if self.shown else False
+
+    def on_touch_up(self, touch):
+        return super().on_touch_up(touch) if self.shown else False
+
+
 class Btn(ButtonBehavior, Label):
     """A rounded button. kind: primary (gold), secondary, danger (Dudo),
     calza, ghost (no fill), outline, seg_on / seg_off (segmented control)."""

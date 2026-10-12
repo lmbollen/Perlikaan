@@ -33,7 +33,7 @@ from perudo_app.core import (
 )
 from perudo_app.speech import Speaker
 from perudo_app.widgets import (  # noqa: F401  (registers the widget classes for the KV rules)
-    Avatar, Body, Btn, Caption, Chip, Die, FaceButton, IconBtn, Meter, Segmented, Surface, TextField, Toggle,
+    Avatar, Body, Btn, Caption, Chip, Collapsible, Die, FaceButton, IconBtn, Meter, Segmented, Surface, TextField, Toggle,
     TopBar, TouchBox,
 )
 
@@ -555,11 +555,11 @@ KV = """
                         height: self.minimum_height
                         spacing: dp(7)
                         padding: 0, 0, dp(6), 0
-        BoxLayout:
-            size_hint_y: None
-            height: dp(74) if not root.human_playing else 0
-            opacity: 0 if root.human_playing else 1
-            disabled: root.human_playing
+        Collapsible:
+            shown: not root.human_playing
+            full_height: dp(74)
+            bg: T.CLEAR
+            radius: 0
             padding: dp(14), dp(2), dp(14), dp(14)
             spacing: dp(10)
             Btn:
@@ -577,12 +577,10 @@ KV = """
                 text: (T.icon("\\u275a\\u275a") + "  Pause") if root.auto else (T.icon("\\u25b6") + "  Play")
                 disabled: root.finished
                 on_release: root.toggle_auto()
-        Surface:
+        Collapsible:
             orientation: "vertical"
-            size_hint_y: None
-            height: dp(218) if root.human_playing else 0
-            opacity: 1 if root.human_playing else 0
-            disabled: not root.human_playing
+            shown: root.human_playing
+            full_height: dp(218)
             padding: dp(16), dp(12), dp(16), dp(16)
             spacing: dp(12)
             radius: dp(24)
