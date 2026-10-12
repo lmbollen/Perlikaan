@@ -45,13 +45,25 @@ nix develop            # Android SDK, NDK, JDK, build tools; runs uv sync
 ```
 
 The APK lands in `app/bin/`. `./build.sh release` builds a release APK.
-`flake.nix` pins the SDK platform (33), build tools (33.0.2) and NDK
-(25.2.9519653) and exports them as `ANDROIDSDK` / `ANDROIDNDK`, which
-`buildozer.spec` uses with `android.skip_update = True`, so Buildozer never
-downloads tools of its own. Nix provides nothing on the Python side: the shell
+`flake.nix` pins the SDK platform (35), build tools (35.0.0), NDK
+(25.2.9519653) and Apache Ant and exports them as `ANDROIDSDK`, `ANDROIDNDK`
+and `ANT_HOME`, which `build.sh` passes to Buildozer with
+`android.skip_update = True`, so Buildozer never downloads tools of its own
+(it gets a symlink view of the SDK under `app/.buildozer/android-sdk`, because
+it expects sdkmanager under `tools/bin` where the SDK keeps it under
+`cmdline-tools`). Nix provides nothing on the Python side: the shell
 runs `uv sync`, so Buildozer and Cython come from `uv.lock`. The first build
 still fetches python-for-android and the Python packages it compiles for the
 phone, and takes a while.
+
+## Build on GitHub Actions
+
+`.github/workflows/android.yml` runs the same build on every push that
+touches `app/` or `perudo/` (and on demand from the Actions tab): it installs
+Nix, enters the flake's shell and runs `./build.sh`, caching the
+python-for-android build between runs. The APK is attached to the run as the
+artifact **perudo-apk**: open the run on the Actions tab and download it
+from the Artifacts section at the bottom.
 
 ## Restricted networks
 

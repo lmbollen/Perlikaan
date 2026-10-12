@@ -14,8 +14,9 @@
         };
       };
       android = pkgs.androidenv.composeAndroidPackages {
-        platformVersions = [ "33" ];
-        buildToolsVersions = [ "33.0.2" ];
+        platformVersions = [ "35" ];
+        buildToolsVersions = [ "35.0.0" ];
+        toolsVersion = null;                  # the legacy `tools` (needs Java 8); cmdline-tools is used
         includeNDK = true;
         ndkVersions = [ "25.2.9519653" ];
         includeEmulator = false;
@@ -24,7 +25,7 @@
       ndk = "${sdk}/ndk/25.2.9519653";
       python = pkgs.python312;
       tools = with pkgs; [
-        jdk17
+        jdk17 ant
         python
         uv
         git zip unzip patch which file rsync
@@ -33,7 +34,8 @@
       ];
       common = {
         JAVA_HOME = "${pkgs.jdk17}";
-        ANDROIDAPI = "33";
+        ANT_HOME = "${pkgs.ant}";             # Buildozer would otherwise download Apache Ant
+        ANDROIDAPI = "35";
         ANDROIDMINAPI = "24";
         # Python and every Python dependency (Kivy, edge-tts, Buildozer, Cython)
         # come from uv: pyproject.toml and uv.lock in this folder.
@@ -50,7 +52,7 @@
           ANDROID_SDK_ROOT = sdk;
           ANDROID_NDK_HOME = ndk;
           shellHook = ''
-            export PATH="${sdk}/build-tools/33.0.2:${sdk}/platform-tools:$PATH"
+            export PATH="${sdk}/build-tools/35.0.0:${sdk}/platform-tools:$PATH"
             uv sync --quiet
             export PATH="$PWD/.venv/bin:$PATH"
             echo "Perudo Android build shell. ./build.sh builds the APK, uv run python main.py runs the app here."
@@ -58,8 +60,8 @@
         });
         # For networks where dl.google.com is blocked: the same tools, with an
         # SDK and NDK you already have in ANDROIDSDK and ANDROIDNDK (the SDK
-        # must hold the platform of android.api in buildozer.spec and build
-        # tools; python-for-android accepts NDK 25 to 28).
+        # must hold cmdline-tools, the platform of android.api in buildozer.spec
+        # and build tools 35; python-for-android accepts NDK 25 to 28).
         prebuilt = pkgs.mkShell (common // {
           packages = tools;
           shellHook = ''

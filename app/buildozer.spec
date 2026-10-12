@@ -17,14 +17,15 @@ requirements = python3==3.14.4,hostpython3==3.14.4,sqlite3==3.53.4,kivy==2.3.1,e
 orientation = portrait
 fullscreen = 0
 android.permissions = INTERNET,READ_EXTERNAL_STORAGE
-android.api = 33
+android.api = 35
 android.minapi = 24
 android.archs = arm64-v8a
 android.allow_backup = True
 
-# The SDK and NDK come from the Nix shell (flake.nix exports ANDROIDSDK and
-# ANDROIDNDK, build.sh passes them on as android.sdk_path / android.ndk_path
-# through the environment); never let Buildozer download its own.
+# The SDK, NDK and Ant come from the Nix shell (flake.nix exports ANDROIDSDK,
+# ANDROIDNDK and ANT_HOME; build.sh passes them on as android.sdk_path,
+# android.ndk_path and android.ant_path through the environment); never let
+# Buildozer download its own.
 android.skip_update = True
 android.accept_sdk_license = True
 

@@ -1,0 +1,52 @@
+name: Android APK
+
+on:
+  push:
+    paths:
+      - "app/**"
+      - "perudo/**"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+jobs:
+  apk:
+    name: Build the APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      # The build needs room: the Nix store (SDK, NDK, JDK, toolchain) and the
+      # python-for-android build each take a few GB.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Cache python-for-android builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            app/.buildozer
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: buildozer-${{ runner.os }}-${{ hashFiles('app/buildozer.spec', 'app/uv.lock', 'app/flake.lock') }}
+          restore-keys: |
+            buildozer-${{ runner.os }}-
+
+      - name: Build
+        working-directory: app
+        run: nix develop --command ./build.sh debug
+
+      - name: Upload the APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: perudo-apk
+          path: app/bin/*.apk
+          if-no-files-found: error
