@@ -43,3 +43,63 @@ def test_gives_a_protected_neighbour_an_easy_bid():
     others = [p for p in state.players if p.alive and p.id != state.my_id]
     p = bot._prob_at_least(state, others, bot._collect_hints(state), action.face, action.quantity)
     assert p >= bot.PROTECT_MIN_TRUE
+
+
+# -- Trihard's engine inside The Don: the same two fixes ---------------------
+
+from perudo.bots.the_don import HONESTY_DEFAULT, HONESTY_GRID
+from perudo.models import BidEvent, GameEndedEvent, RevealEvent, RoundEndedEvent
+
+
+def _reveal(bot, bids, dice, challenger="B"):
+    for player, bid in bids:
+        bot.observe(BidEvent(player, bid))
+    bot.observe(RevealEvent(
+        dice=tuple((name, tuple(hand)) for name, hand in dice.items()),
+        current_bid=bids[-1][1], actual_count=0, challenge_type="dudo",
+        challenger=challenger, bidder=bids[-1][0], result="bidder_wrong",
+    ))
+    bot.observe(RoundEndedEvent(next_starting_player="A", palifico_next=False))
+
+
+UNINFORMATIVE = (
+    [("A", Bid(2, 3))],
+    {"A": (2, 4, 5, 6, 6), "B": (1, 2, 3, 4, 5), "C": (3, 3, 3, 3, 3), "D": (2, 2, 2, 2, 2),
+     "The Don": (3, 3, 3, 3, 3)},
+)
+
+
+def test_uninformative_reveal_keeps_the_default_honesty():
+    bot = TheDonBot()
+    _reveal(bot, *UNINFORMATIVE)
+    assert bot._honesty("A") == HONESTY_DEFAULT
+    bot.FIX_HONESTY_PRIOR = False
+    assert bot._honesty("A") in (HONESTY_GRID[0], HONESTY_GRID[-1])
+
+
+def test_game_decay_fades_evidence_back_towards_the_default():
+    bot = TheDonBot()
+    for _ in range(4):
+        _reveal(bot, [("A", Bid(3, 6))], {"A": (2, 2, 3, 4, 5), "B": (1, 2, 3, 4, 5), "The Don": (3, 3)})
+    assert bot._honesty("A") < HONESTY_DEFAULT
+    bot.GAME_DECAY = 0.5
+    for _ in range(4):
+        bot.observe(GameEndedEvent(winner="A", standings=("A", "B", "The Don")))
+    assert bot._honesty("A") == HONESTY_DEFAULT
+
+
+def test_threshold_learning_counts_the_faced_bid_as_a_hint():
+    bot = TheDonBot()
+    seen = []
+    original = bot._player_pmf_for
+
+    def spy(player, face, hints, *args, **kwargs):
+        if player.name == "A":
+            seen.append({k: dict(v) for k, v in hints.items()})
+        return original(player, face, hints, *args, **kwargs)
+
+    bot._player_pmf_for = spy
+    _reveal(bot, [("A", Bid(5, 6)), ("B", Bid(6, 6))],
+            {"A": (6, 6, 6, 6, 2), "B": (6, 6, 3, 4, 5), "The Don": (2, 3, 4, 5, 6)}, challenger="The Don")
+    assert any(h.get("A") == {6: 5} for h in seen)
+

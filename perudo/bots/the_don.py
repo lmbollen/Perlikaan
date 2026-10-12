@@ -70,6 +70,7 @@ FREE_PASS_VALUE = 0.3           # value of a correct Calza when recovery is off 
 BID_EV_TOLERANCE = 0.0          # bids within this EV of the best are tied; prefer the higher quantity
 HONESTY_GRID = (0.0, 0.5, 1.0, 2.0, 4.0, 8.0)  # candidate honesty exponents beta, see _player_pmf_for
 HONESTY_DEFAULT = 1.0           # beta for a player we have not learned about yet (also for me, in their eyes)
+HONESTY_PRIOR_LL = 1.0          # FIX_HONESTY_PRIOR: prior weight (nats) on HONESTY_DEFAULT; about 3 clear reveals overrule it
 HONESTY_FLOOR = 0.05            # even a hopeless bid gets made sometimes (bluffs, forced raises)
 PACO_MENTION_WEIGHT = 0.5       # a Paco bid is weaker evidence about a normal face (Pacos still count for it)
 
@@ -131,6 +132,16 @@ class TheDonBot:
 
     # -- Trihard's engine ------------------------------------------------------
 
+
+    # Honesty used to be a bare argmax over HONESTY_GRID: one near-uninformative
+    # reveal already pushed it to 0.0 or 8.0 and HONESTY_DEFAULT was never used
+    # again. Now the default gets a log-prior of HONESTY_PRIOR_LL nats, so a
+    # few clear reveals are needed before another beta takes over.
+    FIX_HONESTY_PRIOR = True
+    # The learned Dudo thresholds were fitted on P(true) computed WITHOUT the
+    # bid the player was facing as a hint, while _best_bid applies them to an
+    # estimate that includes our bid as a hint. Learn on the same scale.
+    FIX_THRESHOLD_SCALE = True
 
     def _trihard_init(self) -> None:
         self._rng = random.Random(0x7A1)
@@ -300,6 +311,11 @@ class TheDonBot:
         ll = self._honesty_ll.get(player_name)
         if ll is None:
             return HONESTY_DEFAULT
+        if self.FIX_HONESTY_PRIOR:
+            # MAP estimate: the default beta carries HONESTY_PRIOR_LL nats of
+            # prior weight, which the evidence has to overcome.
+            default_i = min(range(len(HONESTY_GRID)), key=lambda i: abs(HONESTY_GRID[i] - HONESTY_DEFAULT))
+            ll = [x + (HONESTY_PRIOR_LL if i == default_i else 0.0) for i, x in enumerate(ll)]
         best = max(range(len(ll)), key=lambda i: ll[i])
         return HONESTY_GRID[best]
 
@@ -415,7 +431,10 @@ class TheDonBot:
         decisions: List[Tuple[str, Bid, int, bool]] = []  # (player, bid faced, bids before, called?)
         for i in range(1, len(self._round_bids)):
             player = self._round_bids[i][0]
-            decisions.append((player, self._round_bids[i - 1][1], i - 1, False))
+            # They faced bid i-1: with the fix it counts as a hint about the
+            # bidder's dice, as our own bid does in _best_bid's their_view.
+            n_before = i if self.FIX_THRESHOLD_SCALE else i - 1
+            decisions.append((player, self._round_bids[i - 1][1], n_before, False))
         if self._round_bids:
             decisions.append(
                 (event.challenger, event.current_bid, len(self._round_bids), event.challenge_type == "dudo")

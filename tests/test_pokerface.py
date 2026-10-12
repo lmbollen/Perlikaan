@@ -127,3 +127,73 @@ def test_lookahead_prefers_true_bids():
     action = bot.play(_state([6, 6, 6, 6, 2]))
     assert isinstance(action, Bid)
     assert bot._prob_true(_state([6, 6, 6, 6, 2]), action, 10, {f: 0.0 for f in range(1, 7)}) >= 0.5
+
+
+# -- fixes -------------------------------------------------------------------
+
+from perudo.bot_loader import instantiate_bots
+from perudo.bots.pokerface import Profile
+from perudo.models import BidEvent, Calza, DudoEvent, GameEndedEvent, RevealEvent
+
+
+def _two_player_state(my_dice, their_n, bid):
+    players = (PublicPlayer(0, "Pokerface", len(my_dice), True), PublicPlayer(1, "A", their_n, True))
+    total = len(my_dice) + their_n
+    return Observation(
+        my_id=0, my_dice=tuple(sorted(my_dice)), my_dice_count=len(my_dice), players=players,
+        current_bid=bid, palifico=False, round_number=1, history=(ActionRecord("A", bid),),
+        legal_actions=tuple(legal_actions(bid, False, None, total)),
+    )
+
+
+def test_certain_raise_beats_a_long_shot_calza():
+    # We hold 4, 4 and a Paco: 3x4 is certain. A has one die and bid 2x2,
+    # which is exact only if that die is a 2 or a Paco (1 in 3). The old
+    # comparison gave the raise no upside and went for Calza anyway.
+    state = _two_player_state([4, 6, 1, 4], 1, Bid(2, 2))
+    bot = PokerfaceBot()
+    action = bot.play(state)
+    assert action == Bid(3, 4)
+    PokerfaceBot.reset_memory()
+    old = PokerfaceBot()
+    old.FIX_RAISE_UPSIDE = False
+    assert old.play(state) == Calza()
+
+
+def test_rng_is_seeded():
+    assert PokerfaceBot()._rng.random() == PokerfaceBot()._rng.random()
+
+
+def test_profile_summary_survives_decay():
+    prof = Profile("A")
+    prof.rounds = 3
+    prof.decay(0.95)
+    assert "rondes" in prof.summary()
+
+
+def test_report_after_a_game_ended():
+    bot = PokerfaceBot()
+    bot.observe(BidEvent("A", Bid(2, 6)))
+    bot.observe(DudoEvent("B"))
+    bot.observe(RevealEvent(dice=(("Pokerface", (2,)), ("A", (6, 6)), ("B", (3, 4))), current_bid=Bid(2, 6),
+                            actual_count=2, challenge_type="dudo", challenger="B", bidder="A",
+                            result="bidder_correct"))
+    bot.observe(GameEndedEvent(winner="A", standings=("A", "B", "Pokerface")))
+    assert "A" in bot.profiler.report()
+
+
+def test_second_copy_profiles_the_others_and_not_itself():
+    first, second = instantiate_bots(["PokerfaceBot", "PokerfaceBot"])
+    assert (first.name, second.name) == ("Pokerface", "Pokerface 2")
+    assert first.profiler.me == "Pokerface"
+    assert second.profiler.me == "Pokerface 2"
+
+    dice = (("Pokerface", (6, 6, 2)), ("Pokerface 2", (3, 4, 5)), ("A", (2, 2)))
+    for bot in (first, second):
+        bot.observe(BidEvent("Pokerface", Bid(2, 6)))
+        bot.observe(BidEvent("Pokerface 2", Bid(3, 6)))
+        bot.observe(DudoEvent("A"))
+        bot.observe(RevealEvent(dice=dice, current_bid=Bid(3, 6), actual_count=2, challenge_type="dudo",
+                                challenger="A", bidder="Pokerface 2", result="bidder_wrong"))
+    assert set(first.profiler.profiles) == {"Pokerface 2", "A"}
+    assert set(second.profiler.profiles) == {"Pokerface", "A"}

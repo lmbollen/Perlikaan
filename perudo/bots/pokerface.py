@@ -354,7 +354,7 @@ class Profile:
 
         t, fit = self.dudo_threshold()
         return (
-            f"{self.name:<14} rondes {self.rounds:4d}  face {f(self.face_score):>5}  "
+            f"{self.name:<14} rondes {self.rounds:4.0f}  face {f(self.face_score):>5}  "
             f"follow {f(self.follow_rate):>4}  minraise {f(self.min_raise_rate):>4}  "
             f"risk {f(self.bid_risk):>4}  dudo<{f(t):>4} (fit {f(fit):>4})  "
             f"calza {f(self.calza_rate):>4}"
@@ -390,6 +390,19 @@ class OpponentProfiler:
         self._actions: List[Tuple[str, object]] = []
         self._dice: Optional[Dict[str, Tuple[int, ...]]] = None
         self._palifico = False
+
+    # `me` is the owner's name: a string, or the owning bot itself, whose
+    # current name is read at use. The loader renames extra copies of a bot
+    # after construction, so a name captured in __init__ went stale and a
+    # second copy profiled itself.
+    @property
+    def me(self):
+        owner = self._owner
+        return owner if owner is None or isinstance(owner, str) else owner.name
+
+    @me.setter
+    def me(self, owner):
+        self._owner = owner
 
     def decay(self, factor: float) -> None:
         """Older games count less: scale every profile by `factor`."""
@@ -716,9 +729,10 @@ class PokerfaceBot:
     DUDO_SOFTNESS = 0.02
     # Dudo threshold assumed for an opponent we know nothing about yet.
     DEFAULT_DUDO_AT = 0.3
-    # CALIBRATE, CALZA, AVOID_CALZA and LOOKAHEAD only kick in once at most
-    # this many players are left. They win big head-to-head and cost a
-    # little at bigger tables (benchmark_adaptive.py / sweep_players.py).
+    # CALIBRATE, AVOID_CALZA, LOOKAHEAD and DUDO_EV only kick in once at most
+    # this many players are left (Calza itself is gated by CALZA_PLAYERS).
+    # They win big head-to-head and cost a little at bigger tables
+    # (benchmark_adaptive.py / sweep_players.py).
     ENDGAME_PLAYERS = 2
     # Dudo when it loses less often than raising: a Dudo loses when the bid
     # is true, a raise only when it is false AND the next player challenges
@@ -727,6 +741,11 @@ class PokerfaceBot:
     # unchallenged raise still tends to come back). Otherwise Sniper's rule:
     # Dudo when P(bid true) < P(best raise false).
     DUDO_EV = True
+    # In the Calza comparison ev_raise counted only the raise's downside
+    # (challenged and false), while ev_dudo and ev_calza both include the
+    # upside of an opponent losing a die. Add the raise's upside: a true
+    # raise that still gets challenged costs the challenger a die.
+    FIX_RAISE_UPSIDE = True
     # In Palifico a follower could have called Dudo instead of raising, so
     # their raise says something about their hand too (Sniper ignores it).
     PALIFICO_FOLLOWERS = True
@@ -749,10 +768,11 @@ class PokerfaceBot:
     def __init__(self):
         self._sniper_init()
         self.name = "Pokerface"
-        self._rng = random.Random()
+        self._rng = random.Random(0x90C3)   # fixed seed: reproducible games
         # Learns per opponent name; lives as long as this instance, so
-        # across all games of a simulation.
-        self.profiler = OpponentProfiler(self.name)
+        # across all games of a simulation. Gets the bot, not its name: the
+        # loader renames extra copies after construction.
+        self.profiler = OpponentProfiler(self)
         # (table size class, estimate bucket) -> [times true, times seen]
         self._calibration = {}
         self._pending = []   # (key, bid, palifico) of bids faced this round
@@ -913,6 +933,7 @@ class PokerfaceBot:
                 self.profiler.PRIOR_CALZA = self.TUNED_CALZA
                 self.DEFAULT_DUDO_AT = self.TUNED_DUDO_AT
         self._shared_ensure_memory()
+        self.profiler.me = self   # a profiler from shared memory follows this instance's name
 
     def play(self, state):
         self._ensure_memory()
@@ -953,13 +974,21 @@ class PokerfaceBot:
                 # Expected dice for us: a correct Calza +1 (or a free pass once
                 # it no longer gains a die: nobody loses, we start), a wrong one
                 # -1; Dudo: the bidder losing is worth 1/(opponents), us -1; a
-                # raise loses when it is challenged and false. With few dice
+                # raise loses when it is challenged and false, and wins the
+                # same share when it is challenged and true. With few dice
                 # P(exact) is high and Calza wins this comparison more often.
                 w = 1.0 / max(alive - 1, 1)
                 ev_calza = p_ex * (1.0 if gains else self.CALZA_FREE_PASS) - (1 - p_ex)
                 ev_dudo = (1 - p_cur) * w - p_cur
-                ev_raise = -math.inf if best is None else \
-                    -(1 - best_p) * self.profiler.challenge_rate(self._next_player(state))
+                challenge = self.profiler.challenge_rate(self._next_player(state))
+                if best is None:
+                    ev_raise = -math.inf
+                else:
+                    ev_raise = -(1 - best_p) * challenge
+                    if self.FIX_RAISE_UPSIDE:
+                        # The profiler only learns the challenge rate on
+                        # false bids; it stands in for the rate on true ones.
+                        ev_raise += best_p * challenge * w
                 if (p_ex >= self.CALZA_AT or not gains) and ev_calza > max(ev_dudo, ev_raise):
                     self._log(state, Calza(), p_cur, best, best_p, hints, False)
                     return Calza()
