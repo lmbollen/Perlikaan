@@ -10,6 +10,7 @@ from __future__ import annotations
 import random
 import sys
 from pathlib import Path
+from typing import Optional
 
 from kivy.animation import Animation
 from kivy.app import App
@@ -188,6 +189,11 @@ KV = """
                 title: "Watch a game"
                 subtitle: "See every cup, turn by turn"
                 on_release: app.start_game(human=False)
+            ActionCard:
+                glyph: "\\u2687"
+                title: "Play together"
+                subtitle: "Same Wi-Fi: host a lobby or join one"
+                on_release: app.go("together")
             ActionCard:
                 glyph: "\\u2694"
                 title: "Simulation"
@@ -599,7 +605,7 @@ KV = """
         Collapsible:
             orientation: "vertical"
             shown: root.human_playing
-            full_height: dp(218)
+            full_height: dp(232)
             padding: dp(16), dp(12), dp(16), dp(16)
             spacing: dp(12)
             radius: dp(24)
@@ -681,8 +687,9 @@ KV = """
                 radius: 0
                 Btn:
                     kind: "primary"
-                    text: "Next round  \u203a"
+                    text: "Next round  \u203a" if root.can_continue else "Waiting for " + root.host_name + "\u2026"
                     font_size: sp(16)
+                    disabled: not root.can_continue
                     on_release: root.next_round()
 
 # ---------------------------------------------------------------- simulation
@@ -1253,6 +1260,9 @@ class GameScreen(Screen):
     totals_visible = BooleanProperty(False)
     warming = BooleanProperty(False)
     awaiting_next_round = BooleanProperty(False)
+    multiplayer = BooleanProperty(False)
+    can_continue = BooleanProperty(True)
+    host_name = StringProperty("")
     # the human's composer
     my_turn = BooleanProperty(False)
     can_dudo = BooleanProperty(False)
@@ -1292,11 +1302,14 @@ class GameScreen(Screen):
 
     # -- lifecycle -----------------------------------------------------------
 
-    def begin(self, session: GameSession, human: bool):
+    def begin(self, session, human: bool, multiplayer: bool = False, title: str = ""):
         app = App.get_running_app()
         self.session = session
         self.human_playing = human
-        self.title = "At the table" if human else "Watching"
+        self.multiplayer = multiplayer
+        self.can_continue = getattr(session, "can_continue", True)
+        self.host_name = getattr(session, "host_name", "") or "the host"
+        self.title = title or ("At the table" if human else "Watching")
         self.show_dice = (not human) and app.settings["show_dice"]
         self.finished = False
         self._pending = None
@@ -1313,12 +1326,25 @@ class GameScreen(Screen):
         # Watching starts paused (Play or Step starts it); at the table the bots play by themselves.
         self.auto = human
         session.set_auto(human, app.settings["step_delay"])
-        session.start()
+        if not session.running:
+            session.start()
         if self._poll is None:
             self._poll = Clock.schedule_interval(self.refresh, 0.12)
         self.refresh()
 
+    def on_pre_enter(self, *_):
+        if self.session is not None and self._poll is None:     # back from the lobby
+            self._poll = Clock.schedule_interval(self.refresh, 0.12)
+
+    def on_leave(self, *_):
+        if self.multiplayer and self._poll is not None:         # the game goes on; draw it when back
+            self._poll.cancel()
+            self._poll = None
+
     def leave(self):
+        if self.multiplayer:
+            App.get_running_app().leave_lobby_game()
+            return
         if self.session is not None:
             self.session.stop()
         if self._poll is not None:
@@ -1330,6 +1356,9 @@ class GameScreen(Screen):
         app.go("home", back=True)
 
     def restart(self):
+        if self.multiplayer:
+            App.get_running_app().restart_lobby_game()
+            return
         if self.session is not None:
             self.session.stop()
         App.get_running_app().start_game(human=self.human_playing)
@@ -1378,6 +1407,8 @@ class GameScreen(Screen):
 
     def refresh(self, _dt=0):
         if self.session is None:
+            return
+        if self.multiplayer and self._lobby_gone():
             return
         snap = self.session.snapshot()
         self.finished = snap.finished
@@ -1434,7 +1465,8 @@ class GameScreen(Screen):
             elif reveal and p.name == reveal.get("loser"):
                 row.sub = T.color("lost a die", T.HEX["red"])
             else:
-                row.sub = f"{p.dice_count} {'die' if p.dice_count == 1 else 'dice'}" + ("  ·  you" if p.is_human else "")
+                row.sub = (f"{p.dice_count} {'die' if p.dice_count == 1 else 'dice'}"
+                           + ("  ·  you" if p.is_human else "  ·  player" if p.person else ""))
         # totals per face, for watchers with the dice shown (and during a reveal)
         self.totals_visible = bool(show_all or (reveal and not self.human_playing and self.show_dice))
         if self.totals_visible:
@@ -1469,6 +1501,8 @@ class GameScreen(Screen):
                         next=("The bots play among themselves first" if self.human_playing
                               else "The learning bots get to know the table"))
             round_text = ""
+        elif snap.error and self.multiplayer:
+            card.update(caption="Game over", next=T.esc(snap.error))
         elif snap.error:
             card.update(caption="A bot crashed", caption_color=T.RED, qty="!", next=T.esc(snap.error),
                         border=T.RED)
@@ -1682,16 +1716,39 @@ class GameScreen(Screen):
                                  valign="middle", text_size=(dp(220), None)))
             card.add_widget(row)
         buttons = BoxLayout(size_hint_y=None, height=dp(50), spacing=dp(10), padding=(0, dp(8), 0, 0))
-        home = Btn(text="Home", kind="outline")
-        home.bind(on_release=lambda _b: self.leave())
-        again = Btn(text="Play again", kind="primary")
-        again.bind(on_release=lambda _b: (self._close_sheet(), self.restart()))
+        home = Btn(text="Lobby" if self.multiplayer else "Home", kind="outline")
+        home.bind(on_release=lambda _b: (self._close_sheet(), self.leave()))
         buttons.add_widget(home)
-        buttons.add_widget(again)
+        if not self.multiplayer or self.can_continue:       # a guest waits for the host to deal again
+            again = Btn(text="Play again", kind="primary")
+            again.bind(on_release=lambda _b: (self._close_sheet(), self.restart()))
+            buttons.add_widget(again)
         card.add_widget(buttons)
         sheet.add_widget(card)
         self._sheet = sheet
         sheet.open()
+
+    def _lobby_gone(self) -> bool:
+        """A guest's game that ended under it: the host left, or went back
+        to the lobby. Leave the table and say why."""
+        app = App.get_running_app()
+        lobby = app.lobby
+        if lobby is None or app.lobby_host:
+            return False
+        if lobby.closed:
+            app.leave_lobby(message=lobby.error or "The lobby is closed")
+            return True
+        if lobby.session is not None and lobby.session is not self.session:
+            self._close_sheet()                       # the host dealt a new game: join it
+            app.open_lobby_game()
+            return True
+        snap = self.session.snapshot()
+        if snap.finished and snap.error and not snap.standings and self.manager.current == self.name:
+            self._close_sheet()
+            app.go("lobby", back=True)
+            app.toast(T.esc(snap.error))
+            return True
+        return False
 
     def _close_sheet(self):
         if self._sheet is not None:
@@ -1882,8 +1939,12 @@ class PerudoApp(App):
         ROUTER.speak = lambda text, lang, seed: self.speaker.say(text, self.settings["tts_lang"] or lang, seed)
         Builder.load_string(KV)
         sm = ScreenManager(transition=SlideTransition(duration=0.22))
+        from perudo_app.lobby_ui import LobbyScreen, PlayTogetherScreen
+        self.lobby = None                    # a LobbyHost or a LobbyClient while playing together
+        self.lobby_host = False
         for cls, name in ((HomeScreen, "home"), (BotsScreen, "bots"), (GameScreen, "game"),
-                          (SimScreen, "sim"), (SettingsScreen, "settings")):
+                          (SimScreen, "sim"), (SettingsScreen, "settings"),
+                          (PlayTogetherScreen, "together"), (LobbyScreen, "lobby")):
             sm.add_widget(cls(name=name))
         self.sm = sm
         # The screens sit in a frame padded clear of the phone's status and
@@ -1951,19 +2012,126 @@ class PerudoApp(App):
             return True
         return False
 
+    # -- playing together ----------------------------------------------------
+
+    def ask_name(self, then, force: bool = False):
+        """Ask for the player's name the first time (or when asked to)."""
+        if self.settings["name_confirmed"] and not force:
+            then()
+            return
+        from perudo_app.lobby_ui import NameDialog
+        current = self.settings["human_name"]
+        NameDialog("" if current in ("", "You") else current, then).open()
+
+    def host_lobby(self):
+        from perudo_app.multiplayer import LobbyHost
+        self.leave_lobby(go_back=False)
+        self.lobby = LobbyHost(self.settings["human_name"], self.registry,
+                               allow_guest_bots=bool(self.settings["guest_bots"]),
+                               guest_bot_limit=int(self.settings["guest_bot_limit"] or 2))
+        self.lobby_host = True
+        self.go("lobby")
+
+    def make_client(self, code: str):
+        """Join a lobby (blocking: call from a worker thread)."""
+        from perudo_app.multiplayer import LobbyClient
+        return LobbyClient(self.settings["human_name"], self.registry, code,
+                           speak=lambda text, lang, seed: self.speaker.say(
+                               text, self.settings["tts_lang"] or lang, seed))
+
+    def enter_lobby(self, lobby, host: bool):
+        self.leave_lobby(go_back=False)
+        self.lobby, self.lobby_host = lobby, host
+        self.go("lobby")
+
+    def leave_lobby(self, message: Optional[str] = None, go_back: bool = True):
+        lobby, self.lobby = self.lobby, None
+        if lobby is not None:
+            lobby.close()
+        game = self.sm.get_screen("game")
+        if game.multiplayer:
+            game._close_sheet()
+            if game._poll is not None:
+                game._poll.cancel()
+                game._poll = None
+            game.session, game.multiplayer = None, False
+        self.speaker.clear()
+        if go_back:
+            self.go("together", back=True)
+        if message:
+            self.toast(T.esc(message))
+
+    def _show_lobby_game(self, session):
+        game = self.sm.get_screen("game")
+        self.go("game")
+        if game.session is not session:
+            self.speaker.clear()
+            game.begin(session, human=True, multiplayer=True, title=f"Lobby {self.lobby.code}")
+
+    def start_lobby_game(self):
+        lobby = self.lobby
+        if lobby.session is not None and lobby.session.running:
+            self._show_lobby_game(lobby.session)
+            return
+        session = lobby.start_game(delay=self.settings["step_delay"], speech_idle=lambda: self.speaker.idle)
+        self._show_lobby_game(session)
+
+    def open_lobby_game(self):
+        if self.lobby is not None and self.lobby.session is not None:
+            self._show_lobby_game(self.lobby.session)
+
+    def leave_lobby_game(self):
+        """Back from the game screen while playing together."""
+        lobby = self.lobby
+        if lobby is None:
+            self.go("together", back=True)
+            return
+        if not self.lobby_host:
+            self.go("lobby", back=True)
+            return
+        session = lobby.session
+        if session is not None and session.running and not session.snapshot().finished:
+            from perudo_app.lobby_ui import confirm
+
+            def end():
+                lobby.end_game()
+                self.go("lobby", back=True)
+
+            confirm("End the game?", "Everyone goes back to the lobby.", "End game", end)
+            return
+        lobby.end_game()
+        self.go("lobby", back=True)
+
+    def restart_lobby_game(self):
+        if self.lobby is None or not self.lobby_host:
+            return
+        self.lobby.end_game()
+        self.start_lobby_game()
+
+    def on_stop(self):
+        if self.lobby is not None:
+            self.lobby.close()
+
     def toast(self, text: str):
         label = Label(text=text, markup=True, font_size=sp(14), color=T.TEXT, size_hint=(None, None),
-                      padding=(dp(16), dp(10)), opacity=0)
-        label.texture_update()
-        label.size = label.texture_size
+                      padding=(dp(18), dp(11)), halign="center", opacity=0)
+        label.text_size = (min(Window.width - dp(48), dp(360)), None)
         with label.canvas.before:
             from kivy.graphics import Color, RoundedRectangle
             Color(*T.RAISED)
             bg = RoundedRectangle(radius=[dp(18)])
-        label.bind(pos=lambda w, _v: setattr(bg, "pos", w.pos), size=lambda w, _v: setattr(bg, "size", w.size))
-        label.pos = (Window.width / 2 - label.width / 2, dp(96) + self.frame.padding[3])
+
+        def fit(*_):
+            # follow the rendered text: the size and place are only known once it is drawn
+            label.size = label.texture_size
+            label.pos = (Window.width / 2 - label.width / 2, dp(96) + self.frame.padding[3])
+            bg.pos, bg.size = label.pos, label.size
+
+        label.bind(texture_size=fit, pos=lambda *_: setattr(bg, "pos", label.pos))
         Window.add_widget(label)
-        anim = Animation(opacity=1, d=0.15) + Animation(d=2.2) + Animation(opacity=0, d=0.3)
+        label.texture_update()
+        fit()
+        anim = Animation(opacity=1, d=0.15) + Animation(d=2.4) + Animation(opacity=0, d=0.3)
         anim.bind(on_complete=lambda *_: Window.remove_widget(label))
         anim.start(label)
 

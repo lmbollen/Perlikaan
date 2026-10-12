@@ -33,6 +33,17 @@ What it does:
   reveal. Tap a die for the face, set the quantity (the lowest legal bid is
   preselected), and bid, or call Dudo or Calza when they are legal. When a
   round is decided the cups stay up until you tap *Next round*.
+- **Play together**: friends on the same Wi-Fi, or on one phone's hotspot,
+  play at one table, each on their own phone. One phone hosts a lobby and
+  shows its four-character code; the others join with that code. The first
+  time you host or join, the app asks your name; it remembers it, and you
+  can change it in the lobby. The host decides whether guests may bring bots
+  and how many each, and switches every bot on or off (the host's own bots
+  and the guests'). A guest's bots run on the guest's phone: only what the
+  engine tells a bot and the bot's answers travel. Every phone sees only its
+  owner's dice until the cups come up; the host starts each next round and
+  can deal again from the results. The host's phone runs the game; if a
+  guest's phone drops out, its seats play a safe default move.
 - **Simulation**: 100 to 5000 games with the same bot instances (so learning
   bots keep learning), with a live leaderboard: win rate, wins, average place
   and bars scaled to the leader, re-ranked as the games come in.
@@ -151,3 +162,14 @@ cd app && uv run pytest
 The tests cover the app's model (loading bots, stepping a game with all dice
 and totals, the human seat, simulations with live standings, settings) without
 Kivy.
+
+## How playing together works
+
+`perudo_app/net.py` and `perudo_app/multiplayer.py`. A lobby code encodes the
+last two parts of the host's IPv4 address and which of 16 ports
+(47360-47375) it listens on; a joining phone puts its own first two parts in
+front, so phones on one local network find each other without typing an
+address, a discovery broadcast or a server. Networks that keep their devices
+apart (some public and guest Wi-Fi) do not work; a phone's hotspot always
+does. Playing over the internet would need a relay server; the messages
+(JSON lines over TCP) are independent of how they travel.

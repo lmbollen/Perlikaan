@@ -373,7 +373,8 @@ class PlayerView:
     dice_count: int
     alive: bool
     dice: tuple = ()
-    is_human: bool = False
+    is_human: bool = False        # the person looking at this screen
+    person: bool = False          # played by a person (here or on another phone)
 
 
 @dataclass(frozen=True)
@@ -427,6 +428,7 @@ class GameSession:
     HumanSeat among the bots, that seat's turns wait for submit()."""
 
     TALK_CHANCE = 0.25      # how often a bot's line is said (at most one per bot per turn)
+    can_continue = True     # this screen may start the next round (a guest's may not)
 
     def __init__(self, bots: Sequence[Any], seed: Optional[int] = None, step: bool = True,
                  delay: float = 1.0, log_limit: int = 400, warmup: int = 0,
@@ -582,7 +584,8 @@ class GameSession:
             s.bidder = next((r.player for r in reversed(obs.history) if isinstance(r.action, Bid)), None)
             s.to_act = obs.players[obs.my_id].name
             s.history = [f"{r.player}: {fmt_action(r.action)}" for r in obs.history]
-            s.players = [PlayerView(p.name, p.dice_count, p.alive, tuple(p.dice), isinstance(p.bot, HumanSeat))
+            s.players = [PlayerView(p.name, p.dice_count, p.alive, tuple(p.dice), isinstance(p.bot, HumanSeat),
+                                    isinstance(p.bot, HumanSeat) or getattr(p.bot, "person", False))
                          for p in game.players]
             if obs.history:              # the new round's first bid is in: the old reveal is done
                 s.reveal = None
@@ -653,6 +656,15 @@ class GameSession:
             self._snap.commentary.append(f"{speaker}: {text}")
             del self._snap.commentary[:-self.log_limit]
             self._feed(FeedItem("talk", speaker, text))
+
+    def inject_talk(self, speaker: str, text: str, lang: str = "nl") -> bool:
+        """A line from a bot playing on another phone: the same rules as a
+        local bot's line; said here too when it gets through."""
+        if self._on_talk(speaker, text, lang) is False:
+            return False
+        if ROUTER.speak is not None:
+            ROUTER.speak(text, lang, speaker)
+        return True
 
     def _feed(self, item: FeedItem) -> None:
         """Append to the feed; the caller holds the lock."""
@@ -833,6 +845,9 @@ DEFAULT_SETTINGS = {
     "step_delay": 1.0,
     "human_name": "You",
     "warmup_games": 0,         # bot-only games before a watched or joined game
+    "name_confirmed": False,   # asked for the name once (playing together)
+    "guest_bots": True,        # hosting: guests may bring bots
+    "guest_bot_limit": 2,      # ... at most this many each
     "table": {},          # who is seated: BotRegistry.selection()
 }
 
