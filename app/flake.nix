@@ -24,14 +24,21 @@
       sdk = "${android.androidsdk}/libexec/android-sdk";
       ndk = "${sdk}/ndk/25.2.9519653";
       python = pkgs.python312;
-      tools = with pkgs; [
+      # python-for-android runs each recipe's build with a minimal environment
+      # (PATH and the compiler variables only), so the ACLOCAL_PATH that the
+      # automake hook sets in this shell is lost, and autoreconf cannot find
+      # libtool's macros. Bake those directories into aclocal itself.
+      aclocal = pkgs.writeShellScriptBin "aclocal" ''
+        exec ${pkgs.automake}/bin/aclocal -I ${pkgs.libtool}/share/aclocal -I ${pkgs.pkg-config}/share/aclocal "$@"
+      '';
+      tools = [ aclocal ] ++ (with pkgs; [
         jdk17 ant
         python
         uv
-        git zip unzip patch which file rsync
+        git zip unzip patch which file rsync perl
         autoconf automake libtool pkg-config cmake gnumake ninja ccache
         zlib libffi openssl
-      ];
+      ]);
       common = {
         JAVA_HOME = "${pkgs.jdk17}";
         ANT_HOME = "${pkgs.ant}";             # Buildozer would otherwise download Apache Ant
