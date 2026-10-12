@@ -201,6 +201,19 @@ class Profile:
         self.false_faced = 0
         self.false_challenged = 0
 
+    def decay(self, factor: float) -> None:
+        """Make what was learned count `factor` times as much (once per game),
+        so recent games weigh more than older ones."""
+        for attr in ("rounds", "bids", "follows", "raises", "min_raises", "bid_risk_sum",
+                     "calzas", "false_faced", "false_challenged"):
+            setattr(self, attr, getattr(self, attr) * factor)
+        for stat in self.excess.values():
+            stat[0] *= factor
+            stat[1] *= factor
+        # Lists of single decisions: drop the same share of the oldest ones.
+        for seq in (self.face_scores, self.facing):
+            del seq[:int(len(seq) * (1 - factor))]
+
     # -- derived numbers ------------------------------------------------
 
     @property
@@ -377,6 +390,11 @@ class OpponentProfiler:
         self._actions: List[Tuple[str, object]] = []
         self._dice: Optional[Dict[str, Tuple[int, ...]]] = None
         self._palifico = False
+
+    def decay(self, factor: float) -> None:
+        """Older games count less: scale every profile by `factor`."""
+        for prof in self.profiles.values():
+            prof.decay(factor)
 
     def profile(self, name: str) -> Profile:
         if name not in self.profiles:
@@ -695,7 +713,7 @@ class PokerfaceBot:
     # Only bids at least this likely (to us) are considered.
     LOOKAHEAD_MIN = 0.3
     # How sharp an opponent's Dudo threshold is (logistic width).
-    DUDO_SOFTNESS = 0.04
+    DUDO_SOFTNESS = 0.02
     # Dudo threshold assumed for an opponent we know nothing about yet.
     DEFAULT_DUDO_AT = 0.3
     # CALIBRATE, CALZA, AVOID_CALZA and LOOKAHEAD only kick in once at most
@@ -723,6 +741,10 @@ class PokerfaceBot:
     # Set to a list to record every decision with what we believed at the
     # time (see analyze_endgame.py). None = no logging.
     decision_log = None
+
+    # Once per game, everything learned is multiplied by this, so the latest
+    # games count more than older ones (0.95: a game 14 games ago counts half).
+    GAME_DECAY = 0.95
 
     def __init__(self):
         self._sniper_init()
@@ -1082,7 +1104,20 @@ class PokerfaceBot:
         self.profiler.observe(event)
         if isinstance(event, RevealEvent):
             self._learn_calibration(event)
+        elif isinstance(event, GameEndedEvent):
+            self._decay_memory()
         self._sniper_observe(event)
+
+    def _decay_memory(self):
+        """End of a game: what was learned counts GAME_DECAY times as much."""
+        f = self.GAME_DECAY
+        if f >= 1:
+            return
+        self.profiler.decay(f)
+        for stat in self._calibration.values():
+            stat[0] *= f
+            stat[1] *= f
+        self._thr_cache.clear()   # thresholds are refitted on the decayed data
 
     def on_game_start(self, info):
         pass

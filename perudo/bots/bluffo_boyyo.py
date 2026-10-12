@@ -1,34 +1,33 @@
 """
-Bluffo Boyyo: a quick-learning bluffer.
+Bluffo Boyyo: a quick-learning deceiver.
 
-At the start of every round he flips a coin (BLUFF_RATE): in a bluff round he
-pretends to hold BLUFF_DICE extra dice of a face he has few of, and bids as
-if that were true; in an honest round he bids on what he really holds.
+No fixed plays. Every legal action gets an expected value, in dice, and the
+best one is played (near-equal options at random, so he is hard to read).
+Deception is part of that value, so he misleads whenever it is safe enough:
 
-When he raises he alternates between two styles, one per bid:
+  * a bid is worth: the chance it is true, against the chance the next
+    player challenges it (learned per player from how likely the bid looks
+    from their seat: a true bid that looks unlikely to them is a trap);
+  * plus its deception: how far the bid claims more of that face than his
+    hand and the table's bids support, weighted by how much this table
+    reads bids (learned from how often players follow the face just bid).
+    Opponents who read bids then believe in dice that are not there;
+  * consistency: one bluff per round. Once he has bluffed on a face, a
+    misleading bid on another face is out (INCONSISTENT); switching to an
+    honest face (one he holds plenty of, or that the table's bids make
+    plentiful) stays open;
+  * Dudo is worth its chance of being right; Calza the chance of an exact
+    count, with the die it gains while nobody is out and he has fewer than
+    five, or the free pass once it gains nothing.
 
-  * min raise: the lowest legal bid on each face, taking the one most
-    likely to be true (MIN_RAISE_LIKELY; off: the smallest claim, a Paco
-    bid counting double); in a bluff round the bluff face when it is
-    plausible enough. Paired benchmarks: the smallest claim got caught
-    far more (true 27-42% when forced), this +2.3 +/- 1.6 pp win rate
-    together with HINT_FACED = 1.0;
-  * max raise: the highest bid that is still very likely on the table for
-    real (MAX_TARGET, raised against a next player who challenges a lot), by
-    preference on a six so the next player must raise the quantity; in a
-    bluff round the bluff face wins that preference.
-
-Facing a bid he calls Calza when the exact count is likely: easily while
-nobody is out yet and it gains him a die (CALZA_AT_GAIN), only when it beats
-a Dudo once it gains nothing (CALZA_AT_FREE). He calls Dudo on a bid he does
-not believe (DUDO_AT), judged from his real dice.
-
-After every reveal he learns about each opponent by name, with a fast
-moving average (LEARN_RATE): how many dice of the bid face they really hold
-behind a bid that chooses or follows a face (their bluffing), how often they
-call Dudo or Calza when facing a bid. What he learned stays in memory at
-class level, so it survives a new instance per game; nothing is written to
-disk. The moving average makes recent games count more than older ones.
+After every reveal he learns about each opponent by name with a fast moving
+average (LEARN_RATE): how many dice of a face they really hold behind a bid
+that chooses or follows it, how often they follow a face, their Calza rate,
+and a Dudo model (how likely a bid must look to them before they call). He
+also learns how often the bids he faces were really true, per bucket of his
+own estimate, and corrects that estimate. Everything learned lives in memory
+at class level, so it survives a new instance per game; nothing is written
+to disk. The moving averages make recent games count more than old ones.
 """
 
 import math
@@ -74,6 +73,27 @@ def _binom_tail(n, p, k):
     return sum(_binom_pmf(n, p, j) for j in range(k, n + 1))
 
 
+def _tail_at(n, p, need):
+    """P(X >= need) for a fractional need (interpolated)."""
+    lo = math.floor(need)
+    frac = need - lo
+    return (1 - frac) * _binom_tail(n, p, lo) + frac * _binom_tail(n, p, lo + 1)
+
+
+def _pmf_at(n, p, need):
+    lo = math.floor(need)
+    frac = need - lo
+    return (1 - frac) * _binom_pmf(n, p, lo) + frac * _binom_pmf(n, p, lo + 1)
+
+
+def _sigmoid(x):
+    if x > 30:
+        return 1.0
+    if x < -30:
+        return 0.0
+    return 1.0 / (1.0 + math.exp(-x))
+
+
 def _is(event, *names):
     return type(event).__name__ in names
 
@@ -82,54 +102,47 @@ class BluffoBoyyo:
     name = "Bluffo Boyyo"
     count = 1
 
-    # Chance, decided at the start of every round, to bluff this round.
-    BLUFF_RATE = 0.5
-    # In a bluff round: pretend to hold this many extra dice of the bluff face.
-    BLUFF_DICE = 2
-    # Max raise: the highest bid still at least this likely (from our view).
-    MAX_TARGET = 0.75
-    # How much the next player's learned Dudo rate moves that target.
-    TARGET_PER_CHALLENGE = 0.4
-    # Dudo when the bid we face is less likely than this.
-    DUDO_AT = 0.45
-    # A min raise less likely than this is not made: Dudo instead.
-    MIN_RAISE_P = 0.35
-    # Min raise: the most likely of the lowest bids per face (True), or the
-    # smallest claim (False).
-    MIN_RAISE_LIKELY = True
-    # The bluff face is only bid when plausible with our real dice (True) or
-    # as we pretend to see it (False: it got caught at 10-20% real odds).
-    BLUFF_REAL_ODDS = True
-    BLUFF_PRETEND_ODDS = True
-    # Learn how often the bids we face were really true, per bucket of our
-    # estimate, and correct the estimate with it (quick learner: the data
-    # soon outweighs the starting shift). FACED_SHIFT is the starting
-    # correction, measured: bids we rated 0.1-0.45 were true 0.25 more often.
-    # Paired benchmark of both together: +3.5 +/- 1.8 pp win rate and
-    # +0.078 +/- 0.019 score (share of opponents beaten).
-    CALIBRATE_FACED = True
-    FACED_SHIFT = 0.2
-    CALIBRATION_PRIOR = 8
-    # Also Dudo when the raise we would make is less likely to be true than
-    # the bid we face is to be false (do not raise on a coin flip).
-    DUDO_VS_RAISE = False
-    # Calza when the exact count is at least this likely, while it gains a
-    # die (nobody out, fewer than 5 dice) / once it gains nothing.
-    CALZA_AT_GAIN = 0.30
-    CALZA_AT_FREE = 0.45
+    # -- values, in dice --------------------------------------------------
+    # Worth of an opponent losing a die, divided by the number of opponents.
+    OTHER_WEIGHT = 1.0
+    # A bid that is not challenged passes the turn; a false one may still be
+    # caught later in the round: that risk, per unit of P(false).
+    LATER_RISK = 0.35
+    # Cost per unit of P(false) for any bid, whether or not it gets called:
+    # a bid that is not on the table is a bad bid.
+    FALSE_PENALTY = 0.0
+    # Worth of misleading the table: per die the bid overstates our holding
+    # of its face (as a share of our dice), times how much the table reads
+    # bids (0..1).
+    DECEIVE = 0.4
+    # Worth of a correct Calza that gains no die (someone is out, or we have
+    # five): nothing happens and we start the next round.
+    CALZA_FREE_PASS = 0.3
+    # Options within this value of the best count as equal: one is played at
+    # random, so we are hard to read.
+    TIE_EPS = 0.02
+    # Penalty on a second bluff face in the same round (one bluff per round).
+    INCONSISTENT = 2.0
+
+    # -- learning -----------------------------------------------------------
     # Quick learner: weight of the newest observation in the moving averages.
     LEARN_RATE = 0.4
-    # Starting beliefs about a player we do not know: extra dice of the face
-    # behind a bid that chooses / follows a face, Dudo and Calza rate facing
-    # a bid.
-    PRIOR_EXCESS = {"choice": 0.5, "follow": 0.0}
-    PRIOR_CHALLENGE = 0.4
+    # Starting beliefs about a player we do not know.
+    PRIOR_EXCESS = {"choice": 0.5, "follow": 0.0}   # extra dice behind a bid
+    PRIOR_FOLLOW = 0.5                               # share of raises that follow the face
     PRIOR_CALZA = 0.03
+    # Dudo model: P(call) = sigmoid(DUDO_A + DUDO_B * how likely the bid looks
+    # to them); learned per player by gradient steps of DUDO_LR.
+    DUDO_A, DUDO_B = 2.0, -7.0
+    DUDO_LR = 0.5
     # How much of what a bid suggests about the bidder's hand we count when
-    # choosing our own raise (1 = all of it), and when judging the bid we
-    # face for a Dudo or Calza (bids are more honest than that).
+    # choosing our own bid, and when judging the bid we face.
     HINT_PER_BID = 0.5
-    HINT_FACED = 1.0
+    HINT_FACED = 0.75
+    # Correct our estimate of a bid we face by how often such bids were
+    # really true (learned per bucket); FACED_SHIFT is the measured start.
+    FACED_SHIFT = 0.2
+    CALIBRATION_PRIOR = 8
 
     # Learned state, shared by every instance of this class (per bot name).
     _MEMORY = {}
@@ -142,14 +155,12 @@ class BluffoBoyyo:
     def __init__(self):
         self.name = "Bluffo Boyyo"
         self._rng = random.Random()
-        self.learned = None          # name -> dict of moving averages (shared)
-        self._round_no = None
-        self._bluffing = False
-        self._bluff_face = None
-        self._max_next = False       # alternates: next raise is a max raise?
-        self._actions = []           # (player, bid or None, "dudo"/"calza"/None) this round
+        self.learned = None            # shared: player -> stats, ("faced", bucket) -> [hits, n]
+        self._actions = []             # (player, bid or None, "dudo"/"calza"/None) this round
         self._palifico = False
-        self._faced_pending = []     # (bid faced, our raw estimate, palifico) this round
+        self._faced_pending = []       # (bid faced, our raw estimate, palifico)
+        self._round_no = None
+        self._bluff_face = None        # the face we bluffed on this round, if any
 
     # -- memory -------------------------------------------------------------
 
@@ -158,11 +169,12 @@ class BluffoBoyyo:
             self.learned = type(self)._MEMORY.setdefault(self.name, {})
 
     def _player(self, name):
+        self._ensure_memory()
         if name not in self.learned:
             self.learned[name] = {
                 "choice": self.PRIOR_EXCESS["choice"], "follow": self.PRIOR_EXCESS["follow"],
-                "challenge": self.PRIOR_CHALLENGE, "calza": self.PRIOR_CALZA,
-                "bluff": 0.3, "bids": 0,
+                "follow_rate": self.PRIOR_FOLLOW, "calza": self.PRIOR_CALZA,
+                "dudo_a": self.DUDO_A, "dudo_b": self.DUDO_B, "bids": 0,
             }
         return self.learned[name]
 
@@ -173,17 +185,23 @@ class BluffoBoyyo:
 
     def on_game_start(self, info):
         self._ensure_memory()
-        self._round_no = None
         self._actions = []
         self._palifico = False
+        self._faced_pending = []
 
     def play(self, state):
         self._ensure_memory()
         if state.round_number != self._round_no:
-            self._start_round(state)
-        if state.current_bid is None:
-            return self._open(state)
-        return self._respond(state)
+            self._round_no = state.round_number
+            self._bluff_face = None
+        options = self._options(state)
+        best = max(v for v, _ in options)
+        value, action = self._rng.choice([o for o in options if o[0] >= best - self.TIE_EPS])
+        if isinstance(action, Bid) and self._bluff_face is None:
+            t = self._table(state)
+            if self._overstated(state, t, action, self._hints(state, self.HINT_PER_BID)) > 0:
+                self._bluff_face = action.face
+        return action
 
     def observe(self, event):
         self._ensure_memory()
@@ -207,27 +225,22 @@ class BluffoBoyyo:
     def on_game_end(self, result):
         pass
 
-    # -- the round ----------------------------------------------------------
+    # -- reading the table --------------------------------------------------
 
-    def _start_round(self, state):
-        self._round_no = state.round_number
-        self._bluffing = (not state.palifico) and self._rng.random() < self.BLUFF_RATE
-        self._bluff_face = None
-        if self._bluffing:
-            # A face we hold few of (never Paco: those are wild).
-            counts = {f: _count_matches(state.my_dice, f, False) for f in range(2, 7)}
-            least = min(counts.values())
-            self._bluff_face = self._rng.choice([f for f, c in counts.items() if c == least])
+    def _table(self, state):
+        """Static facts of this turn."""
+        alive = [p for p in state.players if p.alive]
+        total = sum(p.dice_count for p in alive)
+        n = len(state.players)
+        i = (state.my_id + 1) % n
+        while not state.players[i].alive:
+            i = (i + 1) % n
+        return dict(total=total, unknown=total - state.my_dice_count, alive=len(alive),
+                    nxt=state.players[i], w=self.OTHER_WEIGHT / max(len(alive) - 1, 1),
+                    gain_ok=len(alive) == len(state.players) and state.my_dice_count < 5)
 
-    def _my_matches(self, state, face, pretend):
-        k = _count_matches(state.my_dice, face, state.palifico)
-        if pretend and self._bluffing and face == self._bluff_face:
-            k += self.BLUFF_DICE
-        return k
-
-    def _hints(self, state, weight=None):
+    def _hints(self, state, weight):
         """face -> extra matches beyond chance that the others' bids this round suggest."""
-        weight = self.HINT_PER_BID if weight is None else weight
         total = sum(p.dice_count for p in state.players if p.alive)
         dice = {p.name: p.dice_count for p in state.players}
         hints = {f: 0.0 for f in range(1, 7)}
@@ -258,119 +271,90 @@ class BluffoBoyyo:
                     hints[f] += extra
         return hints
 
-    def _p_true(self, state, bid, hints, pretend=False):
-        total = sum(p.dice_count for p in state.players if p.alive)
-        unknown = total - state.my_dice_count
+    def _p_true(self, state, t, bid, hints):
         p = _p_face(bid.face, state.palifico)
-        need = bid.quantity - self._my_matches(state, bid.face, pretend) - hints[bid.face]
-        lo = math.floor(need)
-        frac = need - lo
-        return (1 - frac) * _binom_tail(unknown, p, lo) + frac * _binom_tail(unknown, p, lo + 1)
+        need = bid.quantity - _count_matches(state.my_dice, bid.face, state.palifico) - hints[bid.face]
+        return _tail_at(t["unknown"], p, need)
 
-    def _p_exact(self, state, bid, hints):
-        total = sum(p.dice_count for p in state.players if p.alive)
-        unknown = total - state.my_dice_count
+    def _p_exact(self, state, t, bid, hints):
         p = _p_face(bid.face, state.palifico)
-        need = bid.quantity - self._my_matches(state, bid.face, False) - hints[bid.face]
-        lo = math.floor(need)
-        frac = need - lo
-        return (1 - frac) * _binom_pmf(unknown, p, lo) + frac * _binom_pmf(unknown, p, lo + 1)
-
-    def _next_player(self, state):
-        n = len(state.players)
-        i = (state.my_id + 1) % n
-        while not state.players[i].alive:
-            i = (i + 1) % n
-        return state.players[i]
-
-    def _target(self, state):
-        """Max-raise target: higher against a next player who challenges a lot."""
-        challenge = self._player(self._next_player(state).name)["challenge"]
-        t = self.MAX_TARGET + self.TARGET_PER_CHALLENGE * (challenge - self.PRIOR_CHALLENGE)
-        return max(0.55, min(0.95, t))
-
-    @staticmethod
-    def _strength(bid):
-        return bid.quantity * 2 if bid.face == PACO else bid.quantity
-
-    def _min_raise(self, state, bids, hints):
-        """The smallest raise: the most likely of the lowest bids per face, or the
-        smallest claim; in a bluff round the bluff face when plausible enough."""
-        if not self.MIN_RAISE_LIKELY:
-            least = min(self._strength(b) for b in bids)
-            smallest = [b for b in bids if self._strength(b) == least]
-            if self._bluffing and any(b.face == self._bluff_face for b in smallest):
-                return next(b for b in smallest if b.face == self._bluff_face)
-            return max(smallest, key=lambda b: (self._my_matches(state, b.face, True), -(b.face == PACO), -b.face))
-        lowest = {}
-        for b in bids:
-            if b.face not in lowest or b.quantity < lowest[b.face].quantity:
-                lowest[b.face] = b
-        if self._bluffing and self._bluff_face in lowest:
-            bluff = lowest[self._bluff_face]
-            judge = self.BLUFF_REAL_ODDS or not self.BLUFF_PRETEND_ODDS
-            if self._p_true(state, bluff, hints, pretend=not judge) >= self.MIN_RAISE_P:
-                return bluff
-        return max(lowest.values(), key=lambda b: (self._p_true(state, b, hints), -self._strength(b)))
-
-    def _max_raise(self, state, bids, hints):
-        """The highest bid still likely enough for real; ties go to the bluff face
-        in a bluff round, else to a six (the next player must raise the quantity)."""
-        target = self._target(state)
-        likely = [b for b in bids if self._p_true(state, b, hints) >= target]
-        if not likely:
-            return None
-        preferred = self._bluff_face if self._bluffing else 6
-        return max(likely, key=lambda b: (self._strength(b), b.face == preferred, b.face != PACO, b.face))
-
-    def _raise(self, state, bids, hints):
-        self._max_next = not self._max_next
-        bid = self._max_raise(state, bids, hints) if self._max_next else None
-        return bid if bid is not None else self._min_raise(state, bids, hints)
-
-    def _open(self, state):
-        bids = [a for a in state.legal_actions if isinstance(a, Bid)]
-        hints = self._hints(state)
-        return self._raise(state, bids, hints)
+        need = bid.quantity - _count_matches(state.my_dice, bid.face, state.palifico) - hints[bid.face]
+        return _pmf_at(t["unknown"], p, need)
 
     def _calibrated(self, p):
         """Our estimate of a bid we face, corrected by how often such bids were true."""
-        if not self.CALIBRATE_FACED:
-            return p
+        self._ensure_memory()
         key = ("faced", min(int(p * 10), 9))
         stats = self.learned.setdefault(key, [0.0, 0.0])
         prior = min(1.0, p + self.FACED_SHIFT * (1 - p))
         k = self.CALIBRATION_PRIOR
         return (stats[0] + k * prior) / (stats[1] + k)
 
-    def _respond(self, state):
-        bids = [a for a in state.legal_actions if isinstance(a, Bid)]
-        hints = self._hints(state)
-        faced = self._hints(state, self.HINT_FACED)
-        cur = state.current_bid
-        p_raw = self._p_true(state, cur, faced)        # judged from our real dice
-        p = self._calibrated(p_raw)
-        self._faced_pending.append((cur, p_raw, state.palifico))
-        can_dudo = any(isinstance(a, Dudo) for a in state.legal_actions)
-        can_calza = any(isinstance(a, Calza) for a in state.legal_actions)
+    def _their_view(self, state, t, bid, hints, who):
+        """How likely `bid` looks to `who`: their expected matches (from their
+        own bids) plus chance on every die they cannot see, ours included."""
+        p = _p_face(bid.face, state.palifico)
+        theirs = min(float(who.dice_count), who.dice_count * p + max(0.0, hints[bid.face]))
+        return _tail_at(t["total"] - who.dice_count, p, bid.quantity - theirs)
 
-        if can_calza:
-            pe = self._p_exact(state, cur, faced)
-            gains = all(pl.alive for pl in state.players) and state.my_dice_count < 5
-            threshold = self.CALZA_AT_GAIN if gains else self.CALZA_AT_FREE
-            if pe >= threshold and (gains or pe > 1 - p):
-                return Calza()
-        if can_dudo and p < self.DUDO_AT:
-            return Dudo()
-        if bids:
-            bid = self._raise(state, bids, hints)
-            p_bid = self._p_true(state, bid, hints)
-            if p_bid < self.MIN_RAISE_P and can_dudo and p < 0.5:
-                return Dudo()
-            if self.DUDO_VS_RAISE and can_dudo and p_bid < 1 - p:
-                return Dudo()
-            return bid
-        return Dudo() if can_dudo else Calza()
+    def _p_challenge(self, who, view):
+        s = self._player(who.name)
+        return _sigmoid(s["dudo_a"] + s["dudo_b"] * view)
+
+    def _reads(self, state):
+        """How much this table reads bids: the alive opponents' learned follow rate."""
+        rates = [self._player(p.name)["follow_rate"] for p in state.players
+                 if p.alive and p.name != self.name]
+        return sum(rates) / len(rates) if rates else self.PRIOR_FOLLOW
+
+    # -- the decision -------------------------------------------------------
+
+    def _overstated(self, state, t, bid, hints):
+        """Dice of this face the bid claims for us beyond what our hand and the
+        table's bids support (0 = an honest bid)."""
+        p = _p_face(bid.face, state.palifico)
+        implied = bid.quantity - (t["total"] - state.my_dice_count) * p - hints[bid.face]
+        held = _count_matches(state.my_dice, bid.face, state.palifico)
+        return max(0.0, min(float(state.my_dice_count), implied) - held)
+
+    def _bid_value(self, state, t, bid, hints, reads):
+        pt = self._p_true(state, t, bid, hints)
+        nxt = t["nxt"]
+        view = self._their_view(state, t, bid, hints, nxt)
+        pc = self._p_challenge(nxt, view)
+        calza = (1 - pc) * self._player(nxt.name)["calza"]
+        pe = self._p_exact(state, t, bid, hints)
+        overstated = self._overstated(state, t, bid, hints)
+        deceive = self.DECEIVE * reads * overstated / max(state.my_dice_count, 1)
+        if overstated > 0 and self._bluff_face is not None and bid.face != self._bluff_face:
+            deceive -= self.INCONSISTENT          # a second bluff this round
+        challenged = pt * t["w"] - (1 - pt)
+        calza_out = pe * (-t["w"] if t["gain_ok"] else 0.0) + (1 - pe) * t["w"]
+        passed = -self.LATER_RISK * (1 - pt) + deceive
+        return pc * challenged + calza * calza_out + (1 - pc - calza) * passed - self.FALSE_PENALTY * (1 - pt)
+
+    def _options(self, state):
+        """(value, action) for every legal action."""
+        t = self._table(state)
+        hints = self._hints(state, self.HINT_PER_BID)
+        reads = self._reads(state)
+        options = []
+        cur = state.current_bid
+        if cur is not None:
+            faced = self._hints(state, self.HINT_FACED)
+            p_raw = self._p_true(state, t, cur, faced)
+            p = self._calibrated(p_raw)
+            self._faced_pending.append((cur, p_raw, state.palifico))
+            if any(isinstance(a, Dudo) for a in state.legal_actions):
+                options.append(((1 - p) * t["w"] - p, Dudo()))
+            if any(isinstance(a, Calza) for a in state.legal_actions):
+                pe = self._p_exact(state, t, cur, faced)
+                gain = 1.0 if t["gain_ok"] else self.CALZA_FREE_PASS
+                options.append((pe * gain - (1 - pe), Calza()))
+        for a in state.legal_actions:
+            if isinstance(a, Bid):
+                options.append((self._bid_value(state, t, a, hints, reads), a))
+        return options
 
     # -- learning -----------------------------------------------------------
 
@@ -379,12 +363,14 @@ class BluffoBoyyo:
         total = sum(len(d) for d in dice.values())
         palifico = self._palifico
         all_dice = [d for hand in dice.values() for d in hand]
+        # Were the bids we faced really true, per bucket of our estimate?
         for bid, p_raw, pal in self._faced_pending:
             stats = self.learned.setdefault(("faced", min(int(p_raw * 10), 9)), [0.0, 0.0])
             stats[0] += _count_matches(all_dice, bid.face, pal) >= bid.quantity
             stats[1] += 1
         self._faced_pending = []
-        # What they really held behind their last bid on each face.
+        # What they really held behind their last bid on each face, and
+        # whether they follow faces.
         last = {}
         prev = None
         for player, bid, _ in self._actions:
@@ -393,6 +379,8 @@ class BluffoBoyyo:
             if player != self.name and player in dice:
                 chosen = prev is None or prev.face != bid.face
                 last[(player, bid.face)] = (bid, chosen)
+                if prev is not None:
+                    self._update(self._player(player), "follow_rate", 0.0 if chosen else 1.0)
             prev = bid
         for (player, face), (bid, chosen) in last.items():
             own = dice[player]
@@ -402,14 +390,22 @@ class BluffoBoyyo:
             held = _count_matches(own, face, palifico)
             stats = self._player(player)
             self._update(stats, "choice" if chosen else "follow", held - implied)
-            self._update(stats, "bluff", 1.0 if held < implied else 0.0)
             stats["bids"] += 1
-        # What they did when facing a bid.
-        for i, (player, bid, call) in enumerate(self._actions):
-            if i == 0 or player == self.name or player not in dice:
-                continue
-            stats = self._player(player)
-            self._update(stats, "challenge", 1.0 if call == "dudo" else 0.0)
-            self._update(stats, "calza", 1.0 if call == "calza" else 0.0)
+        # How they responded to the bid in front of them: Dudo model and
+        # Calza rate, from how likely that bid looked to them.
+        prev_bid = None
+        for player, bid, call in self._actions:
+            if prev_bid is not None and player != self.name and player in dice:
+                own = dice[player]
+                n = len(own)
+                p = _p_face(prev_bid.face, palifico)
+                view = _binom_tail(total - n, p, prev_bid.quantity - _count_matches(own, prev_bid.face, palifico))
+                stats = self._player(player)
+                called = 1.0 if call == "dudo" else 0.0
+                pred = _sigmoid(stats["dudo_a"] + stats["dudo_b"] * view)
+                stats["dudo_a"] += self.DUDO_LR * (called - pred)
+                stats["dudo_b"] += self.DUDO_LR * (called - pred) * (view - 0.5) * 4
+                self._update(stats, "calza", 1.0 if call == "calza" else 0.0)
             if bid is None:
                 break
+            prev_bid = bid

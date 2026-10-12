@@ -37,12 +37,14 @@ MAX_DICE = 5
 # Tunables (found by running run_simulation.py a lot)
 # ---------------------------------------------------------------------------
 
-DUDO_THRESHOLD = 0.55        # call Dudo when P(current bid is true) drops below this
+DUDO_THRESHOLD = 0.50        # call Dudo when P(current bid is true) drops below this
 CALZA_THRESHOLD = 0.32       # call Calza when P(exact) is at least this (and a die can be won)
 OPEN_SAFETY = 0.90           # opening bid: highest quantity with P(true) >= this
 BID_SLACK = 0.0              # consider bids within this much of the best P(true)
-CHALLENGE_FACTOR = 1.1       # how likely a shaky bid is to be challenged (for dudo-vs-bid trade-off)
-HINT_PRIOR_HITS = 2.0        # prior for "opponent holds the face they bid on"
+CHALLENGE_FACTOR = 0.8       # how likely a shaky bid is to be challenged (for dudo-vs-bid trade-off);
+                             # above 1 Fabulous called Dudo on bids that were almost surely true
+                             # whenever every raise looked ugly, and lost a die for sure
+HINT_PRIOR_HITS = 3.0        # prior for "opponent holds the face they bid on"
 HINT_PRIOR_TRIES = 3.0
 
 
@@ -119,8 +121,8 @@ class Fabulous:
         ]
         best_p = max((p for p, _ in scored), default=0.0)
 
-        # Dudo when the bid is unlikely, or when raising would be even riskier
-        # than the bid we are doubting.
+        # Compare the chance of losing a die: a Dudo loses one when the bid
+        # is true (p_true); a raise only when it is challenged AND false.
         bid_risk = (1.0 - best_p) * CHALLENGE_FACTOR
         if p_true < DUDO_THRESHOLD or (not legal_bids) or (p_true < bid_risk):
             return Dudo()
