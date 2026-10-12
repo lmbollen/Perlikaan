@@ -23,16 +23,21 @@ android.archs = arm64-v8a
 android.allow_backup = True
 
 # The SDK, NDK and Ant come from the Nix shell (flake.nix exports ANDROIDSDK,
-# ANDROIDNDK and ANT_HOME; build.sh passes them on as android.sdk_path,
-# android.ndk_path and android.ant_path through the environment); never let
-# Buildozer download its own.
+# ANDROIDNDK and ANT_HOME; build.sh passes them on through the environment as
+# APP_ANDROID_SDK_PATH, APP_ANDROID_NDK_PATH and APP_ANDROID_ANT_PATH, which
+# Buildozer only honours for keys present here); never let Buildozer download
+# its own.
+android.sdk_path =
+android.ndk_path =
+android.ant_path =
 android.skip_update = True
 android.accept_sdk_license = True
 
 # A python-for-android checkout to use instead of cloning it from GitHub
-# (build.sh sets it from P4A_SOURCE_DIR; tools/seed_sources.py fetches the
-# release from PyPI for networks where GitHub clones are blocked).
-# p4a.source_dir =
+# (build.sh sets it through APP_P4A_SOURCE_DIR from P4A_SOURCE_DIR or
+# app/.p4a-src; tools/seed_sources.py fetches the release from PyPI for
+# networks where GitHub clones are blocked).
+p4a.source_dir =
 
 [buildozer]
 log_level = 2
