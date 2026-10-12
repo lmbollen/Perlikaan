@@ -111,3 +111,62 @@ def test_one_bluff_face_per_round():
     bot._bluff_face = 4
     assert bot._overstated(state, t, Bid(7, 6), hints) == 0      # honest: we hold five sixes
     assert bot._bid_value(state, t, Bid(7, 6), hints, 0.5) > penalised
+
+
+def _reveal(bot, bidder, bid, dice):
+    bot.observe(BidEvent(bidder, bid))
+    bot.observe(RevealEvent(dice=dice, current_bid=bid, actual_count=0, challenge_type="dudo",
+                            challenger="Bluffo Boyyo", bidder=bidder, result="bidder_correct"))
+
+
+def test_hint_statistic_is_trained_and_applied_on_the_same_bids():
+    """FIX_HINT_SAMPLE: a low bid (chance alone explains it, implied 0) is
+    not a sample of the residual; a high bid is, and the credit on a high
+    bid is the implied dice plus that residual, never the dice held behind
+    low bids on top of what the quantity already implies."""
+    table = (("Bluffo Boyyo", (2, 3, 4, 5, 2)), ("A", (6, 6, 2, 3, 4)))
+    bot = BluffoBoyyo()
+    bot._ensure_memory()
+    for _ in range(6):
+        _reveal(bot, "A", Bid(2, 6), table)          # 2x6 of 10 dice: implied 0
+    assert bot.learned["A"]["choice"] == bot.PRIOR_EXCESS["choice"]
+    # 6x6 of 10 dice implies 4 of A's 5 dice: credit = 4 + residual - chance.
+    state = _state([2, 3, 4, 5, 2], [ActionRecord("A", Bid(6, 6))], Bid(6, 6), others=(("A", 5),))
+    assert abs(bot._hints(state, 1.0)[6] - (4 + bot.PRIOR_EXCESS["choice"] - 5 / 3)) < 1e-9
+    _reveal(bot, "A", Bid(5, 6), table)              # implied 3, held 2: residual -1
+    assert bot.learned["A"]["choice"] < bot.PRIOR_EXCESS["choice"]
+    # The old behaviour trained on the low bids (sample = dice held).
+    BluffoBoyyo.reset_memory()
+    old = BluffoBoyyo()
+    old.FIX_HINT_SAMPLE = False
+    old._ensure_memory()
+    for _ in range(6):
+        _reveal(old, "A", Bid(2, 6), table)
+    assert old.learned["A"]["choice"] > 1.0
+
+
+def test_next_players_calza_gain_is_theirs():
+    """FIX_OPP_CALZA_GAIN: the Calza term of a bid we place values the NEXT
+    player's gain (a die only while nobody is out and they hold under five),
+    not our own eligibility."""
+    bot = BluffoBoyyo()
+    bot._ensure_memory()
+    bot._player("A")["calza"] = 0.5                  # A calls Calza a lot
+    history = [ActionRecord("B", Bid(2, 2))]
+    # We hold five (no gain for us), A holds three (a gain for A).
+    state = _state([6, 6, 6, 6, 6], history, Bid(2, 2), others=(("A", 3), ("B", 5)))
+    t = bot._table(state)
+    assert t["gain_ok"] is False and t["nxt_gain_ok"] is True
+    hints = bot._hints(state, bot.HINT_PER_BID)
+    fixed = bot._bid_value(state, t, Bid(6, 6), hints, 0.5)
+    bot.FIX_OPP_CALZA_GAIN = False
+    assert fixed < bot._bid_value(state, t, Bid(6, 6), hints, 0.5)
+    bot.FIX_OPP_CALZA_GAIN = True
+    # The other way round: we could gain, A (five dice) could not.
+    state = _state([6, 6, 6], history, Bid(2, 2), others=(("A", 5), ("B", 5)))
+    t = bot._table(state)
+    assert t["gain_ok"] is True and t["nxt_gain_ok"] is False
+    hints = bot._hints(state, bot.HINT_PER_BID)
+    fixed = bot._bid_value(state, t, Bid(4, 6), hints, 0.5)
+    bot.FIX_OPP_CALZA_GAIN = False
+    assert fixed > bot._bid_value(state, t, Bid(4, 6), hints, 0.5)

@@ -144,6 +144,18 @@ class BluffoBoyyo:
     FACED_SHIFT = 0.2
     CALIBRATION_PRIOR = 8
 
+    # -- fixes (False restores the old behaviour, for benchmarks) -------------
+    # The "choice"/"follow" statistic was trained on held - implied, where
+    # implied clips to 0 for ordinary low bids (so the sample was simply the
+    # dice held, about 2 for an honest opener), but applied only on high bids
+    # as implied + stat: those dice were counted twice. Now the statistic is
+    # the residual of bids where implied >= 1, trained and applied there only.
+    FIX_HINT_SAMPLE = True
+    # gain_ok is OUR die-gain eligibility; the Calza term of a bid we place
+    # is about the NEXT player's Calza, which gains them a die only while
+    # nobody is out and THEY hold under five dice.
+    FIX_OPP_CALZA_GAIN = True
+
     # Learned state, shared by every instance of this class (per bot name).
     _MEMORY = {}
 
@@ -237,7 +249,8 @@ class BluffoBoyyo:
             i = (i + 1) % n
         return dict(total=total, unknown=total - state.my_dice_count, alive=len(alive),
                     nxt=state.players[i], w=self.OTHER_WEIGHT / max(len(alive) - 1, 1),
-                    gain_ok=len(alive) == len(state.players) and state.my_dice_count < 5)
+                    gain_ok=len(alive) == len(state.players) and state.my_dice_count < 5,
+                    nxt_gain_ok=len(alive) == len(state.players) and state.players[i].dice_count < 5)
 
     def _hints(self, state, weight):
         """face -> extra matches beyond chance that the others' bids this round suggest."""
@@ -260,7 +273,10 @@ class BluffoBoyyo:
                 continue
             p = _p_face(face, state.palifico)
             implied = max(0, min(n, round(bid.quantity - (total - n) * p)))
-            if implied <= n * p:
+            if self.FIX_HINT_SAMPLE:
+                if implied < 1:
+                    continue                 # the quantity says nothing: not in the learned sample
+            elif implied <= n * p:
                 continue                     # a bid chance alone explains says nothing
             stats = self._player(who)
             expected = max(0.0, min(float(n), implied + stats["choice" if chosen else "follow"]))
@@ -329,7 +345,8 @@ class BluffoBoyyo:
         if overstated > 0 and self._bluff_face is not None and bid.face != self._bluff_face:
             deceive -= self.INCONSISTENT          # a second bluff this round
         challenged = pt * t["w"] - (1 - pt)
-        calza_out = pe * (-t["w"] if t["gain_ok"] else 0.0) + (1 - pe) * t["w"]
+        their_gain = t["nxt_gain_ok"] if self.FIX_OPP_CALZA_GAIN else t["gain_ok"]
+        calza_out = pe * (-t["w"] if their_gain else 0.0) + (1 - pe) * t["w"]
         passed = -self.LATER_RISK * (1 - pt) + deceive
         return pc * challenged + calza * calza_out + (1 - pc - calza) * passed - self.FALSE_PENALTY * (1 - pt)
 
@@ -389,7 +406,8 @@ class BluffoBoyyo:
             implied = max(0, min(n, round(bid.quantity - (total - n) * p)))
             held = _count_matches(own, face, palifico)
             stats = self._player(player)
-            self._update(stats, "choice" if chosen else "follow", held - implied)
+            if not (self.FIX_HINT_SAMPLE and implied < 1):
+                self._update(stats, "choice" if chosen else "follow", held - implied)
             stats["bids"] += 1
         # How they responded to the bid in front of them: Dudo model and
         # Calza rate, from how likely that bid looked to them.

@@ -144,6 +144,18 @@ class SonnyBoy:
     # Most dice we credit the bidders on a face with, all together.
     CREDIT_CAP = 1.0
 
+    # -- fixes (False restores the old behaviour, for benchmarks) ----------
+    # A correct Calza gains a die only while nobody is out and we hold under
+    # five; a wrong one always costs one. Calza was called at CALZA_MIN even
+    # when it could gain nothing. Now, when it cannot gain, only a near
+    # certain exact count (CALZA_FREE_PASS_MIN) is worth the free pass.
+    FIX_CALZA_GAIN = True
+    CALZA_FREE_PASS_MIN = 0.85
+    # The bid we face was scored with the learned credit for the bidders on
+    # its face, the candidate raises without, so the Dudo-vs-raise comparison
+    # mixed two estimates. Now both sides use the credit.
+    FIX_CREDIT_CONSISTENT = True
+
     def __init__(self):
         self.name = "Sonny Boy"
         self.count = 1
@@ -254,6 +266,10 @@ class SonnyBoy:
             if can_calza:
                 pe = self._p_exact(state, cur, palifico, credit=True)
                 threshold = self.CALZA_MIN
+                if self.FIX_CALZA_GAIN:
+                    can_gain = state.my_dice_count < 5 and all(p.alive for p in state.players)
+                    if not can_gain:
+                        threshold = self.CALZA_FREE_PASS_MIN
                 if pe >= threshold:
                     self._say("calza", "Calza!")
                     return Calza()
@@ -283,7 +299,7 @@ class SonnyBoy:
             return None, 0.0
         scored = []
         for b in bids:
-            p = self._p_true(state, b, palifico)
+            p = self._p_true(state, b, palifico, credit=True if self.FIX_CREDIT_CONSISTENT else 0)
             scored.append((p, b))
         if opening:
             # Open op ons sterkste getal met een laag, redelijk veilig bod;
