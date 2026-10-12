@@ -1,0 +1,19 @@
+[project]
+name = "perudo-app"
+version = "0.1.0"
+description = "Perudo for Android: a Kivy app over the engine and the bots of this repository"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "kivy==2.3.1",
+    "edge-tts>=7.2.8",
+]
+
+[dependency-groups]
+dev = [
+    "buildozer>=1.5.0",
+    "cython>=0.29.33,<3.1",
+    "pytest",
+]
+
+[tool.uv]
+package = false

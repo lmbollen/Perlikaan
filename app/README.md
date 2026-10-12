@@ -28,31 +28,35 @@ What it does:
 
 ```sh
 cd app
-nix develop            # or: pip install kivy edge-tts
-python main.py
+uv run python main.py
 ```
 
-The engine is imported from the repository next to this folder.
+`app/` is its own [uv](https://docs.astral.sh/uv/) project: `pyproject.toml`
+and `uv.lock` pin Kivy, edge-tts, Buildozer and Cython, and `uv run` creates
+`app/.venv` on first use. The engine is imported from the repository next to
+this folder.
 
 ## Build the APK
 
 ```sh
 cd app
-nix develop            # Android SDK, NDK, JDK, build tools; creates .venv with Buildozer
-./build.sh             # copies ../perudo in, runs: buildozer android debug
+nix develop            # Android SDK, NDK, JDK, build tools; runs uv sync
+./build.sh             # copies ../perudo in, runs: uv run buildozer android debug
 ```
 
 The APK lands in `app/bin/`. `./build.sh release` builds a release APK.
 `flake.nix` pins the SDK platform (33), build tools (33.0.2) and NDK
 (25.2.9519653) and exports them as `ANDROIDSDK` / `ANDROIDNDK`, which
 `buildozer.spec` uses with `android.skip_update = True`, so Buildozer never
-downloads tools of its own. The first build still fetches python-for-android
-and the Python packages it compiles for the phone, and takes a while.
+downloads tools of its own. Nix provides nothing on the Python side: the shell
+runs `uv sync`, so Buildozer and Cython come from `uv.lock`. The first build
+still fetches python-for-android and the Python packages it compiles for the
+phone, and takes a while.
 
 ## Tests
 
 ```sh
-uv run pytest app/tests            # from the repository root
+cd app && uv run pytest
 ```
 
 The tests cover the app's model (loading bots, stepping a game with all dice
