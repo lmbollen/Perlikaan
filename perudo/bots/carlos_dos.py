@@ -238,6 +238,12 @@ class CarlosDosBot:
     # the raise against the next player's reaction model. Beyond that one
     # level, raising is valued as -(1 - P(raise true)) * this.
     RETURN_RISK = 0.5
+    # Weight of the continuation (the rest of the round after the next
+    # player raises) in a bid's value. It overrates the rest of the round
+    # (most for weak bids, heads-up: +0.83 predicted, +0.24 real) but ranks
+    # the bids right: pressure pays. Heads-up, 640 paired games: 0.6 -9.2,
+    # 0.3 -13.9, 0 -25.6 pp; 1.3 and 1.6 within noise.
+    CONT_SCALE = 1.0
     # Moves within this of the best count as equally good (picked at random).
     TIE_EPS = 0.01
 
@@ -275,12 +281,31 @@ class CarlosDosBot:
     # is mostly a bluff). Weight of that prior, and of the table's model
     # behind the player's own, in chance mass of a residual (about a bid).
     REAL_LR = 2.0
+    # The same per number of players alive, where it differs. Heads-up a bid
+    # that looks unlikely to us mostly means an unusual hand, not a bluff: when
+    # he called Dudo heads-up the bid was true 37-67% of the time where the
+    # model said 18-28%. Paired, 960 heads-up games against six bots: +7.2
+    # +/- 1.7 pp win rate at 8 (+6.6 at 6, +8.0 at 10).
+    REAL_LR_BY_ALIVE = {2: 8.0}
+    # Multiplier of that ratio for Palifico bids (face locked, nothing wild).
+    # Heads-up Palifico bids are true 92-98% where the model says ~80%, but
+    # 3x or 8x changed nothing in 960 paired games: off.
+    PAL_LR_FACTOR = 1.0
+    # Multiplier of P(exact) when we weigh a Calza of our own. Heads-up at
+    # 2-4 dice his Calzas are exact 44% where the model says 70%, yet they
+    # are mostly escapes from a bid that is true 64% of the time: 0.8 -0.7,
+    # 0.65 -1.2 pp. Off.
+    EXACT_SHRINK = 1.0
     LR_PRIOR = 1.0
     # A real chosen face (opening or switching) is the face the player holds
     # most of (a Paco they hold, for Paco); REAL_PRIOR of such bids are real.
     REAL_PRIOR = 0.7
     # Use that also under the quantity's likelihood (False: chance there).
     CHOSEN_BASE = True
+    # A face a player picked themselves earlier in the round stays their
+    # chosen face when they raise it again later (False: a raise on the face
+    # just bid is read as following it). Heads-up +0.5 +/- 0.9 pp: off.
+    CHOSEN_STAYS = False
     # Derive the faces a player did not bid on from their bid on another face
     # (Pacos shared). Off: it overrates the Pacos of a bidder (a player picks
     # the face with most naturals; Pacos are the same for every face), which
@@ -385,6 +410,7 @@ class CarlosDosBot:
         """Replay the round with everyone's dice known."""
         dice = dict(event.dice)
         names = [n for n, _ in event.dice]
+        self._n_alive = len(names)
         counts = {n: len(d) for n, d in event.dice}
         total = sum(counts.values())
         pal = self._palifico
@@ -475,10 +501,16 @@ class CarlosDosBot:
         return [v / z for v in out]
 
     def _likelihood(self, name, kind):
+        """See _likelihood_for; Palifico kinds use PAL_LR_FACTOR times the ratio."""
+        return self._likelihood_for(name, kind)
+
+    def _likelihood_for(self, name, kind):
         """lambda per residual (implied - held), index r + R_MAX: the prior
         (real bids REAL_LR times as likely as bluffs), then the table's ratio
         of observed to chance residuals, then the player's own."""
-        lr = self.REAL_LR
+        lr = self.REAL_LR_BY_ALIVE.get(getattr(self, "_n_alive", 0), self.REAL_LR)
+        if kind.startswith("pal"):
+            lr *= self.PAL_LR_FACTOR
         lam = [2 * lr / (lr + 1) if r <= 0 else 2 / (lr + 1) for r in range(-R_MAX, R_MAX + 1)]
         w = self.LR_PRIOR
         sources = (self._player(name).source,) if self.NAME_ONLY else (self.table["source"], self._player(name).source)
@@ -620,9 +652,14 @@ class CarlosDosBot:
         else derived from their latest bid on another face, else chance. Our
         own bids are read as a generic reader would read them."""
         on_face, last = {}, {}                        # name -> (bid, kind)
+        chose = set()                                 # (name, face) the player picked themselves
         prev = None
         for who, a in bids:
             kind = _kind(a, prev, pal)
+            if kind.endswith("choice"):
+                chose.add((who, a.face))
+            elif self.CHOSEN_STAYS and (who, a.face) in chose:
+                kind = kind[:-len("follow")] + "choice"
             last[who] = (a, kind)
             if a.face == face:
                 on_face[who] = (a, kind)
@@ -690,6 +727,7 @@ class CarlosDosBot:
         alive = [p for p in state.players if p.alive]
         total = sum(p.dice_count for p in alive)
         n_alive = len(alive)
+        self._n_alive = n_alive
         order = sorted(alive, key=lambda p: p.id)
         me_i = next(i for i, p in enumerate(order) if p.id == state.my_id)
         nxt = order[(me_i + 1) % n_alive] if n_alive > 1 else None
@@ -712,7 +750,7 @@ class CarlosDosBot:
         if bid is not None:
             full = model(bid.face)[0]
             p_true = _tail(full, bid.quantity)
-            p_exact = _at(full, bid.quantity)
+            p_exact = _at(full, bid.quantity) * self.EXACT_SHRINK
             if Dudo() in legal:
                 options.append((Dudo(), (1 - p_true) * w_other - p_true))
             if Calza() in legal:
@@ -821,7 +859,7 @@ class CarlosDosBot:
                 if cont is None:
                     cont = self._continuation(cand, full, excl, nxt_pmf, nxt, n_alive, total, w_other,
                                               recovery, pal, my_dice, depth, public)
-                v += p_raise * cont
+                v += p_raise * cont * self.CONT_SCALE
             value += wk * v
         return value
 
