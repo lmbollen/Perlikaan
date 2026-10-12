@@ -192,11 +192,19 @@ class BotRegistry:
     def selection(self) -> Dict[str, list]:
         return {self.key(e): [e.enabled, e.copies] for e in self.entries}
 
-    def apply_selection(self, saved: Optional[Dict[str, Any]]) -> None:
+    def apply_selection(self, saved: Optional[Dict[str, Any]], seats: bool = True) -> None:
+        """Restore the copies (and, with seats, who is seated) saved earlier."""
         for e in self.entries:
             value = (saved or {}).get(self.key(e))
             if isinstance(value, (list, tuple)) and len(value) == 2:
-                e.enabled, e.copies = bool(value[0]), max(1, min(6, int(value[1])))
+                e.copies = max(1, min(6, int(value[1])))
+                if seats:
+                    e.enabled = bool(value[0])
+
+    def clear_table(self) -> None:
+        """Nobody seated: the app starts with an empty table."""
+        for e in self.entries:
+            e.enabled = False
 
     def add_file(self, path: str) -> List[BotEntry]:
         """Load every bot class from a Python file. Returns the new entries."""
@@ -273,7 +281,17 @@ class TalkRouter:
     def __init__(self):
         self.listener: Optional[Callable[[str, str, str], None]] = None   # (speaker, text, lang)
         self.speak: Optional[Callable[[str, str, str], None]] = None      # (text, lang, voice_seed)
+        # Only talk from this thread (the game on screen) goes anywhere: the
+        # same bots also talk in simulations and warm-up games, silently.
+        self.thread: Optional[threading.Thread] = None
         self._installed = False
+
+    def attach(self, listener, thread: threading.Thread) -> None:
+        self.listener, self.thread = listener, thread
+
+    def detach(self, listener) -> None:
+        if self.listener == listener:
+            self.listener, self.thread = None, None
 
     def install(self) -> None:
         if self._installed:
@@ -285,8 +303,11 @@ class TalkRouter:
         router = self
 
         def speak(text: str, lang: str = "nl", voice_seed: str = "") -> None:
-            if router.listener is not None:
-                router.listener(voice_seed, text, lang)
+            if router.thread is None or threading.current_thread() is not router.thread:
+                return                       # a simulation, a warm-up game, or no game on screen
+            listener = router.listener
+            if listener is not None and listener(voice_seed, text, lang) is False:
+                return                       # the session dropped it
             if router.speak is not None:
                 router.speak(text, lang, voice_seed)
 
@@ -302,6 +323,9 @@ class TalkRouter:
             return original_say(mouth, key, None, **fmt)
 
         talk.Mouth.say = say
+        # A bot picks a quote whenever it has one for the moment; the game on
+        # screen then lets each line through with GameSession.TALK_CHANCE.
+        talk.QUOTE_CHANCE = 1.0
         self._installed = True
 
 
@@ -311,6 +335,10 @@ ROUTER = TalkRouter()
 # ---------------------------------------------------------------------------
 # one game, step by step, with or without a human seat
 # ---------------------------------------------------------------------------
+
+class _RoundLimit(Exception):
+    """A game that would not end (two stubborn bots): abandoned."""
+
 
 class SessionStopped(Exception):
     pass
@@ -376,6 +404,7 @@ class Snapshot:
     error: Optional[str] = None
     feed: List[FeedItem] = field(default_factory=list)    # log and talk in order, structured
     bidder: Optional[str] = None                          # who made current_bid
+    warmup: Optional[tuple] = None                        # (done, total) while warm-up games run
 
     def totals(self) -> Dict[int, int]:
         """Count per face over every alive player's dice (Pacos wild unless Palifico)."""
@@ -392,8 +421,11 @@ class GameSession:
     in auto mode turns follow each other `delay` seconds apart. With a
     HumanSeat among the bots, that seat's turns wait for submit()."""
 
+    TALK_CHANCE = 0.25      # how often a bot's line is said (at most one per bot per turn)
+
     def __init__(self, bots: Sequence[Any], seed: Optional[int] = None, step: bool = True,
-                 delay: float = 1.0, log_limit: int = 400):
+                 delay: float = 1.0, log_limit: int = 400, warmup: int = 0,
+                 speech_idle: Optional[Callable[[], bool]] = None, speech_timeout: float = 20.0):
         self.bots = list(bots)
         self.seed = seed if seed is not None else random.SystemRandom().randrange(2**63)
         self.step = step
@@ -412,14 +444,24 @@ class GameSession:
         self._game: Optional[PerudoGame] = None
         self._thread: Optional[threading.Thread] = None
         self.result = None
+        self.warmup = max(0, int(warmup))       # bot-only games first, so learning bots learn
+        self._skip_warmup = False
+        self._warming = False
+        self.speech_idle = speech_idle          # the next turn waits until this says True
+        self.speech_timeout = speech_timeout
+        self._talk_rng = random.Random(self.seed ^ 0x7A1C)
+        self._spoke: set = set()                # bots that said something this turn
 
     # -- control from the UI ---------------------------------------------
 
     def start(self) -> None:
         ROUTER.install()
-        ROUTER.listener = self._on_talk
         self._thread = threading.Thread(target=self._run, name="perudo-game", daemon=True)
+        ROUTER.attach(self._on_talk, self._thread)
         self._thread.start()
+
+    def skip_warmup(self) -> None:
+        self._skip_warmup = True
 
     def next(self) -> None:
         """Step mode: let the next turn happen."""
@@ -484,7 +526,18 @@ class GameSession:
         if self._stop:
             raise SessionStopped()
 
+    def _wait_speech(self) -> None:
+        """Let the bots finish speaking before the game goes on."""
+        if self.speech_idle is None:
+            return
+        end = time.monotonic() + self.speech_timeout
+        while not self._stop and not self.speech_idle() and time.monotonic() < end:
+            time.sleep(0.05)
+
     def _before_turn(self, obs: Observation) -> None:
+        time.sleep(0)                       # let the UI thread in between turns
+        self._wait_speech()
+        self._spoke.clear()
         game = self._game
         with self._lock:
             s = self._snap
@@ -509,6 +562,7 @@ class GameSession:
         with self._lock:
             self._feed(FeedItem(challenge_type, challenger, bid=current_bid, other=bidder))
             self._snap.to_act = None
+        self._wait_speech()
         self._wait_turn()
 
     def _on_event(self, event) -> None:
@@ -557,7 +611,12 @@ class GameSession:
                 self._feed(FeedItem("win", event.winner, "wins the game"))
             self._log(f"{event.winner} wins")
 
-    def _on_talk(self, speaker: str, text: str, lang: str) -> None:
+    def _on_talk(self, speaker: str, text: str, lang: str):
+        """A bot wants to say a line: shown and spoken with TALK_CHANCE, at
+        most one line per bot per turn, never during warm-up games."""
+        if self._warming or speaker in self._spoke or self._talk_rng.random() >= self.TALK_CHANCE:
+            return False
+        self._spoke.add(speaker)
         with self._lock:
             self._snap.commentary.append(f"{speaker}: {text}")
             del self._snap.commentary[:-self.log_limit]
@@ -573,8 +632,44 @@ class GameSession:
             self._snap.log.append(line)
             del self._snap.log[:-self.log_limit]
 
+    def _warm_up(self) -> None:
+        """Bot-only games before the shown one (without a human seat), so
+        bots that learn have played this table before. Quiet: their talk is
+        dropped, and nothing is logged."""
+        players = [b for b in self.bots if not isinstance(b, HumanSeat)]
+        if self.warmup <= 0 or len(players) < 2:
+            return
+        rng = random.Random(self.seed ^ 0x5EED)
+        self._warming = True
+        try:
+            for done in range(self.warmup):
+                if self._stop or self._skip_warmup:
+                    break
+                with self._lock:
+                    self._snap.warmup = (done, self.warmup)
+                rounds = {"n": 0}
+
+                def limit(event, rounds=rounds):
+                    if isinstance(event, RoundEndedEvent):
+                        rounds["n"] += 1
+                        if rounds["n"] > 2000:
+                            raise _RoundLimit()
+                    time.sleep(0)               # keep the UI responsive
+
+                try:
+                    PerudoGame(bots=players, seed=rng.randrange(2**63), listeners=[limit]).play()
+                except _RoundLimit:
+                    pass
+        finally:
+            self._warming = False
+            with self._lock:
+                self._snap.warmup = None
+
     def _run(self) -> None:
         try:
+            self._warm_up()
+            if self._stop:
+                raise SessionStopped()
             self._game = PerudoGame(bots=self.bots, seed=self.seed, before_turn=self._before_turn,
                                     before_reveal=self._before_reveal, listeners=[self._on_event])
             self.result = self._game.play()
@@ -588,8 +683,7 @@ class GameSession:
                 self._snap.pending = None
                 self._snap.error = f"{type(exc).__name__}: {exc}"
         finally:
-            if ROUTER.listener == self._on_talk:
-                ROUTER.listener = None
+            ROUTER.detach(self._on_talk)
 
 
 # ---------------------------------------------------------------------------
@@ -640,8 +734,7 @@ class Simulation:
         return self.played / elapsed if elapsed > 0 else 0.0
 
     def start(self) -> None:
-        ROUTER.install()
-        ROUTER.listener = None
+        ROUTER.install()                     # its thread is never the router's: the bots stay quiet
         self.started_at = time.monotonic()
         self._thread = threading.Thread(target=self._run, name="perudo-sim", daemon=True)
         self._thread.start()
@@ -676,6 +769,7 @@ class Simulation:
                         rounds["n"] += 1
                         if rounds["n"] > self.round_limit:
                             raise RuntimeError("round limit")
+                    time.sleep(0)               # let the UI thread in: keeps the app responsive
 
                 try:
                     result = PerudoGame(bots=self.bots, seed=rng.randrange(2**63), listeners=[limit]).play()
@@ -706,6 +800,7 @@ DEFAULT_SETTINGS = {
     "sim_games": 200,
     "step_delay": 1.0,
     "human_name": "You",
+    "warmup_games": 0,         # bot-only games before a watched or joined game
     "table": {},          # who is seated: BotRegistry.selection()
 }
 

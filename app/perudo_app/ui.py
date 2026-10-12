@@ -8,6 +8,7 @@ decisions. The widgets and colours are in perudo_app.widgets and .theme.
 from __future__ import annotations
 
 import random
+import sys
 from pathlib import Path
 
 from kivy.animation import Animation
@@ -521,6 +522,17 @@ KV = """
                         valign: "bottom"
                         text_size: self.size
                         shorten: True
+                        opacity: 0 if root.warming else 1
+                    Btn:
+                        kind: "outline"
+                        text: "Skip warm-up"
+                        font_size: sp(13)
+                        size_hint: None, None
+                        size: (dp(120), dp(32)) if root.warming else (0, 0)
+                        pos_hint: {"right": 1}
+                        opacity: 1 if root.warming else 0
+                        disabled: not root.warming
+                        on_release: root.skip_warmup()
             Surface:
                 id: totals
                 size_hint_y: None
@@ -570,7 +582,7 @@ KV = """
                 on_release: root.restart()
             Btn:
                 text: T.icon("\\u25b8") + "  Step"
-                disabled: root.auto or root.finished
+                disabled: root.auto or root.finished or root.warming
                 on_release: root.next_turn()
             Btn:
                 kind: "primary"
@@ -896,6 +908,23 @@ KV = """
                     size_hint_y: None
                     height: dp(6)
                 Caption:
+                    text: "Learning bots"
+                Surface:
+                    orientation: "vertical"
+                    size_hint_y: None
+                    height: self.minimum_height
+                    padding: dp(16), dp(2), dp(16), dp(16)
+                    SettingRow:
+                        title: "Warm-up games"
+                        sub: "Before a game you watch or join, the bots first play this many games among themselves (without you), so the bots that learn get to know the table. You can skip it."
+                    Segmented:
+                        options: [(0, "None"), (10, "10"), (50, "50"), (200, "200")]
+                        value: app.settings["warmup_games"]
+                        on_value: app.set_setting("warmup_games", self.value)
+                Widget:
+                    size_hint_y: None
+                    height: dp(6)
+                Caption:
                     text: "At the table"
                 Surface:
                     orientation: "vertical"
@@ -1195,6 +1224,7 @@ class GameScreen(Screen):
     round_text = StringProperty("")
     card_border = ListProperty(T.CLEAR)
     totals_visible = BooleanProperty(False)
+    warming = BooleanProperty(False)
     # the human's composer
     my_turn = BooleanProperty(False)
     can_dudo = BooleanProperty(False)
@@ -1212,6 +1242,7 @@ class GameScreen(Screen):
         self._sheet = None
 
     def on_kv_post(self, *_):
+        self._feed_pool = [FeedLine() for _ in range(self.FEED_KEEP)]
         self._faces = []
         for f in FACES:
             b = FaceButton(value=f, size=(dp(40), dp(40)), pos_hint={"center_y": 0.5})
@@ -1245,6 +1276,7 @@ class GameScreen(Screen):
         self._human = session.human.name if session.human is not None else None
         self._rows = {}
         self.ids.players.clear_widgets()
+        self._feed_pool.extend(self.ids.feed.children)
         self.ids.feed.clear_widgets()
         self._feed_last = None
         self._close_sheet()
@@ -1276,6 +1308,10 @@ class GameScreen(Screen):
     def next_turn(self):
         if self.session is not None:
             self.session.next()
+
+    def skip_warmup(self):
+        if self.session is not None:
+            self.session.skip_warmup()
 
     def toggle_auto(self):
         self.auto = not self.auto
@@ -1372,55 +1408,64 @@ class GameScreen(Screen):
                 die.highlight = f == face
 
     def _draw_bid_card(self, snap):
+        """Work out the card, then set each property once: a property set
+        twice per refresh (say "Pacos are wild", then "Press Play") changes
+        every time, and re-renders and redraws the screen for nothing."""
         reveal = snap.reveal
-        self.round_text = f"Round {snap.round_number}" if snap.round_number else ""
-        if snap.palifico:
-            self.round_text += "  ·  " + T.color("[b]PALIFICO[/b]", T.HEX["gold"])
         mine = snap.pending is not None
-        if snap.error:
-            self.bid_caption, self.caption_color = "A bot crashed", T.RED
-            self.bid_qty, self.bid_face = "!", 0
-            self.bid_by, self.bid_next = "", T.esc(snap.error)
-            self.card_border = T.RED
+        gold = T.HEX["gold"]
+        round_text = f"Round {snap.round_number}" if snap.round_number else ""
+        if snap.palifico:
+            round_text += "  \u00b7  " + T.color("[b]PALIFICO[/b]", gold)
+        card = dict(caption="", caption_color=T.MUTED, qty="", face=0, by="", next="", border=T.CLEAR,
+                    warming=False)
+        if snap.warmup is not None and not snap.finished:
+            done, total = snap.warmup
+            card.update(caption="Warming up", caption_color=T.GOLD, qty=str(done), warming=True,
+                        by=f"of {total} games", border=T.GOLD,
+                        next=("The bots play among themselves first" if self.human_playing
+                              else "The learning bots get to know the table"))
+            round_text = ""
+        elif snap.error:
+            card.update(caption="A bot crashed", caption_color=T.RED, qty="!", next=T.esc(snap.error),
+                        border=T.RED)
         elif snap.finished and snap.standings:
-            self.bid_caption, self.caption_color = "Game over", T.GOLD
-            self.bid_qty, self.bid_face = "", 0
-            self.bid_by = f"{T.color(T.icon(chr(0x2605)), T.HEX['gold'])} {self._who(snap.standings[0])} wins"
-            self.bid_next = f"{len(snap.standings)} players"
-            self.card_border = T.GOLD
+            card.update(caption="Game over", caption_color=T.GOLD, border=T.GOLD,
+                        by=f"{T.color(T.icon(chr(0x2605)), gold)} {self._who(snap.standings[0])} wins",
+                        next=f"{len(snap.standings)} players")
         elif snap.finished:
-            self.bid_caption, self.caption_color = "Stopped", T.MUTED
-            self.bid_qty, self.bid_face, self.bid_by, self.bid_next = "", 0, "", ""
-            self.card_border = T.CLEAR
+            card.update(caption="Stopped")
         elif reveal:
             dudo = reveal["type"] == "dudo"
             tone = T.RED if dudo else T.TEAL
-            self.bid_caption = f"{'Dudo' if dudo else 'Calza'}  ·  {reveal['challenger']}"
-            self.caption_color = tone
-            self.bid_qty, self.bid_face = str(reveal["bid"].quantity), reveal["bid"].face
-            actual = reveal["actual"]
-            self.bid_by = f"[b]{actual}[/b] on the table"
             if reveal.get("loser"):
-                self.bid_next = f"{self._who(reveal['loser'])} loses a die"
+                outcome = f"{self._who(reveal['loser'])} loses a die"
             else:
-                self.bid_next = T.color("Exact! ", T.HEX["teal"]) + self._who(reveal["challenger"]) + " is right"
-            self.card_border = tone
+                outcome = T.color("Exact! ", T.HEX["teal"]) + self._who(reveal["challenger"]) + " is right"
+            card.update(caption=f"{'Dudo' if dudo else 'Calza'}  \u00b7  {reveal['challenger']}",
+                        caption_color=tone, qty=str(reveal["bid"].quantity), face=reveal["bid"].face,
+                        by=f"[b]{reveal['actual']}[/b] on the table", next=outcome, border=tone)
         elif snap.current_bid is not None:
-            self.bid_caption, self.caption_color = "Current bid", T.MUTED
-            self.bid_qty, self.bid_face = str(snap.current_bid.quantity), snap.current_bid.face
-            self.bid_by = f"by {self._who(snap.bidder)}" if snap.bidder else ""
-            self.bid_next = (T.color("Your turn", T.HEX["gold"]) if mine
-                             else f"{self._who(snap.to_act, bold=False)} to play" if snap.to_act else "")
-            self.card_border = T.GOLD if mine else T.CLEAR
+            card.update(caption="Current bid", qty=str(snap.current_bid.quantity), face=snap.current_bid.face,
+                        by=f"by {self._who(snap.bidder)}" if snap.bidder else "",
+                        next=(T.color("Your turn", gold) if mine
+                              else f"{self._who(snap.to_act, bold=False)} to play" if snap.to_act else ""),
+                        border=T.GOLD if mine else T.CLEAR)
         else:
-            self.bid_caption, self.caption_color = "Opening bid", T.MUTED
-            self.bid_qty, self.bid_face = "—", 0
-            self.bid_by = (T.color("You open", T.HEX["gold"]) if mine
-                           else f"{self._who(snap.to_act)} opens" if snap.to_act else "")
-            self.bid_next = "Pacos are wild" if not snap.palifico else "Pacos are not wild"
             if not self.auto and not self.human_playing and snap.round_number == 1:
-                self.bid_next = T.color("Press Play or Step to start", T.HEX["gold"])
-            self.card_border = T.GOLD if mine else T.CLEAR
+                hint = T.color("Press Play or Step to start", gold)
+            else:
+                hint = "Pacos are wild" if not snap.palifico else "Pacos are not wild"
+            card.update(caption="Opening bid", qty="\u2014",
+                        by=(T.color("You open", gold) if mine
+                            else f"{self._who(snap.to_act)} opens" if snap.to_act else ""),
+                        next=hint, border=T.GOLD if mine else T.CLEAR)
+        for name, value in (("round_text", round_text), ("bid_caption", card["caption"]),
+                            ("caption_color", card["caption_color"]), ("bid_qty", card["qty"]),
+                            ("bid_face", card["face"]), ("bid_by", card["by"]), ("bid_next", card["next"]),
+                            ("card_border", card["border"]), ("warming", card["warming"])):
+            if getattr(self, name) != value:
+                setattr(self, name, value)
 
     def _feed_markup(self, item):
         who = self._who(item.player) if item.player else ""
@@ -1467,13 +1512,18 @@ class GameScreen(Screen):
         at_bottom = scroll.scroll_y <= 0.02 or box.height <= scroll.height
         for item in feed[start:][-self.FEED_KEEP:]:
             text, bubble, halign = self._feed_markup(item)
-            line = FeedLine(text=text, bubble=bubble, halign=halign)
-            if item.kind == "talk":
-                line.font_size = sp(13.5)
-                line.color = T.MUTED
+            # Recycle a line: creating a widget applies its KV rules, which is
+            # the most expensive thing a refresh would otherwise do.
+            if len(box.children) >= self.FEED_KEEP:
+                line = box.children[-1]                 # the oldest, at the top
+                box.remove_widget(line)
+            else:
+                line = self._feed_pool.pop() if self._feed_pool else FeedLine()
+            talk = item.kind == "talk"
+            line.text, line.bubble, line.halign = text, bubble, halign
+            line.font_size = sp(13.5) if talk else sp(14)
+            line.color = T.MUTED if talk else T.TEXT
             box.add_widget(line)
-        while len(box.children) > self.FEED_KEEP:
-            box.remove_widget(box.children[-1])
         if at_bottom:
             Clock.schedule_once(lambda _dt: setattr(scroll, "scroll_y", 0), 0)
 
@@ -1758,6 +1808,9 @@ class SettingsScreen(Screen):
 class PerudoApp(App):
     def build(self):
         self.title = "Perudo"
+        # The bots think in other threads. Python switches threads every 5 ms
+        # by default; every 2 ms keeps taps and animations prompt meanwhile.
+        sys.setswitchinterval(0.002)
         self.icon = str(Path(__file__).resolve().parents[1] / "assets" / "icon.png")
         Window.clearcolor = T.BG
         Window.softinput_mode = "below_target"
@@ -1767,7 +1820,9 @@ class PerudoApp(App):
         self.registry = BotRegistry(str(self._user_bots_dir(data_dir)))
         self.registry.scan_bundled()
         self.registry.scan_user()
-        self.registry.apply_selection(self.settings["table"])
+        # The table starts empty every time: you choose who plays (copies are remembered).
+        self.registry.apply_selection(self.settings["table"], seats=False)
+        self.registry.clear_table()
         self.bots_dir = self._bots_dir()
         self.speaker = Speaker(str(data_dir / "edge-tts"), play=self._play_mp3, enabled=self.settings["tts"],
                                engine=self.settings["tts_engine"])
@@ -1888,7 +1943,9 @@ class PerudoApp(App):
             self.toast("Seat at least one bot to play against" if human else "Seat at least two bots to watch")
             self.go("bots")
             return
-        session = GameSession(bots, step=not human, delay=self.settings["step_delay"])
+        session = GameSession(bots, step=not human, delay=self.settings["step_delay"],
+                              warmup=int(self.settings["warmup_games"] or 0),
+                              speech_idle=lambda: self.speaker.idle)
         self.speaker.clear()
         self.go("game")
         self.sm.get_screen("game").begin(session, human)

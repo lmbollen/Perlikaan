@@ -374,16 +374,100 @@ def test_bar_padding_pads_only_what_the_bars_cover():
 
 
 def test_bots_no_longer_announce_their_moves_but_keep_their_quotes(monkeypatch):
+    import threading
     import perudo.talk as talk
     from perudo_app.core import ROUTER
 
     ROUTER.install()
     heard = []
     monkeypatch.setattr(ROUTER, "speak", lambda text, lang, seed: heard.append(text))
-    monkeypatch.setattr(talk, "QUOTE_CHANCE", 1.0)
-    bot = type("Bot", (), {"name": "Sniper"})()
-    talk.Mouth(bot, {}).say("raise", announce="4x 5", bid="4x 5")
-    talk.Mouth(bot, {}).say("dudo", announce="Dudo!")
-    assert heard == []                                      # bare announcements are gone
-    talk.Mouth(bot, {"raise": ["Hoppa, {bid}!"]}).say("raise", announce="4x 5", bid="4x 5")
-    assert heard == ["Hoppa, 4x 5!"]                         # a quote is still said
+    ROUTER.attach(lambda *_a: None, threading.current_thread())
+    try:
+        bot = type("Bot", (), {"name": "Sniper"})()
+        talk.Mouth(bot, {}).say("raise", announce="4x 5", bid="4x 5")
+        talk.Mouth(bot, {}).say("dudo", announce="Dudo!")
+        assert heard == []                                  # bare announcements are gone
+        talk.Mouth(bot, {"raise": ["Hoppa, {bid}!"]}).say("raise", announce="4x 5", bid="4x 5")
+        assert heard == ["Hoppa, 4x 5!"]                     # a quote is still said
+    finally:
+        ROUTER.detach(ROUTER.listener)
+
+
+def test_talk_from_other_threads_is_silent(monkeypatch):
+    """Simulations and warm-ups run the same bots in other threads."""
+    import threading
+    import perudo.talk as talk
+    from perudo_app.core import ROUTER
+
+    ROUTER.install()
+    heard = []
+    monkeypatch.setattr(ROUTER, "speak", lambda text, lang, seed: heard.append(text))
+    shown = threading.Thread(target=lambda: None)
+    ROUTER.attach(lambda *_a: None, shown)                  # a game on screen, in another thread
+    try:
+        bot = type("Bot", (), {"name": "Sniper"})()
+        talk.Mouth(bot, {"raise": ["Hoppa!"]}).say("raise")
+        assert heard == []
+    finally:
+        ROUTER.detach(ROUTER.listener)
+
+
+def test_a_bot_speaks_a_quarter_of_the_time_and_once_per_turn():
+    reg = BotRegistry()
+    reg.scan_bundled()
+    picks = [e for e in reg.entries if e.class_name in ("RandomBot", "MinRaiseBot")]
+    session = GameSession(reg.make(picks), seed=8)
+    said = sum(session._on_talk("Sniper", "Hoppa!", "nl") is not False and not session._spoke.clear()
+               for _ in range(4000))
+    assert 0.22 < said / 4000 < 0.28
+    session._spoke.clear()
+    while session._on_talk("Sniper", "Hoppa!", "nl") is False:
+        pass
+    assert all(session._on_talk("Sniper", "Nog een!", "nl") is False for _ in range(50))   # once per turn
+
+
+def test_warm_up_games_run_first_quietly_and_can_be_skipped():
+    reg = BotRegistry()
+    reg.scan_bundled()
+    picks = [e for e in reg.entries if e.class_name in ("RandomBot", "MinRaiseBot", "ExampleBot")]
+    seen = []
+    session = GameSession(reg.make(picks) + [HumanSeat("You")], seed=9, step=True, warmup=40)
+    session.start()
+    assert wait(lambda: session.snapshot().warmup is not None and session.snapshot().warmup[0] >= 2)
+    seen.append(session.snapshot().warmup)
+    assert seen[0][1] == 40 and session.snapshot().feed == []        # nothing of the warm-up is shown
+    session.skip_warmup()
+    assert wait(lambda: session.snapshot().to_act is not None)
+    snap = session.snapshot()
+    assert snap.warmup is None and snap.round_number == 1
+    assert "You" in [p.name for p in snap.players]                  # the real game has the human seat
+    session.stop()
+
+
+def test_the_next_turn_waits_for_speech():
+    reg = BotRegistry()
+    reg.scan_bundled()
+    picks = [e for e in reg.entries if e.class_name in ("RandomBot", "MinRaiseBot")]
+    speaking = {"on": True}
+    session = GameSession(reg.make(picks), seed=10, step=False, delay=0.0,
+                          speech_idle=lambda: not speaking["on"])
+    session.start()
+    time.sleep(0.6)
+    assert session.snapshot().current_bid is None                   # held while "speech" goes on
+    speaking["on"] = False
+    assert wait(lambda: session.snapshot().finished, timeout=30)
+    session.stop()
+
+
+def test_the_table_starts_empty_but_copies_are_remembered():
+    reg = BotRegistry()
+    reg.scan_bundled()
+    sniper = next(e for e in reg.entries if e.class_name == "SniperBot")
+    sniper.enabled, sniper.copies = True, 3
+    saved = reg.selection()
+    fresh = BotRegistry()
+    fresh.scan_bundled()
+    fresh.apply_selection(saved, seats=False)
+    fresh.clear_table()
+    assert fresh.selected() == []
+    assert next(e for e in fresh.entries if e.class_name == "SniperBot").copies == 3

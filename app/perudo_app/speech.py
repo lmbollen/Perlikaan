@@ -155,6 +155,8 @@ class Speaker:
         self.error: Optional[str] = None     # the last problem, for the settings screen
         self.note: Optional[str] = None      # e.g. that the system voices stood in
         self._queue: "queue.Queue[tuple[str, str, str]]" = queue.Queue()
+        self._lock = threading.Lock()
+        self._pending = 0                    # lines queued or being spoken
         self._thread = threading.Thread(target=self._run, name="perudo-speech", daemon=True)
         self._thread.start()
 
@@ -164,33 +166,42 @@ class Speaker:
 
     def say(self, text: str, lang: str = "nl", voice_seed: str = "") -> None:
         if self.enabled and self._queue.qsize() < 8:
+            with self._lock:
+                self._pending += 1
             self._queue.put((text, lang, voice_seed))
 
+    @property
+    def idle(self) -> bool:
+        """Nothing queued and nothing being spoken: a game may go on."""
+        return self._pending == 0
+
     def clear(self) -> None:
-        while not self._queue.empty():
+        while True:
             try:
                 self._queue.get_nowait()
             except queue.Empty:
                 break
+            with self._lock:
+                self._pending -= 1
         if self.system is not None and hasattr(self.system, "stop"):
             self.system.stop()
 
-    def wait_idle(self, timeout: float = 5.0) -> None:
-        """For tests: wait until the queue is spoken."""
+    def wait_idle(self, timeout: float = 5.0) -> bool:
         end = time.monotonic() + timeout
-        while (not self._queue.empty() or self._busy) and time.monotonic() < end:
+        while not self.idle and time.monotonic() < end:
             time.sleep(0.01)
-
-    _busy = False
+        return self.idle
 
     def _run(self) -> None:
         while True:
             item = self._queue.get()
-            self._busy = True
             try:
                 self.speak_now(*item)
+            except Exception as exc:             # never let the speech thread die
+                self.error = f"{type(exc).__name__}: {exc}"
             finally:
-                self._busy = False
+                with self._lock:
+                    self._pending -= 1
 
     def speak_now(self, text: str, lang: str, seed_text: str) -> None:
         if not self.enabled:

@@ -8,9 +8,9 @@ What it does:
 
 - **Home**: start a game at the table, watch one, or run a simulation; the
   bots currently seated are listed underneath.
-- **Players**: every bot of this repository is included and seated by
-  default (as in the bot battle, a bot with `count = 0` starts unseated).
-  Switch each on or off and set its copies; the table is remembered. *Load
+- **Players**: every bot of this repository is listed. The table is empty
+  when the app starts: switch on the bots you want and set their copies (the
+  copies are remembered). *Load
   file* imports any single-file bot (same API as the example bot) by copying
   it into the app's bots folder, so it is there again after a restart; Remove
   deletes that copy. On Android the folder is
@@ -24,12 +24,20 @@ What it does:
   the counted dice stay lit, the rest fade, and the card says how many were
   on the table and who loses a die. The feed below tells the game as it
   happens, with the bots' table talk in speech bubbles.
+- **Warm-up games**: before a game you watch or join, the bots can first play
+  a number of games among themselves (Settings: none, 10, 50 or 200; you sit
+  them out), so the bots that learn get to know the table. The progress is
+  shown on the game screen, with a button to skip the rest.
 - **Join the table**: you take a seat. Only your own dice are shown until a
   reveal. Tap a die for the face, set the quantity (the lowest legal bid is
   preselected), and bid, or call Dudo or Calza when they are legal.
 - **Simulation**: 100 to 5000 games with the same bot instances (so learning
   bots keep learning), with a live leaderboard: win rate, wins, average place
   and bars scaled to the leader, re-ranked as the games come in.
+- **Talk**: a bot says one of its lines a quarter of the time (at most one
+  per turn); bids are not read out, the screen shows them. Speech only
+  happens in the game on screen, never in simulations or warm-up games, and
+  the next turn waits until the bots have finished speaking.
 - **Settings**: read the table talk aloud, every bot with its own voice. By
   default with the phone's own text-to-speech voices (offline); Microsoft's
   online neural voices through edge-tts can be chosen instead, and the
