@@ -779,7 +779,7 @@ class PokerfaceBot(SharedMemory, _SniperCore):
     # Only bids at least this likely (to us) are considered.
     LOOKAHEAD_MIN = 0.3
     # How sharp an opponent's Dudo threshold is (logistic width).
-    DUDO_SOFTNESS = 0.04
+    DUDO_SOFTNESS = 0.02
     # Dudo threshold assumed for an opponent we know nothing about yet.
     DEFAULT_DUDO_AT = 0.3
     # CALIBRATE, CALZA, AVOID_CALZA and LOOKAHEAD only kick in once at most

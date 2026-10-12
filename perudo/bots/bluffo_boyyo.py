@@ -138,7 +138,7 @@ class BluffoBoyyo:
     # How much of what a bid suggests about the bidder's hand we count when
     # choosing our own bid, and when judging the bid we face.
     HINT_PER_BID = 0.5
-    HINT_FACED = 1.0
+    HINT_FACED = 0.75
     # Correct our estimate of a bid we face by how often such bids were
     # really true (learned per bucket); FACED_SHIFT is the measured start.
     FACED_SHIFT = 0.2

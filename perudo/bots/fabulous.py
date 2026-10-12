@@ -49,10 +49,10 @@ DUDO_THRESHOLD = 0.50        # call Dudo when P(current bid is true) drops below
 CALZA_THRESHOLD = 0.32       # call Calza when P(exact) is at least this (and a die can be won)
 OPEN_SAFETY = 0.90           # opening bid: highest quantity with P(true) >= this
 BID_SLACK = 0.0              # consider bids within this much of the best P(true)
-CHALLENGE_FACTOR = 0.6       # how likely a shaky bid is to be challenged (for dudo-vs-bid trade-off);
+CHALLENGE_FACTOR = 0.8       # how likely a shaky bid is to be challenged (for dudo-vs-bid trade-off);
                              # above 1 Fabulous called Dudo on bids that were almost surely true
                              # whenever every raise looked ugly, and lost a die for sure
-HINT_PRIOR_HITS = 2.0        # prior for "opponent holds the face they bid on"
+HINT_PRIOR_HITS = 3.0        # prior for "opponent holds the face they bid on"
 HINT_PRIOR_TRIES = 3.0
 
 

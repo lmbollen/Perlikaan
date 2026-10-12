@@ -600,7 +600,7 @@ class CarlosBot(SharedMemory):
     # A bid that is not on the table costs this much per unit of P(false),
     # on top of what the chain expects from challenges: a false bid is a bad
     # bid even at a table that never calls it.
-    FALSE_PENALTY = 0.0
+    FALSE_PENALTY = 0.4
     # Value of gaining a die with a correct Calza.
     CALZA_GAIN = 1.0
     # Value of a correct Calza once it gains no die (someone is out, or we

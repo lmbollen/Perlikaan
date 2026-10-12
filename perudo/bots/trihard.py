@@ -65,7 +65,7 @@ GAIN_VALUE = 1.0                # value of winning a die with Calza (recovery on
 FREE_PASS_VALUE = 0.3           # value of a correct Calza when recovery is off (nothing happens, I start)
 BID_EV_TOLERANCE = 0.0          # bids within this EV of the best are tied; prefer the higher quantity
 HONESTY_GRID = (0.0, 0.5, 1.0, 2.0, 4.0, 8.0)  # candidate honesty exponents beta, see _player_pmf_for
-HONESTY_DEFAULT = 1.0           # beta for a player we have not learned about yet (also for me, in their eyes)
+HONESTY_DEFAULT = 2.0           # beta for a player we have not learned about yet (also for me, in their eyes)
 HONESTY_FLOOR = 0.05            # even a hopeless bid gets made sometimes (bluffs, forced raises)
 PACO_MENTION_WEIGHT = 0.5       # a Paco bid is weaker evidence about a normal face (Pacos still count for it)
 
