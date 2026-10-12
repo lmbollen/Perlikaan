@@ -128,3 +128,49 @@ def test_calza_when_the_bid_is_exactly_right():
     # We hold four sixes: 5x6 is then exact, and 6x6 is impossible.
     state = _state([6, 6, 6, 6, 2], [ActionRecord("A", Bid(5, 6))], Bid(5, 6), others=(("A", 1),))
     assert bot.play(state) == Calza()
+
+
+def _round(bot, dice):
+    """A bids 3x6, B raises to 4x6, C calls Dudo on B."""
+    bot.observe(BidEvent("A", Bid(3, 6)))
+    bot.observe(BidEvent("B", Bid(4, 6)))
+    bot.observe(DudoEvent("C"))
+    bot.observe(_reveal(Bid(4, 6), dice, challenger="C", bidder="B"))
+
+
+DICE = [(ME, (2, 3)), ("A", (6, 6, 1, 2, 3)), ("B", (2, 3, 4, 5, 2)), ("C", (2, 3, 4, 5, 6))]
+
+
+def test_a_new_name_starts_from_the_prior_not_from_other_bots():
+    bot = CarlosDosBot()
+    for _ in range(30):
+        _round(bot, DICE)
+    fresh = bot._player("Z")
+    assert fresh.dudo_w == list(CarlosDosBot.DUDO_PRIOR)
+    assert fresh.calza_w == list(CarlosDosBot.CALZA_PRIOR)
+    lam = bot._likelihood("Z", "choice")
+    lr = CarlosDosBot.REAL_LR
+    assert abs(lam[0] - 2 * lr / (lr + 1)) < 1e-9          # pure prior, nothing pooled from A, B, C
+
+
+def test_every_reveal_updates_every_name_in_it():
+    bot = CarlosDosBot()
+    before = {n: list(bot._player(n).dudo_w) for n in "ABC"}
+    _round(bot, DICE)
+    a, b, c = (bot._player(n) for n in "ABC")
+    assert a.source.honesty["choice"][1] == 1                 # A's bid: source model
+    assert b.dudo_w != before["B"] and b.n == 1               # B raised on A's bid: reaction model
+    assert c.dudo_w != before["C"] and c.n == 1               # C called Dudo on B: reaction model
+    assert a.n == 0                                           # A did not react to anything
+
+
+def test_models_decay_towards_the_prior():
+    bot = CarlosDosBot()
+    for _ in range(20):
+        _round(bot, DICE)
+    w = list(bot._player("C").dudo_w)
+    bot.observe(GameEndedEvent(winner="A", standings=("A", "B", "C", ME)))
+    prior = CarlosDosBot.DUDO_PRIOR
+    after = bot._player("C").dudo_w
+    for i in range(len(w)):
+        assert abs(after[i] - (prior[i] + CarlosDosBot.GAME_DECAY * (w[i] - prior[i]))) < 1e-9

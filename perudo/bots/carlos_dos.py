@@ -42,9 +42,13 @@ the dice of the player who bid it. Every candidate, Dudo and Calza get an
 expected value (our die -1, an opponent's +1 / opponents, a correct Calza
 +1 while it gains a die) and the best one is played.
 
-New players start as the table's average. Everything learned lives in
-class-level memory per bot name, survives a new instance per game, counts
-GAME_DECAY times as much after every game, and never touches the disk.
+Every opponent's model is tied to their name: a new name starts from the
+probability priors, every reveal updates the models of everyone in it
+(the source model of every bidder, the reaction model of every player who
+acted on a bid), and the players beyond the next one are valued with their
+own models too. Everything learned lives in class-level memory per bot
+name, survives a new instance per game, decays towards the priors by
+GAME_DECAY after every game, and never touches the disk.
 """
 
 
@@ -285,6 +289,12 @@ class CarlosDosBot:
     USE_PASSED_OVER = False
     SOURCE_PRIOR = 4.0
     SOURCE_SHRINK = 4.0
+    # Every opponent's model belongs to their name alone: a name we have not
+    # seen starts from the probability priors above (not from what other
+    # bots did), every reveal updates the models of the names in it, and
+    # between games a model decays towards those priors. False: blend in the
+    # model pooled over all opponents (the old behaviour, for comparison).
+    NAME_ONLY = True
     # Honesty: pseudo-bids behind REAL_PRIOR.
     HONESTY_N = 4.0
     # Online learning rate of the logistic models, and the pull of a player's
@@ -364,8 +374,10 @@ class CarlosDosBot:
     def _player(self, name) -> _Player:
         p = self.players.get(name)
         if p is None:
-            t = self.table
-            p = _Player(t["dudo_w"], t["calza_w"])
+            if self.NAME_ONLY:
+                p = _Player(self.DUDO_PRIOR, self.CALZA_PRIOR)
+            else:
+                p = _Player(self.table["dudo_w"], self.table["calza_w"])
             self.players[name] = p
         return p
 
@@ -447,7 +459,7 @@ class CarlosDosBot:
         record, shrunk to the table's and to REAL_PRIOR."""
         own = self._player(name).source.honesty[kind]
         table = self.table["source"].honesty[kind]
-        f = min(1.0, self.SOURCE_SHRINK / table[1]) if table[1] else 0.0
+        f = min(1.0, self.SOURCE_SHRINK / table[1]) if table[1] and not self.NAME_ONLY else 0.0
         real = own[0] + f * table[0] + self.REAL_PRIOR * self.HONESTY_N
         bids = own[1] + f * table[1] + self.HONESTY_N
         return real / bids
@@ -457,7 +469,7 @@ class CarlosDosBot:
         showed, each weighted by its bids."""
         own_w, own = pmf_of(self._player(name).source)
         table_w, table = pmf_of(self.table["source"])
-        table_w = min(table_w, self.SOURCE_SHRINK)
+        table_w = 0.0 if self.NAME_ONLY else min(table_w, self.SOURCE_SHRINK)
         out = [self.SOURCE_PRIOR * a + table_w * b + own_w * c for a, b, c in zip(prior, table, own)]
         z = sum(out)
         return [v / z for v in out]
@@ -469,7 +481,8 @@ class CarlosDosBot:
         lr = self.REAL_LR
         lam = [2 * lr / (lr + 1) if r <= 0 else 2 / (lr + 1) for r in range(-R_MAX, R_MAX + 1)]
         w = self.LR_PRIOR
-        for src in (self.table["source"], self._player(name).source):
+        sources = (self._player(name).source,) if self.NAME_ONLY else (self.table["source"], self._player(name).source)
+        for src in sources:
             obs, chance = src.obs[kind], src.chance[kind]
             lam = [(o + w * l) / (c + w) for o, c, l in zip(obs, chance, lam)]
         return lam
@@ -583,7 +596,11 @@ class CarlosDosBot:
             return
         t = self.table
         for p in self.players.values():
-            for w, tw in ((p.dudo_w, t["dudo_w"]), (p.calza_w, t["calza_w"])):
+            if self.NAME_ONLY:
+                pulls = ((p.dudo_w, self.DUDO_PRIOR), (p.calza_w, self.CALZA_PRIOR))
+            else:
+                pulls = ((p.dudo_w, t["dudo_w"]), (p.calza_w, t["calza_w"]))
+            for w, tw in pulls:
                 for i in range(len(w)):
                     w[i] = tw[i] + f * (w[i] - tw[i])
             p.source.decay(f)
@@ -677,6 +694,8 @@ class CarlosDosBot:
         me_i = next(i for i, p in enumerate(order) if p.id == state.my_id)
         nxt = order[(me_i + 1) % n_alive] if n_alive > 1 else None
         w_other = self.OTHER_WEIGHT / max(n_alive - 1, 1)
+        # the players after the next one, in playing order, up to us
+        self._later = [order[(me_i + i) % n_alive] for i in range(2, n_alive)]
         recovery = all(p.alive for p in state.players)
         legal = set(state.legal_actions)
         pal = state.palifico
@@ -813,15 +832,18 @@ class CarlosDosBot:
         by our best answer to it: Dudo, Calza, or a raise that the next
         player may call."""
         step = max(1, round(self.table["step"]))
-        tw = self.table["dudo_w"]
-        cw = self.table["calza_w"]
         alive_prob = 1.0
         value = 0.0
         q = cand.quantity + step
-        for _ in range(n_alive - 2):
+        for pl in getattr(self, "_later", ())[:n_alive - 2]:
+            if self.NAME_ONLY:
+                m = self._player(pl.name)
+                tw, cw = m.dudo_w, m.calza_w
+            else:
+                tw, cw = self.table["dudo_w"], self.table["calza_w"]
             pt = _tail(full, q)
             pe = _at(full, q)
-            x = self._dudo_x(pt, 1 / n_alive, pt, step - 1, False, None, n_alive)
+            x = self._dudo_x(pt, pl.dice_count / total, pt, step - 1, False, None, n_alive)
             p_end = _sigmoid(sum(a * b for a, b in zip(tw, x)))
             p_end += (1 - p_end) * _sigmoid(cw[0] + cw[1] * pe)
             value += alive_prob * p_end * w_other
