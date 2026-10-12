@@ -213,6 +213,19 @@ class Profile:
         self.false_faced = 0
         self.false_challenged = 0
 
+    def decay(self, factor: float) -> None:
+        """Make what was learned count `factor` times as much (once per game),
+        so recent games weigh more than older ones."""
+        for attr in ("rounds", "bids", "follows", "raises", "min_raises", "bid_risk_sum",
+                     "calzas", "false_faced", "false_challenged"):
+            setattr(self, attr, getattr(self, attr) * factor)
+        for stat in self.excess.values():
+            stat[0] *= factor
+            stat[1] *= factor
+        # Lists of single decisions: drop the same share of the oldest ones.
+        for seq in (self.face_scores, self.facing):
+            del seq[:int(len(seq) * (1 - factor))]
+
     # -- derived numbers ------------------------------------------------
 
     @property
@@ -389,6 +402,11 @@ class OpponentProfiler:
         self._actions: List[Tuple[str, object]] = []
         self._dice: Optional[Dict[str, Tuple[int, ...]]] = None
         self._palifico = False
+
+    def decay(self, factor: float) -> None:
+        """Older games count less: scale every profile by `factor`."""
+        for prof in self.profiles.values():
+            prof.decay(factor)
 
     def profile(self, name: str) -> Profile:
         if name not in self.profiles:
@@ -647,6 +665,10 @@ class CarlosBot:
 
     # Value of an opponent losing a die, divided by the number of opponents.
     OTHER_WEIGHT = 1.0
+    # A bid that is not on the table costs this much per unit of P(false),
+    # on top of what the chain expects from challenges: a false bid is a bad
+    # bid even at a table that never calls it.
+    FALSE_PENALTY = 0.4
     # Value of gaining a die with a correct Calza.
     CALZA_GAIN = 1.0
     # Value of a correct Calza once it gains no die (someone is out, or we
@@ -675,6 +697,28 @@ class CarlosBot:
     # bid by how that player really responded to our bids before (per table
     # size and prediction bucket); weight of the prediction in observations.
     RESPONSE_PRIOR = 20
+    # Added to the predicted chance that the next player calls Dudo on our
+    # bid, as the starting point of that calibration: opponents call Dudo on
+    # our bids more often than the model predicts (e.g. 11% where it says
+    # 4-7%), and one game is too short to learn that. Paired benchmarks at
+    # tables of 2-7: +4.8 and +4.6 +/- 1.6 pp win rate (0.05), +4.7 (0.07).
+    RESPONSE_SHIFT = 0.06
+    # Starting point of the response calibration per kind of response and
+    # table size (2 or 3+): prediction bucket (of 0.05) -> how often players
+    # really did it, measured over 480 single games against the other bots.
+    # Replaces RESPONSE_SHIFT when on; buckets not in the table keep the
+    # prediction (plus RESPONSE_SHIFT for Dudo on our bid).
+    RESPONSE_TABLE = False
+    TUNED_RESPONSE = {
+        ('dudo', 2): {0: 0.02, 1: 0.07, 2: 0.17, 3: 0.15, 4: 0.30, 5: 0.35, 6: 0.43, 7: 0.43, 8: 0.51, 9: 0.49, 10: 0.50, 11: 0.67, 12: 0.60, 13: 0.65},
+        ('dudo', 3): {0: 0.06, 1: 0.18, 2: 0.28, 3: 0.32, 4: 0.39, 5: 0.47, 6: 0.48, 7: 0.47, 8: 0.50, 9: 0.60, 10: 0.59, 11: 0.64, 12: 0.71, 13: 0.75, 14: 0.76, 15: 0.77, 16: 0.73, 17: 0.84, 18: 0.88},
+        ('any-dudo', 2): {0: 0.02, 1: 0.07, 2: 0.17, 3: 0.15, 4: 0.30, 5: 0.35, 6: 0.44, 7: 0.43, 8: 0.52, 9: 0.48, 10: 0.50, 11: 0.67, 12: 0.60, 13: 0.62},
+        ('any-dudo', 3): {0: 0.03, 1: 0.16, 2: 0.22, 3: 0.27, 4: 0.33, 5: 0.35, 6: 0.41, 7: 0.42, 8: 0.44, 9: 0.51, 10: 0.51, 11: 0.58, 12: 0.60, 13: 0.62, 14: 0.68, 15: 0.69, 16: 0.68, 17: 0.79, 18: 0.88},
+        ('calza', 2): {0: 0.08, 1: 0.23, 2: 0.38, 3: 0.53, 4: 0.64, 5: 0.51},
+        ('calza', 3): {0: 0.01, 1: 0.23, 2: 0.39},
+        ('any-calza', 2): {0: 0.03, 1: 0.31, 2: 0.40, 3: 0.62, 4: 0.64, 5: 0.63},
+        ('any-calza', 3): {0: 0.01, 1: 0.31, 2: 0.45, 3: 0.49},
+    }
     # The chain looks only one round of turns ahead, so it underrates the risk
     # of a bid (later in the round we face higher bids). Learn how often we
     # really lost a die in rounds where we made a bid with a given predicted
@@ -753,6 +797,15 @@ class CarlosBot:
     # When the chain comes back to us, raising is valued as
     # -(1 - P(our best raise true)) * this.
     OUR_RAISE_RISK = 0.5
+    # Once per game, everything learned is multiplied by this, so the latest
+    # games count more than older ones (0.95: a game 14 games ago counts half).
+    GAME_DECAY = 0.95
+    # Weigh an opponent's lost die by our share of the dice instead of
+    # 1 / (players - 1): with many dice compared to the rest, others losing
+    # dice is worth more to us.
+    W_SHARE = False
+    # Cost of losing a die ourselves, by the dice we hold (default 1).
+    LOSE_COST = {}
 
     def __init__(self):
         self.name = "Carlos"
@@ -850,6 +903,24 @@ class CarlosBot:
         elif isinstance(event, GameEndedEvent):
             self._palifico = False
             self._round = []
+            self._decay_memory()
+
+    def _decay_memory(self):
+        """End of a game: what was learned counts GAME_DECAY times as much."""
+        f = self.GAME_DECAY
+        if f >= 1:
+            return
+        self.profiler.decay(f)
+        for table in (self.hist, self.other):
+            for kinds in table.values():
+                for counts in kinds.values():
+                    for k in counts:
+                        counts[k] *= f
+        for table in (self._calibration, self._response, self._risk):
+            for stat in table.values():
+                stat[0] *= f
+                stat[1] *= f
+        self._fit_cache.clear()   # the Dudo model is refitted on the decayed data
 
     @staticmethod
     def _last_claims(actions, me):
@@ -1200,6 +1271,7 @@ class CarlosBot:
             dice={p.name: p.dice_count for p in alive},
             order=order,
             w=self.OTHER_WEIGHT / max(len(alive) - 1, 1),
+            cost=self.LOSE_COST.get(state.my_dice_count, 1.0),
             gain_ok=all(p.alive for p in state.players),
             post=self._posteriors(state),
             pal=state.palifico,
@@ -1212,12 +1284,15 @@ class CarlosBot:
         ctx["loo"] = {(n, f): self._sums(ctx["post"], f, exclude=n)
                       for n in ctx["post"] for f in range(1, 7)}
         ctx["mine"] = {f: _count_matches(state.my_dice, f, state.palifico) for f in range(1, 7)}
+        if self.W_SHARE:
+            mine = state.my_dice_count
+            ctx["w"] = self.OTHER_WEIGHT * mine / max(ctx["total"] - mine, 1)
         ctx["memo"] = {}
         return ctx
 
     def _lose_value(self, ctx, who):
         """Value for us when `who` loses a die."""
-        return -1.0 if who == self.name else ctx["w"]
+        return -ctx["cost"] if who == self.name else ctx["w"]
 
     def _p_true(self, ctx, bid):
         return tail(ctx["all"][bid.face], bid.quantity - ctx["mine"][bid.face])
@@ -1252,13 +1327,13 @@ class CarlosBot:
 
     def _our_turn_value(self, ctx, bid, bidder):
         """Approximate value when the chain returns to us facing `bid`."""
-        dudo = (1 - self._p_true(ctx, bid)) * self._lose_value(ctx, bidder) - self._p_true(ctx, bid)
+        dudo = (1 - self._p_true(ctx, bid)) * self._lose_value(ctx, bidder) - self._p_true(ctx, bid) * ctx["cost"]
         best_raise = 0.0
         for f in ([ctx["pal_face"] or bid.face] if ctx["pal"] else [2, 3, 4, 5, 6, PACO]):
             q = min_quantity(bid, f, ctx["pal"])
             if q is not None and q <= ctx["total"]:
                 best_raise = max(best_raise, self._p_true(ctx, Bid(q, f)))
-        return max(dudo, -(1 - best_raise) * self.OUR_RAISE_RISK)
+        return max(dudo, -(1 - best_raise) * self.OUR_RAISE_RISK * ctx["cost"])
 
     def _risk_key(self, ctx, opening, p_lose):
         return (opening, min(len(ctx["dice"]), 4), min(int(max(p_lose, 0.0) * 20), 19))
@@ -1284,7 +1359,13 @@ class CarlosBot:
         hits, n = self._response.get((kind, min(len(ctx["dice"]), 4), self._resp_bucket(p)), (0, 0))
         k = self.RESPONSE_PRIOR
         p = max(p, 1e-3)
-        return ((hits + k * p) / (n + k)) / p
+        # Before data: opponents call Dudo on our bids more often than the
+        # model predicts (measured over many games), so start from that.
+        prior = min(p + self.RESPONSE_SHIFT, 1.0) if kind == "dudo" else p
+        if self.RESPONSE_TABLE:
+            group = 2 if len(ctx["dice"]) == 2 else 3
+            prior = self.TUNED_RESPONSE.get((kind, group), {}).get(self._resp_bucket(p), prior)
+        return ((hits + k * prior) / (n + k)) / p
 
     def _next_response(self, ctx, bid, actor=None):
         """(P(Dudo), P(Calza)) of `actor` (default: the next player) on `bid`, before correction."""
@@ -1304,10 +1385,10 @@ class CarlosBot:
     def _our_options(self, ctx, bid, bidder, pos, depth, laps):
         """Our best move at a later turn of ours, each raise followed by the chain."""
         p_true = self._p_true(ctx, bid)
-        best = -p_true + (1 - p_true) * self._lose_value(ctx, bidder)           # Dudo
+        best = -p_true * ctx["cost"] + (1 - p_true) * self._lose_value(ctx, bidder)   # Dudo
         gain = self.CALZA_GAIN if (ctx["gain_ok"] and ctx["state"].my_dice_count < 5) else self.CALZA_FREE_PASS
         p_ex = self._p_exact(ctx, bid)
-        best = max(best, p_ex * gain - (1 - p_ex))                              # Calza
+        best = max(best, p_ex * gain - (1 - p_ex) * ctx["cost"])                # Calza
         faces = [ctx["pal_face"] or bid.face] if ctx["pal"] else [2, 3, 4, 5, 6, PACO]
         for f in faces:
             q = min_quantity(bid, f, ctx["pal"])
@@ -1418,14 +1499,15 @@ class CarlosBot:
             bidder = _last_bidder(state, default=None)
             p_true = self._calibrated(state, cur, self._p_true(ctx, cur), exact=False, record=record)
             if Dudo() in state.legal_actions:
-                options.append((p_true * -1.0 + (1 - p_true) * self._lose_value(ctx, bidder), Dudo()))
+                options.append((-p_true * ctx["cost"] + (1 - p_true) * self._lose_value(ctx, bidder), Dudo()))
             if Calza() in state.legal_actions:
                 gain = self.CALZA_GAIN if (ctx["gain_ok"] and state.my_dice_count < 5) else self.CALZA_FREE_PASS
                 p_ex = self._calibrated(state, cur, self._p_exact(ctx, cur), exact=True, record=record)
-                options.append((p_ex * gain - (1 - p_ex), Calza()))
+                options.append((p_ex * gain - (1 - p_ex) * ctx["cost"], Calza()))
         risk_keys = {}
         for b in self._candidates(ctx, state):
             value, key = self._calibrated_bid_value(ctx, cur is None, self._chain(ctx, b, self.name, 0, 0))
+            value -= self.FALSE_PENALTY * (1 - self._p_true(ctx, b))
             risk_keys[b] = key
             options.append((value, b))
         return ctx, options, risk_keys
