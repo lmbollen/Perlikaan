@@ -39,7 +39,8 @@ def test_plays_a_legal_action():
 
 def test_trust_starts_below_certainty(monkeypatch):
     """FIX_TRUST: a bid is a likely match, not a sure one."""
-    assert abs(Fabulous()._trust("A") - 2 / 3) < 1e-9
+    prior = fabulous_module.TRUST_PRIOR_HITS / fabulous_module.TRUST_PRIOR_TRIES
+    assert abs(Fabulous()._trust("A") - prior) < 1e-9 and prior < 1.0
     monkeypatch.setattr(fabulous_module, "FIX_TRUST", False)
     assert Fabulous()._trust("A") == 1.0
 

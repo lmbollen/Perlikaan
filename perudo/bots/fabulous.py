@@ -60,9 +60,12 @@ HINT_PRIOR_TRIES = 3.0
 # 1-die bidder's die was pinned as a sure match (a 1-die opener's 2x4 could
 # never be called), and it was learned from every raise, forced Palifico bids
 # included. Now: prior 2/3, one sample per face per round, no Palifico followers.
+# Paired, 640 games at tables of 2-7: with the prior 2/3 the fix cost 3.3 +/- 1.8
+# pp against the old certainty; 4/5 recovers 2.3 +/- 1.2 of that (3/4 +1.6, 3/3
+# +2.8), so the prior is 4/5: a chosen face is nearly, not fully, certain.
 FIX_TRUST = True
-TRUST_PRIOR_HITS = 2.0
-TRUST_PRIOR_TRIES = 3.0
+TRUST_PRIOR_HITS = 4.0
+TRUST_PRIOR_TRIES = 5.0
 
 
 def _fmt_bid(bid: Bid) -> str:

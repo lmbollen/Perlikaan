@@ -243,15 +243,19 @@ class CarlosDosBot:
     # that comes back to us is valued with that evidence. False: the hands
     # stay as they were before the raises, which made Dudo on the returned
     # bid look too good (heads-up: +0.83 predicted, +0.24 realised).
+    # Paired, 640 games at tables of 2-7: +4.5 +/- 2.2 pp win rate.
     FIX_CONT_HANDS = True
     # A later player's correct Calza gains THEM a die; False counted every
     # round-ending action by a later player as an opponent losing a die.
+    # Paired, 640 games: +0.3 +/- 0.7 pp (within noise).
     FIX_LATER_CALZA = True
     # Weight of the continuation (the rest of the round after the next
     # player raises) in a bid's value. It overrates the rest of the round,
     # most for weak bids. With three or more players that pressure does not
     # pay: the next player simply calls. Paired, 3 players (1280 games): 0.5
     # +4.1, 0.3 +4.9 pp; 4-7 players (960): 0.5 +2.5 pp, score +0.031.
+    # With the hands updated (FIX_CONT_HANDS) the weight was re-tested: 0.75
+    # -2.0 +/- 2.0, 1.0 -4.5 +/- 2.1 pp, so 0.5 stays.
     CONT_SCALE = 0.5
     # The same per number of players alive, where it differs. Heads-up the
     # pressure pays (640 paired games: 0.6 -9.2, 0.3 -13.9, 0 -25.6 pp).

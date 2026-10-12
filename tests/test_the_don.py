@@ -79,7 +79,7 @@ def test_uninformative_reveal_keeps_the_default_honesty():
 
 def test_game_decay_fades_evidence_back_towards_the_default():
     bot = TheDonBot()
-    for _ in range(4):
+    for _ in range(12):           # enough bluffs to overrule the prior weight on the default
         _reveal(bot, [("A", Bid(3, 6))], {"A": (2, 2, 3, 4, 5), "B": (1, 2, 3, 4, 5), "The Don": (3, 3)})
     assert bot._honesty("A") < HONESTY_DEFAULT
     bot.GAME_DECAY = 0.5
