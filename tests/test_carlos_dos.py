@@ -149,8 +149,8 @@ def test_a_new_name_starts_from_the_prior_not_from_other_bots():
     assert fresh.dudo_w == list(CarlosDosBot.DUDO_PRIOR)
     assert fresh.calza_w == list(CarlosDosBot.CALZA_PRIOR)
     lam = bot._likelihood("Z", "choice")
-    lr = CarlosDosBot.REAL_LR
-    assert abs(lam[0] - 2 * lr / (lr + 1)) < 1e-9          # pure prior, nothing pooled from A, B, C
+    generic = CarlosDosBot.GENERIC_LAMBDA["3+"]["choice"]
+    assert all(abs(a - b) < 1e-9 for a, b in zip(lam, generic))   # the generic model, nothing from A, B, C
 
 
 def test_every_reveal_updates_every_name_in_it():

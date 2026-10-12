@@ -260,25 +260,22 @@ class CarlosDosBot:
     # Quantities for the bluff face: the minimum and this many above.
     BLUFF_SPAN = 2
 
-    # -- starting model: probability only (the field is unknown) ---------------
-    # A player calls Dudo when the bid looks unlikely. Per player the logit
-    # is w . x with x = (1, P(true) from their own dice, their dice share,
-    # P(true) from their dice AND what the bids this round say (how a reader
-    # of the bidding sees it), how far the bid jumps above the minimum raise,
-    # the bid is ours, our caught-bluff record when it is ours, the value of
-    # an opponent's die 1 / (players - 1)). The starting weights split the
-    # believed probability between a player who reads only their dice and
-    # one who reads the bids too (learning finds which one each player is),
-    # and put the 50% point where calling breaks even, P(true) = w / (1 + w)
-    # for a die worth w: 0.2 at 5 players, 0.33 at 3, 0.5 heads-up. Players
-    # call our own bids more than that before they know us: bias 0.5 for
-    # our bids at tables of three or more (paired, with the continuation
-    # above: +1.7 pp at 3 players, score +0.019 at 4-7; heads-up it cost
-    # 3.8 +/- 1.4 pp, so heads-up the feature is 0).
-    DUDO_PRIOR = (1.0, -5.0, 0.0, -5.0, 0.3, 0.5, 2.0, 4.2)
-    # Calza: w0 + w1 * P(exact), 50% at P(exact) = 0.5 (break-even: a die
-    # won against a die lost).
-    CALZA_PRIOR = (-6.0, 12.0)
+    # -- the generic starting model --------------------------------------------
+    # Every opponent starts from one generic model of "a player", and the
+    # per-player learning at every reveal does the rest. The generic model
+    # is fitted by fit_generic_prior.py against a generic population of its
+    # own (rational players with random calling thresholds, bid reading,
+    # bluff and jump rates), never against the bots of this repository.
+    #
+    # Dudo, per player: logit = w . x with x = (1, P(true) from their own
+    # dice, their dice share, P(true) from their dice AND what the bids this
+    # round say (how a reader of the bidding sees it), how far the bid jumps
+    # above the minimum raise, the bid is ours (tables of three or more),
+    # our caught-bluff record when it is ours, the value of an opponent's
+    # die 1 / (players - 1)).
+    DUDO_PRIOR = (-0.15, -6.43, 1.43, -1.31, 0.15, 0.69, -1.21, 3.09)
+    # Calza: w0 + w1 * P(exact).
+    CALZA_PRIOR = (-5.71, 8.0)
     TRUST_START = 0.7
     TRUST_LR = 0.15
     # Source model before we know a player. When the quantity says
@@ -288,12 +285,9 @@ class CarlosDosBot:
     # is mostly a bluff). Weight of that prior, and of the table's model
     # behind the player's own, in chance mass of a residual (about a bid).
     REAL_LR = 2.0
-    # The same per number of players alive, where it differs. Heads-up a bid
-    # that looks unlikely to us mostly means an unusual hand, not a bluff: when
-    # he called Dudo heads-up the bid was true 37-67% of the time where the
-    # model said 18-28%. Paired, 960 heads-up games against six bots: +7.2
-    # +/- 1.7 pp win rate at 8 (+6.6 at 6, +8.0 at 10).
-    REAL_LR_BY_ALIVE = {2: 8.0}
+    # The same per number of players alive, where it differs (only used for
+    # a kind missing from GENERIC_LAMBDA below).
+    REAL_LR_BY_ALIVE = {}
     # Multiplier of that ratio for Palifico bids (face locked, nothing wild).
     # Heads-up Palifico bids are true 92-98% where the model says ~80%, but
     # 3x or 8x changed nothing in 960 paired games: off.
@@ -304,6 +298,28 @@ class CarlosDosBot:
     # 0.65 -1.2 pp. Off.
     EXACT_SHRINK = 1.0
     LR_PRIOR = 1.0
+    # The generic starting source model, fitted the same way: lambda per
+    # residual (implied - held, -R_MAX..R_MAX) per kind of bid, heads-up
+    # ("2") and with more players ("3+"). It replaces the REAL_LR formula
+    # above (still used for a kind missing here, or with None).
+    GENERIC_LAMBDA = {
+        "2": {
+            "choice": (0.217, 0.509, 0.602, 1.743, 0.864, 0.568, 0.509, 0.818, 1.162),
+            "follow": (2.008, 2.456, 3.194, 3.07, 1.621, 1.113, 0.388, 0.031, 0.006),
+            "paco-choice": (0.908, 0.246, 0.549, 1.72, 0.986, 0.744, 0.9, 1.549, 0.808),
+            "paco-follow": (0.999, 0.979, 1.416, 2.57, 2.584, 1.81, 0.53, 0.197, 0.089),
+            "pal-choice": (1.0, 1.0, 1.0, 1.0, 1.015, 0.957, 1.0, 1.0, 1.0),
+            "pal-follow": (1.0, 0.996, 0.876, 3.493, 5.928, 0.836, 0.383, 0.09, 0.531),
+        },
+        "3+": {
+            "choice": (0.749, 0.819, 0.818, 1.346, 0.975, 0.901, 0.754, 0.768, 1.002),
+            "follow": (3.088, 3.773, 3.228, 2.386, 1.5, 0.869, 0.609, 0.435, 0.23),
+            "paco-choice": (1.091, 2.141, 1.965, 1.505, 0.828, 0.924, 1.243, 1.263, 1.576),
+            "paco-follow": (0.99, 3.623, 7.048, 3.024, 2.333, 1.282, 0.851, 0.8, 0.754),
+            "pal-choice": (1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0),
+            "pal-follow": (0.922, 0.992, 1.15, 1.105, 1.083, 1.036, 0.977, 0.924, 0.818),
+        },
+    }
     # A real chosen face (opening or switching) is the face the player holds
     # most of (a Paco they hold, for Paco); REAL_PRIOR of such bids are real.
     REAL_PRIOR = 0.7
@@ -515,10 +531,14 @@ class CarlosDosBot:
         """lambda per residual (implied - held), index r + R_MAX: the prior
         (real bids REAL_LR times as likely as bluffs), then the table's ratio
         of observed to chance residuals, then the player's own."""
-        lr = self.REAL_LR_BY_ALIVE.get(getattr(self, "_n_alive", 0), self.REAL_LR)
-        if kind.startswith("pal"):
-            lr *= self.PAL_LR_FACTOR
-        lam = [2 * lr / (lr + 1) if r <= 0 else 2 / (lr + 1) for r in range(-R_MAX, R_MAX + 1)]
+        table = self.GENERIC_LAMBDA.get("2" if getattr(self, "_n_alive", 0) == 2 else "3+") if self.GENERIC_LAMBDA else None
+        if table and kind in table:
+            lam = list(table[kind])
+        else:
+            lr = self.REAL_LR_BY_ALIVE.get(getattr(self, "_n_alive", 0), self.REAL_LR)
+            if kind.startswith("pal"):
+                lr *= self.PAL_LR_FACTOR
+            lam = [2 * lr / (lr + 1) if r <= 0 else 2 / (lr + 1) for r in range(-R_MAX, R_MAX + 1)]
         w = self.LR_PRIOR
         sources = (self._player(name).source,) if self.NAME_ONLY else (self.table["source"], self._player(name).source)
         for src in sources:
