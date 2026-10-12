@@ -31,7 +31,8 @@ What it does:
   shown on the game screen, with a button to skip the rest.
 - **Join the table**: you take a seat. Only your own dice are shown until a
   reveal. Tap a die for the face, set the quantity (the lowest legal bid is
-  preselected), and bid, or call Dudo or Calza when they are legal.
+  preselected), and bid, or call Dudo or Calza when they are legal. When a
+  round is decided the cups stay up until you tap *Next round*.
 - **Simulation**: 100 to 5000 games with the same bot instances (so learning
   bots keep learning), with a live leaderboard: win rate, wins, average place
   and bars scaled to the leader, re-ranked as the games come in.

@@ -488,3 +488,34 @@ def test_files_found_in_the_folder_are_listed_but_not_seated(tmp_path):
     src = tmp_path / "loaded.py"
     src.write_text(BOT_SOURCE.format(cls="LoadedBot", name="Loaded"))
     assert reg.import_file(str(src))[0].enabled             # what you load is seated
+
+
+def test_at_the_table_a_reveal_waits_for_next_round():
+    reg = BotRegistry()
+    reg.scan_bundled()
+    picks = [e for e in reg.entries if e.class_name in ("RandomBot", "MinRaiseBot")]
+    session = GameSession(reg.make(picks) + [HumanSeat("You")], seed=12, step=False, delay=0.0,
+                          hold_reveals=True)
+    session.start()
+    held = None
+    for _ in range(3000):
+        snap = session.snapshot()
+        if snap.awaiting_next_round:
+            held = snap
+            break
+        if snap.pending is not None:                       # the human always calls Dudo when it can
+            state = snap.pending
+            action = next((a for a in state.legal_actions if isinstance(a, Dudo)), state.legal_actions[0])
+            session.submit(action)
+        time.sleep(0.002)
+    assert held is not None and held.reveal is not None
+    time.sleep(0.4)
+    still = session.snapshot()
+    assert still.awaiting_next_round and still.pending is None and still.round_number == held.round_number
+    session.next_round()
+    assert wait(lambda: session.snapshot().round_number == held.round_number + 1)
+    after = session.snapshot()
+    assert not after.awaiting_next_round and after.reveal is None
+    result = next(f for f in reversed(after.feed) if f.kind == "result")
+    assert result.loser in {p.name for p in after.players} or result.good
+    session.stop()

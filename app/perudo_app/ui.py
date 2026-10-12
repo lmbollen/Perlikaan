@@ -656,9 +656,11 @@ KV = """
                     font_size: sp(16)
                     disabled: not root.my_turn
                     on_release: root.submit_bid()
-            BoxLayout:
-                size_hint_y: None
-                height: dp(48)
+            Collapsible:
+                shown: not root.awaiting_next_round
+                full_height: dp(48)
+                bg: T.CLEAR
+                radius: 0
                 spacing: dp(10)
                 Btn:
                     kind: "danger"
@@ -672,6 +674,16 @@ KV = """
                     font_size: sp(16)
                     disabled: not root.can_calza
                     on_release: root.submit(root.CALZA)
+            Collapsible:
+                shown: root.awaiting_next_round
+                full_height: dp(48)
+                bg: T.CLEAR
+                radius: 0
+                Btn:
+                    kind: "primary"
+                    text: "Next round  \u203a"
+                    font_size: sp(16)
+                    on_release: root.next_round()
 
 # ---------------------------------------------------------------- simulation
 
@@ -1240,6 +1252,7 @@ class GameScreen(Screen):
     card_border = ListProperty(T.CLEAR)
     totals_visible = BooleanProperty(False)
     warming = BooleanProperty(False)
+    awaiting_next_round = BooleanProperty(False)
     # the human's composer
     my_turn = BooleanProperty(False)
     can_dudo = BooleanProperty(False)
@@ -1296,6 +1309,7 @@ class GameScreen(Screen):
         self._feed_last = None
         self._close_sheet()
         self._sheet_shown = False
+        self.awaiting_next_round = False
         # Watching starts paused (Play or Step starts it); at the table the bots play by themselves.
         self.auto = human
         session.set_auto(human, app.settings["step_delay"])
@@ -1328,6 +1342,10 @@ class GameScreen(Screen):
         if self.session is not None:
             self.session.skip_warmup()
 
+    def next_round(self):
+        if self.session is not None:
+            self.session.next_round()
+
     def toggle_auto(self):
         self.auto = not self.auto
         if self.session is not None:
@@ -1341,6 +1359,16 @@ class GameScreen(Screen):
 
     def _hex(self, name):
         return T.seat_hex(self._seat.get(name, 0))
+
+    def _you(self, name):
+        """Is this the human seat called "You" (so: "you lose", "your bid")?"""
+        return name is not None and name == self._human and name.strip().lower() == "you"
+
+    def _verb(self, name, one, many):
+        return many if self._you(name) else one
+
+    def _whose(self, name):
+        return "your" if self._you(name) else f"{T.esc(name)}'s"
 
     def _who(self, name, bold=True):
         text = T.color(T.esc(name), self._hex(name))
@@ -1446,7 +1474,8 @@ class GameScreen(Screen):
                         border=T.RED)
         elif snap.finished and snap.standings:
             card.update(caption="Game over", caption_color=T.GOLD, border=T.GOLD,
-                        by=f"{T.color(T.icon(chr(0x2605)), gold)} {self._who(snap.standings[0])} wins",
+                        by=(f"{T.color(T.icon(chr(0x2605)), gold)} {self._who(snap.standings[0])} "
+                            f"{self._verb(snap.standings[0], 'wins', 'win')}"),
                         next=f"{len(snap.standings)} players")
         elif snap.finished:
             card.update(caption="Stopped")
@@ -1454,9 +1483,10 @@ class GameScreen(Screen):
             dudo = reveal["type"] == "dudo"
             tone = T.RED if dudo else T.TEAL
             if reveal.get("loser"):
-                outcome = f"{self._who(reveal['loser'])} loses a die"
+                outcome = f"{self._who(reveal['loser'])} {self._verb(reveal['loser'], 'loses', 'lose')} a die"
             else:
-                outcome = T.color("Exact! ", T.HEX["teal"]) + self._who(reveal["challenger"]) + " is right"
+                outcome = (T.color("Exact! ", T.HEX["teal"]) + self._who(reveal["challenger"])
+                           + self._verb(reveal["challenger"], " is right", " are right"))
             card.update(caption=f"{'Dudo' if dudo else 'Calza'}  \u00b7  {reveal['challenger']}",
                         caption_color=tone, qty=str(reveal["bid"].quantity), face=reveal["bid"].face,
                         by=f"[b]{reveal['actual']}[/b] on the table", next=outcome, border=tone)
@@ -1492,22 +1522,23 @@ class GameScreen(Screen):
         if item.kind in ("dudo", "calza"):
             tone = T.HEX["red"] if item.kind == "dudo" else T.HEX["teal"]
             call = T.color(f"[b]{item.kind.capitalize()}![/b]", tone)
-            return f"{who}  {call}  on {T.esc(item.other)}'s {T.bid_text(item.bid.quantity, item.bid.face)}", False, "left"
+            return f"{who}  {call}  on {self._whose(item.other)} {T.bid_text(item.bid.quantity, item.bid.face)}", False, "left"
         if item.kind == "result":
             tone = T.HEX["teal"] if item.good else T.HEX["red"]
             head = T.color(f"[b]{item.other} on the table[/b]", tone)
-            text = T.esc(item.text)
-            for name in sorted(self._seat, key=len, reverse=True):     # "Sniper 2" before "Sniper"
-                if text.startswith(T.esc(name) + " "):
-                    text = self._who(name) + text[len(T.esc(name)):]
-                    break
+            if item.loser:
+                text = f"{self._who(item.loser)} {self._verb(item.loser, 'loses', 'lose')} a die"
+            else:
+                text = T.esc(item.text)
             return f"{T.icon(chr(0x2192))}  {head}  ·  {text}", False, "left"
         if item.kind == "gain":
-            return f"{who}  {T.color(T.esc(item.text), T.HEX['teal'])}", False, "left"
+            text = item.text.replace("gains", "gain", 1) if self._you(item.player) else item.text
+            return f"{who}  {T.color(T.esc(text), T.HEX['teal'])}", False, "left"
         if item.kind == "out":
-            return f"{who}  {T.color('is out', T.HEX['muted'])}", False, "left"
+            return f"{who}  {T.color(self._verb(item.player, 'is out', 'are out'), T.HEX['muted'])}", False, "left"
         if item.kind == "win":
-            return f"{T.color(T.icon(chr(0x2605)), T.HEX['gold'])}  {who}  {T.color('wins the game', T.HEX['gold'])}", False, "left"
+            won = self._verb(item.player, "wins the game", "win the game")
+            return f"{T.color(T.icon(chr(0x2605)), T.HEX['gold'])}  {who}  {T.color(won, T.HEX['gold'])}", False, "left"
         if item.kind == "talk":
             return f"{self._who(item.player)}\n[i]{T.esc(item.text)}[/i]", True, "left"
         return T.esc(item.text), False, "left"
@@ -1552,12 +1583,18 @@ class GameScreen(Screen):
             self._setup_choice(pending)
         self._pending = pending
         self.my_turn = pending is not None
+        if self.awaiting_next_round != snap.awaiting_next_round:
+            self.awaiting_next_round = snap.awaiting_next_round
         if pending is None:
             self.can_dudo = self.can_calza = False
+            if self.qty_text or self.bid_button != "Bid":     # no stale bid on the disabled controls
+                self.qty_text, self.bid_button = "", "Bid"
             for b in self._faces:
                 b.disabled, b.selected = True, False
             if snap.finished:
                 self.turn_hint = "Game over"
+            elif snap.awaiting_next_round:
+                self.turn_hint = "Round over"
             elif snap.reveal:
                 self.turn_hint = "Cups are up"
             elif snap.to_act:
@@ -1960,7 +1997,7 @@ class PerudoApp(App):
             return
         session = GameSession(bots, step=not human, delay=self.settings["step_delay"],
                               warmup=int(self.settings["warmup_games"] or 0),
-                              speech_idle=lambda: self.speaker.idle)
+                              speech_idle=lambda: self.speaker.idle, hold_reveals=human)
         self.speaker.clear()
         self.go("game")
         self.sm.get_screen("game").begin(session, human)

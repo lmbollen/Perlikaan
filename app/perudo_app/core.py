@@ -388,6 +388,7 @@ class FeedItem:
     bid: Optional[Bid] = None
     other: Optional[str] = None
     good: Optional[bool] = None        # result: did the call succeed
+    loser: Optional[str] = None        # result: who lost a die (None: an exact Calza)
 
 
 @dataclass
@@ -408,6 +409,7 @@ class Snapshot:
     feed: List[FeedItem] = field(default_factory=list)    # log and talk in order, structured
     bidder: Optional[str] = None                          # who made current_bid
     warmup: Optional[tuple] = None                        # (done, total) while warm-up games run
+    awaiting_next_round: bool = False                     # a reveal is up; next_round() goes on
 
     def totals(self) -> Dict[int, int]:
         """Count per face over every alive player's dice (Pacos wild unless Palifico)."""
@@ -428,7 +430,8 @@ class GameSession:
 
     def __init__(self, bots: Sequence[Any], seed: Optional[int] = None, step: bool = True,
                  delay: float = 1.0, log_limit: int = 400, warmup: int = 0,
-                 speech_idle: Optional[Callable[[], bool]] = None, speech_timeout: float = 20.0):
+                 speech_idle: Optional[Callable[[], bool]] = None, speech_timeout: float = 20.0,
+                 hold_reveals: bool = False):
         self.bots = list(bots)
         self.seed = seed if seed is not None else random.SystemRandom().randrange(2**63)
         self.step = step
@@ -452,6 +455,8 @@ class GameSession:
         self._warming = False
         self.speech_idle = speech_idle          # the next turn waits until this says True
         self.speech_timeout = speech_timeout
+        self.hold_reveals = hold_reveals        # after a reveal, wait for next_round()
+        self._next_round = threading.Event()
         self._talk_rng = random.Random(self.seed ^ 0x7A1C)
         self._spoke: set = set()                # bots that said something this turn
 
@@ -465,6 +470,10 @@ class GameSession:
 
     def skip_warmup(self) -> None:
         self._skip_warmup = True
+
+    def next_round(self) -> None:
+        """Hold mode: the reveal has been seen, start the next round."""
+        self._next_round.set()
 
     def next(self) -> None:
         """Step mode: let the next turn happen."""
@@ -493,6 +502,7 @@ class GameSession:
         self._stop = True
         self._go.set()
         self._pause.set()
+        self._next_round.set()
         self._answer.set()
 
     def snapshot(self) -> Snapshot:
@@ -537,9 +547,28 @@ class GameSession:
         while not self._stop and not self.speech_idle() and time.monotonic() < end:
             time.sleep(0.05)
 
+    def _hold_after_reveal(self, obs: Observation) -> None:
+        """A round was decided: keep its reveal up (and the round as it was)
+        until next_round(), instead of going straight to the next opener."""
+        with self._lock:
+            if not (self.hold_reveals and self._snap.reveal is not None
+                    and obs.round_number != self._snap.round_number):
+                return
+            self._next_round.clear()
+            self._snap.awaiting_next_round = True
+            self._snap.to_act = None
+        while not self._stop and not self._next_round.wait(0.1):
+            pass
+        with self._lock:
+            self._snap.awaiting_next_round = False
+            self._snap.reveal = None
+        if self._stop:
+            raise SessionStopped()
+
     def _before_turn(self, obs: Observation) -> None:
         time.sleep(0)                       # let the UI thread in between turns
         self._wait_speech()
+        self._hold_after_reveal(obs)
         self._spoke.clear()
         game = self._game
         with self._lock:
@@ -593,7 +622,7 @@ class GameSession:
                     "good": good, "loser": loser, "palifico": self._snap.palifico,
                 }
                 self._feed(FeedItem("result", event.challenger, text, bid=event.current_bid,
-                                    other=str(event.actual_count), good=good))
+                                    other=str(event.actual_count), good=good, loser=loser))
         elif isinstance(event, DieGainedEvent):
             self._log(f"{event.player} gains a die ({event.dice_count})")
             with self._lock:
