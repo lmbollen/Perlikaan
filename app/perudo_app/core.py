@@ -16,7 +16,7 @@ import sys
 import threading
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
@@ -223,6 +223,20 @@ class PlayerView:
     is_human: bool = False
 
 
+@dataclass(frozen=True)
+class FeedItem:
+    """One line of the game's story, for the UI to style by kind.
+
+    kind is one of: round, bid, dudo, calza, result, gain, out, win, talk.
+    `player` is who acted (or spoke); `other` the player acted on."""
+    kind: str
+    player: Optional[str] = None
+    text: str = ""
+    bid: Optional[Bid] = None
+    other: Optional[str] = None
+    good: Optional[bool] = None        # result: did the call succeed
+
+
 @dataclass
 class Snapshot:
     round_number: int = 0
@@ -234,10 +248,12 @@ class Snapshot:
     log: List[str] = field(default_factory=list)          # everything that happened, formatted
     commentary: List[str] = field(default_factory=list)   # what the bots said
     pending: Optional[Observation] = None                 # the human's turn, waiting for submit()
-    reveal: Optional[dict] = None                         # the last reveal (dice per player, counts)
+    reveal: Optional[dict] = None                         # the last reveal, kept until the next bid
     finished: bool = False
     standings: tuple = ()
     error: Optional[str] = None
+    feed: List[FeedItem] = field(default_factory=list)    # log and talk in order, structured
+    bidder: Optional[str] = None                          # who made current_bid
 
     def totals(self) -> Dict[int, int]:
         """Count per face over every alive player's dice (Pacos wild unless Palifico)."""
@@ -308,9 +324,8 @@ class GameSession:
     def snapshot(self) -> Snapshot:
         with self._lock:
             s = self._snap
-            return Snapshot(s.round_number, s.palifico, list(s.players), list(s.history), s.current_bid,
-                            s.to_act, list(s.log), list(s.commentary), s.pending, s.reveal,
-                            s.finished, s.standings, s.error)
+            return replace(s, players=list(s.players), history=list(s.history), log=list(s.log),
+                           commentary=list(s.commentary), feed=list(s.feed))
 
     @property
     def running(self) -> bool:
@@ -343,41 +358,63 @@ class GameSession:
         game = self._game
         with self._lock:
             s = self._snap
+            if obs.round_number != s.round_number:
+                starter = obs.players[obs.my_id].name
+                self._feed(FeedItem("round", starter, f"Round {obs.round_number}" + (" \u00b7 Palifico" if obs.palifico else "")))
             s.round_number = obs.round_number
             s.palifico = obs.palifico
             s.current_bid = obs.current_bid
+            s.bidder = next((r.player for r in reversed(obs.history) if isinstance(r.action, Bid)), None)
             s.to_act = obs.players[obs.my_id].name
             s.history = [f"{r.player}: {fmt_action(r.action)}" for r in obs.history]
             s.players = [PlayerView(p.name, p.dice_count, p.alive, tuple(p.dice), isinstance(p.bot, HumanSeat))
                          for p in game.players]
-            s.reveal = None
+            if obs.history:              # the new round's first bid is in: the old reveal is done
+                s.reveal = None
         if not (self.human is not None and obs.players[obs.my_id].name == self.human.name):
             self._wait_turn()
 
     def _before_reveal(self, challenge_type, challenger, bidder, current_bid) -> None:
         self._log(f"{challenger} calls {'Dudo' if challenge_type == 'dudo' else 'Calza'} on {bidder}'s {fmt_bid(current_bid)}")
+        with self._lock:
+            self._feed(FeedItem(challenge_type, challenger, bid=current_bid, other=bidder))
+            self._snap.to_act = None
         self._wait_turn()
 
     def _on_event(self, event) -> None:
         if isinstance(event, BidEvent):
             self._log(f"{event.player} bids {fmt_bid(event.bid)}")
+            with self._lock:
+                self._feed(FeedItem("bid", event.player, bid=event.bid))
         elif isinstance(event, RevealEvent):
+            if event.challenge_type == "dudo":
+                good = event.result != "bidder_correct"
+                loser = event.challenger if not good else event.bidder
+                text = f"{loser} loses a die"
+                self._log(f"{event.actual_count} on the table: {loser} loses a die")
+            else:
+                good = event.result == "correct"
+                loser = None if good else event.challenger
+                text = "exact!" if good else f"{event.challenger} loses a die"
+                self._log(f"{event.actual_count} on the table: Calza {'exact' if good else 'wrong'}")
             with self._lock:
                 self._snap.reveal = {
                     "dice": [(n, tuple(d)) for n, d in event.dice],
                     "bid": event.current_bid, "actual": event.actual_count,
                     "type": event.challenge_type, "challenger": event.challenger,
                     "bidder": event.bidder, "result": event.result,
+                    "good": good, "loser": loser, "palifico": self._snap.palifico,
                 }
-            if event.challenge_type == "dudo":
-                who = event.challenger if event.result == "bidder_correct" else event.bidder
-                self._log(f"{event.actual_count} on the table: {who} loses a die")
-            else:
-                self._log(f"{event.actual_count} on the table: Calza {'exact' if event.result == 'correct' else 'wrong'}")
+                self._feed(FeedItem("result", event.challenger, text, bid=event.current_bid,
+                                    other=str(event.actual_count), good=good))
         elif isinstance(event, DieGainedEvent):
             self._log(f"{event.player} gains a die ({event.dice_count})")
+            with self._lock:
+                self._feed(FeedItem("gain", event.player, f"gains a die ({event.dice_count})"))
         elif isinstance(event, PlayerEliminatedEvent):
             self._log(f"{event.player} is out")
+            with self._lock:
+                self._feed(FeedItem("out", event.player, "is out"))
         elif isinstance(event, RoundEndedEvent):
             if event.palifico_next:
                 self._log(f"Palifico next, {event.next_starting_player} starts")
@@ -387,12 +424,19 @@ class GameSession:
                 self._snap.standings = event.standings
                 self._snap.to_act = None
                 self._snap.pending = None
+                self._feed(FeedItem("win", event.winner, "wins the game"))
             self._log(f"{event.winner} wins")
 
     def _on_talk(self, speaker: str, text: str, lang: str) -> None:
         with self._lock:
             self._snap.commentary.append(f"{speaker}: {text}")
             del self._snap.commentary[:-self.log_limit]
+            self._feed(FeedItem("talk", speaker, text))
+
+    def _feed(self, item: FeedItem) -> None:
+        """Append to the feed; the caller holds the lock."""
+        self._snap.feed.append(item)
+        del self._snap.feed[:-self.log_limit]
 
     def _log(self, line: str) -> None:
         with self._lock:
@@ -454,10 +498,21 @@ class Simulation:
         self._positions = defaultdict(int)
         self._thread: Optional[threading.Thread] = None
         self.error: Optional[str] = None
+        self.started_at: Optional[float] = None
+        self.finished_at: Optional[float] = None
+
+    @property
+    def rate(self) -> float:
+        """Games per second so far."""
+        if self.started_at is None:
+            return 0.0
+        elapsed = (self.finished_at or time.monotonic()) - self.started_at
+        return self.played / elapsed if elapsed > 0 else 0.0
 
     def start(self) -> None:
         ROUTER.install()
         ROUTER.listener = None
+        self.started_at = time.monotonic()
         self._thread = threading.Thread(target=self._run, name="perudo-sim", daemon=True)
         self._thread.start()
 
@@ -505,6 +560,8 @@ class Simulation:
                         self._positions[name] += pos
         except Exception as exc:
             self.error = f"{type(exc).__name__}: {exc}"
+        finally:
+            self.finished_at = time.monotonic()
 
 
 # ---------------------------------------------------------------------------

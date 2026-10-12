@@ -3,10 +3,17 @@ title = Perudo
 package.name = perudo
 package.domain = org.perlikaan
 source.dir = .
-source.include_exts = py,kv,json,txt,md
-source.exclude_dirs = tests, bin, tools, p4a-recipes, .buildozer, .p4a-src, __pycache__, .venv
+source.include_exts = py,kv,json,txt,md,png
+source.exclude_dirs = tests, bin, tools, docs, p4a-recipes, .buildozer, .p4a-src, __pycache__, .venv
 source.exclude_patterns = flake.nix, flake.lock, build.sh, README.md
-version = 0.1.0
+version = 0.2.0
+
+# Drawn by tools/make_icons.py.
+icon.filename = %(source.dir)s/assets/icon.png
+icon.adaptive_foreground.filename = %(source.dir)s/assets/icon_fg.png
+icon.adaptive_background.filename = %(source.dir)s/assets/icon_bg.png
+presplash.filename = %(source.dir)s/assets/presplash.png
+android.presplash_color = #0F1D18
 
 # The engine and the bots are copied in by build.sh (app/perudo). edge-tts
 # is pure Python; aiohttp and its helpers have python-for-android recipes.

@@ -87,6 +87,44 @@ def test_session_steps_through_a_game_and_shows_all_dice():
     assert any("wins" in line for line in final.log)
 
 
+def test_feed_tells_the_story_and_a_reveal_stays_until_the_next_bid():
+    reg = BotRegistry()
+    reg.scan_bundled()
+    picks = [e for e in reg.entries if e.class_name in ("RandomBot", "MinRaiseBot", "ExampleBot")]
+    for e in picks:
+        e.copies = 1
+    session = GameSession(reg.make(picks), seed=11, step=True)
+    session.start()
+    assert wait(lambda: session.snapshot().to_act is not None)
+    first = session.snapshot().feed
+    assert first[0].kind == "round" and first[0].text == "Round 1"
+    # step until a round has been decided and the next round waits for its opener
+    held = None
+    for _ in range(400):
+        session.next()
+        time.sleep(0.005)
+        snap = session.snapshot()
+        if snap.reveal is not None and snap.round_number == 2:
+            held = snap
+            break
+    assert held is not None, "the reveal of round 1 is gone before round 2's first bid"
+    assert held.current_bid is None and held.to_act is not None
+    assert held.reveal["loser"] in {p.name for p in held.players} or held.reveal["good"]
+    kinds = [f.kind for f in held.feed]
+    assert kinds.index("bid") < kinds.index("result") and kinds.count("round") == 2
+    call = next(f for f in held.feed if f.kind in ("dudo", "calza"))
+    assert call.bid == held.reveal["bid"] and call.other == held.reveal["bidder"]
+    # the opener of round 2 bids: the reveal is done, and the bidder is known
+    for _ in range(50):
+        session.next()
+        time.sleep(0.005)
+        snap = session.snapshot()
+        if snap.current_bid is not None:
+            break
+    assert snap.reveal is None and snap.bidder is not None
+    session.stop()
+
+
 def test_session_auto_mode_finishes_on_its_own():
     reg = BotRegistry()
     reg.scan_bundled()

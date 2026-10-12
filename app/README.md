@@ -6,23 +6,35 @@ Everything outside Python that the build needs comes from Nix.
 
 What it does:
 
-- **Bots**: every bot in `perudo/bots` is listed; tick the ones to seat and set
-  copies. *Load bot file* adds any single-file bot from the phone's storage
-  (it must follow the same API as the example bot).
-- **Watch a game**: one game, turn by turn (*Next turn*) or automatically
-  (*Auto*, seconds per turn in Settings). *Show dice* reveals every player's
-  dice with the totals per face at the top (with Pacos counted, naturals in
-  brackets). The bots' table talk appears under the log.
-- **Join the table**: you take a seat. Only your own dice are shown; pick a
-  face and quantity (the lowest legal bid is preselected), or call Dudo or
-  Calza when they are legal.
-- **Simulation**: many games with the same bot instances (so learning bots
-  keep learning), with a live leaderboard: bars for the win percentage,
-  wins and average place, re-ranked as games come in. Stop any time.
+- **Home**: start a game at the table, watch one, or run a simulation; the
+  bots currently seated are listed underneath.
+- **Players**: switch each bundled bot on or off and set its copies. *Load
+  file* adds any single-file bot from the phone's storage (it must follow the
+  same API as the example bot).
+- **Watch a game**: plays by itself (Play / Pause, or Step one turn at a
+  time). The card on top shows the current bid, who made it and who is
+  thinking. The *Dice* switch shows every player's dice, with the total per
+  face (Pacos counted, naturals in small print) and the dice that count for
+  the bid ringed in gold. When someone calls Dudo or Calza the cups come up:
+  the counted dice stay lit, the rest fade, and the card says how many were
+  on the table and who loses a die. The feed below tells the game as it
+  happens, with the bots' table talk in speech bubbles.
+- **Join the table**: you take a seat. Only your own dice are shown until a
+  reveal. Tap a die for the face, set the quantity (the lowest legal bid is
+  preselected), and bid, or call Dudo or Calza when they are legal.
+- **Simulation**: 100 to 5000 games with the same bot instances (so learning
+  bots keep learning), with a live leaderboard: win rate, wins, average place
+  and bars scaled to the leader, re-ranked as the games come in.
 - **Settings**: text to speech with edge-tts (Microsoft's online neural
   voices, needs internet; every bot keeps its own voice), the voice language,
-  whether dice are shown when watching, the auto-play speed, your name, and
-  the number of games per simulation.
+  whether dice are shown when watching, the auto-play speed and your name.
+
+The Android back button goes back a screen (and leaves a game). The look is
+one dark felt table with ivory dice, drawn on the canvas
+(`perudo_app/widgets.py`, colours in `perudo_app/theme.py`); the icon and
+launch screen in `assets/` come from `tools/make_icons.py`.
+
+![The six screens](docs/screens.png)
 
 ## Try it on the desktop
 
