@@ -1,0 +1,7 @@
+<!-- Since Android 11 an app must declare which other apps it talks to:
+     this lets it find the phone's text-to-speech engine. -->
+<queries>
+    <intent>
+        <action android:name="android.intent.action.TTS_SERVICE" />
+    </intent>
+</queries>

@@ -394,7 +394,8 @@ class GameSession:
         if self.human is not None:
             self.human.session = self
         self._lock = threading.Lock()
-        self._go = threading.Event()
+        self._go = threading.Event()        # step mode: let one turn happen
+        self._pause = threading.Event()     # auto mode: cut the wait between turns short
         self._answer = threading.Event()
         self._stop = False
         self._action: Any = None
@@ -416,11 +417,16 @@ class GameSession:
         self._go.set()
 
     def set_auto(self, auto: bool, delay: Optional[float] = None) -> None:
+        """Play by itself (auto) or one turn per next(). Pausing takes effect
+        at once: a game waiting between turns stops there."""
         self.step = not auto
         if delay is not None:
             self.delay = delay
         if auto:
             self._go.set()
+        else:
+            self._go.clear()
+            self._pause.set()
 
     def submit(self, action: Any) -> None:
         """The human's decision for the pending observation."""
@@ -432,6 +438,7 @@ class GameSession:
     def stop(self) -> None:
         self._stop = True
         self._go.set()
+        self._pause.set()
         self._answer.set()
 
     def snapshot(self) -> Snapshot:
@@ -459,11 +466,12 @@ class GameSession:
     def _wait_turn(self) -> None:
         if self._stop:
             raise SessionStopped()
-        if self.step:
-            self._go.clear()
+        if not self.step and self.delay > 0:
+            self._pause.clear()
+            self._pause.wait(self.delay)       # set_auto(False) or stop() ends it early
+        if self.step and not self._stop:
             self._go.wait()
-        elif self.delay > 0:
-            time.sleep(self.delay)
+            self._go.clear()
         if self._stop:
             raise SessionStopped()
 
@@ -683,6 +691,7 @@ class Simulation:
 
 DEFAULT_SETTINGS = {
     "tts": False,
+    "tts_engine": "system",   # the phone's own voices, or "edge" (Microsoft's online voices)
     "tts_lang": "nl",
     "show_dice": True,
     "sim_games": 200,

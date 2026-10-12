@@ -4,7 +4,7 @@ package.name = perudo
 package.domain = org.perlikaan
 source.dir = .
 source.include_exts = py,kv,json,txt,md,png
-source.exclude_dirs = tests, bin, tools, docs, p4a-recipes, .buildozer, .p4a-src, __pycache__, .venv
+source.exclude_dirs = tests, bin, tools, docs, manifest, p4a-recipes, .buildozer, .p4a-src, __pycache__, .venv
 source.exclude_patterns = flake.nix, flake.lock, build.sh, README.md
 version = 0.2.0
 
@@ -29,6 +29,8 @@ android.api = 35
 android.minapi = 24
 android.archs = arm64-v8a
 android.allow_backup = True
+# Lets the app find the phone's text-to-speech engine (the bots' voices).
+android.extra_manifest_xml = manifest/queries.xml
 
 # The SDK, NDK and Ant come from the Nix shell (flake.nix exports ANDROIDSDK,
 # ANDROIDNDK and ANT_HOME; build.sh passes them on through the environment as

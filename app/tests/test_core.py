@@ -125,6 +125,43 @@ def test_feed_tells_the_story_and_a_reveal_stays_until_the_next_bid():
     session.stop()
 
 
+def test_pause_stops_the_game_at_once_and_step_plays_one_turn():
+    reg = BotRegistry()
+    reg.scan_bundled()
+    picks = [e for e in reg.entries if e.class_name in ("RandomBot", "MinRaiseBot")]
+    session = GameSession(reg.make(picks), seed=5, step=False, delay=0.4)
+    session.start()
+
+    def moves():
+        return sum(1 for f in session.snapshot().feed if f.kind in ("bid", "dudo", "calza"))
+
+    assert wait(lambda: moves() >= 2, timeout=10)
+    session.set_auto(False)                 # pressed in the middle of the wait between turns
+    paused_at = moves()
+    time.sleep(1.5)                         # several turns' worth of delay
+    assert moves() <= paused_at + 1         # at most the move that was already being made
+    held = moves()
+    session.next()
+    assert wait(lambda: moves() == held + 1, timeout=5) or session.snapshot().reveal is not None
+    time.sleep(0.6)
+    assert moves() <= held + 1
+    session.set_auto(True)
+    assert wait(lambda: moves() >= held + 3, timeout=10)
+    session.stop()
+
+
+def test_a_watched_game_can_start_paused():
+    reg = BotRegistry()
+    reg.scan_bundled()
+    picks = [e for e in reg.entries if e.class_name in ("RandomBot", "MinRaiseBot")]
+    session = GameSession(reg.make(picks), seed=6, step=True)
+    session.start()
+    assert wait(lambda: session.snapshot().to_act is not None)
+    time.sleep(0.5)
+    assert session.snapshot().current_bid is None       # nobody moved before Play or Step
+    session.stop()
+
+
 def test_session_auto_mode_finishes_on_its_own():
     reg = BotRegistry()
     reg.scan_bundled()

@@ -16,8 +16,8 @@ What it does:
   deletes that copy. On Android the folder is
   `Android/data/org.perlikaan.perudo/files/bots`, reachable over USB: `.py`
   files copied in there by hand are picked up as well.
-- **Watch a game**: plays by itself (Play / Pause, or Step one turn at a
-  time). The card on top shows the current bid, who made it and who is
+- **Watch a game**: starts paused; Play lets it run (Pause stops it at once),
+  Step plays one turn at a time. The card on top shows the current bid, who made it and who is
   thinking. The *Dice* switch shows every player's dice, with the total per
   face (Pacos counted, naturals in small print) and the dice that count for
   the bid ringed in gold. When someone calls Dudo or Calza the cups come up:
@@ -30,9 +30,13 @@ What it does:
 - **Simulation**: 100 to 5000 games with the same bot instances (so learning
   bots keep learning), with a live leaderboard: win rate, wins, average place
   and bars scaled to the leader, re-ranked as the games come in.
-- **Settings**: text to speech with edge-tts (Microsoft's online neural
-  voices, needs internet; every bot keeps its own voice), the voice language,
-  whether dice are shown when watching, the auto-play speed and your name.
+- **Settings**: read the table talk aloud, every bot with its own voice. By
+  default with the phone's own text-to-speech voices (offline); Microsoft's
+  online neural voices through edge-tts can be chosen instead, and the
+  phone's voices take over whenever that service refuses (it has refused
+  edge-tts with a 403 since October 2026; the *Speech check* workflow shows
+  when it works again). Also the voice language, a Test button, whether dice
+  are shown when watching, the auto-play speed and your name.
 
 The Android back button goes back a screen (and leaves a game). The look is
 one dark felt table with ivory dice, drawn on the canvas

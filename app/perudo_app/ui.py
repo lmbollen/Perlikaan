@@ -823,11 +823,23 @@ KV = """
                     padding: dp(16), dp(2)
                     SettingRow:
                         title: "Read the table talk aloud"
-                        sub: "Microsoft's neural voices through edge-tts; needs an internet connection"
+                        sub: "Every bot speaks with its own voice"
                         Toggle:
+                            id: tts_toggle
                             active: app.settings["tts"]
                             pos_hint: {"center_y": 0.5}
                             on_active: app.set_setting("tts", self.active)
+                    Divider:
+                    SettingRow:
+                        title: "Voices"
+                        sub: "The phone's own voices work offline. Microsoft's online voices sound better, but the service refuses them at the moment; the phone's voices then take over."
+                    Segmented:
+                        options: [("system", "Phone"), ("edge", "Microsoft")]
+                        value: app.settings["tts_engine"]
+                        on_value: app.set_setting("tts_engine", self.value)
+                    Widget:
+                        size_hint_y: None
+                        height: dp(14)
                     Divider:
                     SettingRow:
                         title: "Voice language"
@@ -839,9 +851,21 @@ KV = """
                             options: [("nl", "NL"), ("en", "EN")]
                             value: app.settings["tts_lang"]
                             on_value: app.set_setting("tts_lang", self.value)
+                    Divider:
+                    SettingRow:
+                        title: "Try it"
+                        sub: "Plays a line in a bot's voice"
+                        Btn:
+                            kind: "outline"
+                            text: T.icon("\u25b6") + "  Test"
+                            font_size: sp(14)
+                            size_hint: None, None
+                            size: dp(96), dp(40)
+                            pos_hint: {"center_y": 0.5}
+                            on_release: app.test_voice()
                 Sub:
                     text: root.speech_status
-                    color: T.RED
+                    color: root.speech_color
                     opacity: 1 if root.speech_status else 0
                     height: self.texture_size[1] if root.speech_status else 0
                 Widget:
@@ -1227,8 +1251,9 @@ class GameScreen(Screen):
         self._feed_last = None
         self._close_sheet()
         self._sheet_shown = False
-        self.auto = True
-        session.set_auto(True, app.settings["step_delay"])
+        # Watching starts paused (Play or Step starts it); at the table the bots play by themselves.
+        self.auto = human
+        session.set_auto(human, app.settings["step_delay"])
         session.start()
         if self._poll is None:
             self._poll = Clock.schedule_interval(self.refresh, 0.12)
@@ -1327,7 +1352,8 @@ class GameScreen(Screen):
             elif row.active and p.is_human:
                 row.sub = T.color("your turn", T.HEX["gold"])
             elif row.active and reveal is None:
-                row.sub = T.color("thinking…", T.HEX["gold"])
+                row.sub = T.color("thinking…" if (self.auto or self.human_playing) else "to play",
+                                  T.HEX["gold"])
             elif reveal and p.name == reveal.get("loser"):
                 row.sub = T.color("lost a die", T.HEX["red"])
             else:
@@ -1394,6 +1420,8 @@ class GameScreen(Screen):
             self.bid_by = (T.color("You open", T.HEX["gold"]) if mine
                            else f"{self._who(snap.to_act)} opens" if snap.to_act else "")
             self.bid_next = "Pacos are wild" if not snap.palifico else "Pacos are not wild"
+            if not self.auto and not self.human_playing and snap.round_number == 1:
+                self.bid_next = T.color("Press Play or Step to start", T.HEX["gold"])
             self.card_border = T.GOLD if mine else T.CLEAR
 
     def _feed_markup(self, item):
@@ -1689,13 +1717,30 @@ class SimScreen(Screen):
 
 class SettingsScreen(Screen):
     speech_status = StringProperty("")
+    speech_color = ListProperty(T.RED)
     speed_text = StringProperty("")
+    _poll = None
 
     def on_pre_enter(self, *_):
         app = App.get_running_app()
-        self.speech_status = f"Speech is not working: {app.speaker.error}" if app.speaker.error else ""
         self.ids.speed.value = float(app.settings["step_delay"])
         self._describe_speed(app.settings["step_delay"])
+        self.show_speech()
+        self._poll = Clock.schedule_interval(self.show_speech, 0.5)    # speech reports come in later
+
+    def on_leave(self, *_):
+        if self._poll is not None:
+            self._poll.cancel()
+            self._poll = None
+
+    def show_speech(self, *_):
+        speaker = App.get_running_app().speaker
+        if speaker.note:
+            self.speech_status, self.speech_color = f"{speaker.note}\n{speaker.error or ''}".strip(), T.MUTED
+        elif speaker.error:
+            self.speech_status, self.speech_color = f"Speech is not working: {speaker.error}", T.RED
+        else:
+            self.speech_status = ""
 
     def set_speed(self, value):
         if value is None:
@@ -1726,7 +1771,8 @@ class PerudoApp(App):
         self.registry.scan_user()
         self.registry.apply_selection(self.settings["table"])
         self.bots_dir = self._bots_dir()
-        self.speaker = Speaker(str(data_dir / "edge-tts"), play=self._play_mp3, enabled=self.settings["tts"])
+        self.speaker = Speaker(str(data_dir / "edge-tts"), play=self._play_mp3, enabled=self.settings["tts"],
+                               engine=self.settings["tts_engine"])
         ROUTER.install()
         ROUTER.speak = lambda text, lang, seed: self.speaker.say(text, self.settings["tts_lang"] or lang, seed)
         Builder.load_string(KV)
@@ -1824,6 +1870,17 @@ class PerudoApp(App):
         self.settings[key] = value
         if key == "tts":
             self.speaker.enabled = bool(value)
+        elif key == "tts_engine":
+            self.speaker.engine = value
+            self.speaker.error = self.speaker.note = None
+
+    def test_voice(self):
+        if not self.settings["tts"]:
+            self.sm.get_screen("settings").ids.tts_toggle.active = True    # turns speech on, visibly
+        lang = self.settings["tts_lang"] or "nl"
+        line = "Dudo! Ik geloof er niets van." if lang == "nl" else "Dudo! I don't believe a word of it."
+        self.speaker.clear()
+        self.speaker.say(line, lang, random.choice(["Sniper", "Trihard", "Pokerface", "Carlos Dos"]))
 
     def start_game(self, human: bool):
         bots = self.registry.make(fresh=True)
