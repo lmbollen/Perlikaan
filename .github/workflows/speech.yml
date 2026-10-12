@@ -1,0 +1,24 @@
+name: Speech check
+
+# Microsoft's read-aloud service (used through edge-tts for the bots'
+# voices) changes what it accepts from time to time; this shows whether it
+# still answers edge-tts, and with which browser version.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+  push:
+    paths:
+      - "app/tools/speech_check.py"
+      - ".github/workflows/speech.yml"
+
+jobs:
+  speech:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Synthesise a line with edge-tts
+        working-directory: app
+        run: uv run --no-dev --with edge-tts python tools/speech_check.py
