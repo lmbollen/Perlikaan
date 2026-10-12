@@ -248,16 +248,17 @@ class CarlosDosBot:
     BLUFF_SPAN = 2
 
     # -- starting model: probability only (the field is unknown) ---------------
-    # A player calls Dudo when the bid looks unlikely: 50% at P(true) = 0.3,
-    # about where calling breaks even at a table of 3-4. Per player the
-    # logit is w . x with x = (1, P(true) from their own dice, their dice
-    # share, P(true) from their dice AND what the bids this round say (how a
-    # reader of the bidding sees it), how far the bid jumps above the minimum
-    # raise, the bid is ours, our caught-bluff record when it is ours). The
-    # starting weights split the believed probability between a player who
-    # reads only their dice and one who reads the bids too; learning finds
-    # which one each player is.
-    DUDO_PRIOR = (3.0, -5.0, 0.0, -5.0, 0.3, 0.0, 2.0)
+    # A player calls Dudo when the bid looks unlikely. Per player the logit
+    # is w . x with x = (1, P(true) from their own dice, their dice share,
+    # P(true) from their dice AND what the bids this round say (how a reader
+    # of the bidding sees it), how far the bid jumps above the minimum raise,
+    # the bid is ours, our caught-bluff record when it is ours, the value of
+    # an opponent's die 1 / (players - 1)). The starting weights split the
+    # believed probability between a player who reads only their dice and
+    # one who reads the bids too (learning finds which one each player is),
+    # and put the 50% point where calling breaks even, P(true) = w / (1 + w)
+    # for a die worth w: 0.2 at 5 players, 0.33 at 3, 0.5 heads-up.
+    DUDO_PRIOR = (1.0, -5.0, 0.0, -5.0, 0.3, 0.0, 2.0, 4.2)
     # Calza: w0 + w1 * P(exact), 50% at P(exact) = 0.5 (break-even: a die
     # won against a die lost).
     CALZA_PRIOR = (-6.0, 12.0)
@@ -553,7 +554,7 @@ class CarlosDosBot:
         p_pub = _tail(public, bid.quantity - k)
         jump = bid.quantity - _min_quantity(before, bid.face, pal) if before is not None else 0
         ours = bidder == self.name
-        x = self._dudo_x(p_true, n / total, p_pub, jump, ours, p.trust)
+        x = self._dudo_x(p_true, n / total, p_pub, jump, ours, p.trust, len(counts))
         y = 1.0 if isinstance(action, Dudo) else 0.0
         self._sgd(p.dudo_w, x, y, 0.0)
         self._sgd(self.table["dudo_w"], x, y, 0.0)
@@ -565,10 +566,10 @@ class CarlosDosBot:
         p.n += 1
         self.table["n"] += 1
 
-    def _dudo_x(self, p_true, share, p_pub, jump, ours, trust):
+    def _dudo_x(self, p_true, share, p_pub, jump, ours, trust, n_alive):
         t = self.TRUST_START if trust is None else trust
         return (1.0, p_true, share, p_pub, min(max(jump, 0), 3), 1.0 if ours else 0.0,
-                (1 - t) if ours else 0.0)
+                (1 - t) if ours else 0.0, 1 / max(n_alive - 1, 1))
 
     def _sgd(self, w, x, y, offset):
         pred = _sigmoid(sum(wi * xi for wi, xi in zip(w, x)) + offset)
@@ -789,7 +790,7 @@ class CarlosDosBot:
                 continue
             pt = _tail(perceived, q - k)
             pe = _at(perceived, q - k)
-            x = self._dudo_x(pt, share, _tail(pub, q - k), jump, True, pr.trust)
+            x = self._dudo_x(pt, share, _tail(pub, q - k), jump, True, pr.trust, n_alive)
             p_dudo = _sigmoid(sum(a * b for a, b in zip(w, x)))
             p_calza = (1 - p_dudo) * _sigmoid(pr.calza_w[0] + pr.calza_w[1] * pe)
             p_raise = 1 - p_dudo - p_calza
@@ -820,7 +821,7 @@ class CarlosDosBot:
         for _ in range(n_alive - 2):
             pt = _tail(full, q)
             pe = _at(full, q)
-            x = self._dudo_x(pt, 1 / n_alive, pt, step - 1, False, None)
+            x = self._dudo_x(pt, 1 / n_alive, pt, step - 1, False, None, n_alive)
             p_end = _sigmoid(sum(a * b for a, b in zip(tw, x)))
             p_end += (1 - p_end) * _sigmoid(cw[0] + cw[1] * pe)
             value += alive_prob * p_end * w_other
