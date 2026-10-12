@@ -1,0 +1,567 @@
+"""
+The app's model, without any UI toolkit: loading bots, running one game
+step by step (optionally with a human at the table), running simulations
+with live standings, settings, and routing the bots' talk to the UI and to
+speech. The engine (perudo.game) is synchronous, so a game runs in a worker
+thread; the UI polls `snapshot()` and feeds decisions in with `submit()`.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import inspect
+import json
+import random
+import sys
+import threading
+import time
+from collections import defaultdict
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Sequence
+
+from perudo import bot_loader
+from perudo.game import PerudoGame
+from perudo.models import (
+    PACO,
+    Bid,
+    BidEvent,
+    Calza,
+    CalzaEvent,
+    DieGainedEvent,
+    DieLostEvent,
+    Dudo,
+    GameEndedEvent,
+    Observation,
+    PlayerEliminatedEvent,
+    RevealEvent,
+    RoundEndedEvent,
+)
+from perudo.rules import count_matches
+
+FACES = (1, 2, 3, 4, 5, 6)
+
+
+def face_label(face: int) -> str:
+    return "P" if face == PACO else str(face)
+
+
+def fmt_bid(bid: Optional[Bid]) -> str:
+    if bid is None:
+        return "-"
+    return f"{bid.quantity} x {'Paco' if bid.face == PACO else bid.face}"
+
+
+def fmt_action(action: Any) -> str:
+    if isinstance(action, Bid):
+        return fmt_bid(action)
+    if isinstance(action, Dudo):
+        return "Dudo!"
+    if isinstance(action, Calza):
+        return "Calza!"
+    return str(action)
+
+
+# ---------------------------------------------------------------------------
+# bots
+# ---------------------------------------------------------------------------
+
+@dataclass
+class BotEntry:
+    class_name: str
+    display_name: str
+    cls: type
+    source: str                  # "bundled" or the file it was loaded from
+    enabled: bool = True
+    copies: int = 1
+
+
+class BotRegistry:
+    """The bots the app can seat: the ones bundled in perudo/bots plus any
+    bot file the user loads."""
+
+    def __init__(self):
+        self.entries: List[BotEntry] = []
+        self.errors: List[str] = []
+
+    def scan_bundled(self) -> None:
+        for cls in bot_loader.discover_bot_classes():
+            self._add(cls, "bundled")
+
+    def add_file(self, path: str) -> List[BotEntry]:
+        """Load every bot class from a Python file. Returns the new entries."""
+        p = Path(path)
+        module_name = f"perudo_app_user_bots.{p.stem}"
+        spec = importlib.util.spec_from_file_location(module_name, p)
+        if spec is None or spec.loader is None:
+            self.errors.append(f"{p.name}: not a Python module")
+            return []
+        module = importlib.util.module_from_spec(spec)
+        try:
+            sys.modules[module_name] = module
+            spec.loader.exec_module(module)
+        except Exception as exc:       # a user's file may fail in any way
+            self.errors.append(f"{p.name}: {exc}")
+            return []
+        added = []
+        for _, obj in inspect.getmembers(module, inspect.isclass):
+            if obj.__module__ != module.__name__ or not hasattr(obj, "play"):
+                continue
+            entry = self._add(obj, str(p))
+            if entry is not None:
+                added.append(entry)
+        if not added:
+            self.errors.append(f"{p.name}: no class with a play() method")
+        return added
+
+    def _add(self, cls: type, source: str) -> Optional[BotEntry]:
+        try:
+            display = getattr(cls(), "name", cls.__name__)
+        except Exception as exc:
+            self.errors.append(f"{cls.__name__}: {exc}")
+            return None
+        for e in self.entries:
+            if e.class_name == cls.__name__ and e.source == source:
+                e.cls = cls
+                return e
+        default_copies = getattr(cls, "count", 1)
+        entry = BotEntry(cls.__name__, display, cls, source,
+                         enabled=default_copies > 0, copies=max(1, default_copies))
+        self.entries.append(entry)
+        return entry
+
+    def selected(self) -> List[BotEntry]:
+        return [e for e in self.entries if e.enabled]
+
+    def make(self, entries: Optional[Sequence[BotEntry]] = None, fresh: bool = True) -> List[Any]:
+        """Instantiate the selected bots, numbering copies like the loader does."""
+        bots: List[Any] = []
+        for e in entries if entries is not None else self.selected():
+            if fresh:
+                for cls in {x.cls for x in self.entries}:
+                    if hasattr(cls, "reset_memory"):
+                        cls.reset_memory()
+            for i in range(1, e.copies + 1):
+                bot = e.cls()
+                if i > 1:
+                    bot.name = f"{bot.name} {i}"
+                bots.append(bot)
+        return bots
+
+
+# ---------------------------------------------------------------------------
+# talk and speech routing
+# ---------------------------------------------------------------------------
+
+class TalkRouter:
+    """Catches what the bots say (perudo.talk.Mouth) and hands it to the
+    current session's commentary and to the speaker. Installed once."""
+
+    def __init__(self):
+        self.listener: Optional[Callable[[str, str, str], None]] = None   # (speaker, text, lang)
+        self.speak: Optional[Callable[[str, str, str], None]] = None      # (text, lang, voice_seed)
+        self._installed = False
+
+    def install(self) -> None:
+        if self._installed:
+            return
+        try:
+            import perudo.talk as talk
+        except Exception:
+            return
+        router = self
+
+        def speak(text: str, lang: str = "nl", voice_seed: str = "") -> None:
+            if router.listener is not None:
+                router.listener(voice_seed, text, lang)
+            if router.speak is not None:
+                router.speak(text, lang, voice_seed)
+
+        talk.speak = speak
+        talk.tts_enabled = lambda: True      # Mouth.say only composes a line when talk or tts is on
+        talk.talk_enabled = lambda: False    # never print to the console from the app
+        self._installed = True
+
+
+ROUTER = TalkRouter()
+
+
+# ---------------------------------------------------------------------------
+# one game, step by step, with or without a human seat
+# ---------------------------------------------------------------------------
+
+class SessionStopped(Exception):
+    pass
+
+
+class HumanSeat:
+    """A bot whose play() waits for the person at the phone."""
+
+    def __init__(self, name: str = "You"):
+        self.name = name
+        self.session: Optional["GameSession"] = None
+
+    def on_game_start(self, info):
+        pass
+
+    def observe(self, event):
+        pass
+
+    def on_game_end(self, result):
+        pass
+
+    def play(self, state: Observation):
+        return self.session.ask_human(state)
+
+
+@dataclass
+class PlayerView:
+    name: str
+    dice_count: int
+    alive: bool
+    dice: tuple = ()
+    is_human: bool = False
+
+
+@dataclass
+class Snapshot:
+    round_number: int = 0
+    palifico: bool = False
+    players: List[PlayerView] = field(default_factory=list)
+    history: List[str] = field(default_factory=list)      # this round's actions, formatted
+    current_bid: Optional[Bid] = None
+    to_act: Optional[str] = None
+    log: List[str] = field(default_factory=list)          # everything that happened, formatted
+    commentary: List[str] = field(default_factory=list)   # what the bots said
+    pending: Optional[Observation] = None                 # the human's turn, waiting for submit()
+    reveal: Optional[dict] = None                         # the last reveal (dice per player, counts)
+    finished: bool = False
+    standings: tuple = ()
+    error: Optional[str] = None
+
+    def totals(self) -> Dict[int, int]:
+        """Count per face over every alive player's dice (Pacos wild unless Palifico)."""
+        dice = [d for p in self.players if p.alive for d in p.dice]
+        return {f: count_matches(dice, f, self.palifico) for f in FACES}
+
+    def naturals(self) -> Dict[int, int]:
+        dice = [d for p in self.players if p.alive for d in p.dice]
+        return {f: sum(1 for d in dice if d == f) for f in FACES}
+
+
+class GameSession:
+    """Runs one game in a thread. In step mode every turn waits for next();
+    in auto mode turns follow each other `delay` seconds apart. With a
+    HumanSeat among the bots, that seat's turns wait for submit()."""
+
+    def __init__(self, bots: Sequence[Any], seed: Optional[int] = None, step: bool = True,
+                 delay: float = 1.0, log_limit: int = 400):
+        self.bots = list(bots)
+        self.seed = seed if seed is not None else random.SystemRandom().randrange(2**63)
+        self.step = step
+        self.delay = delay
+        self.log_limit = log_limit
+        self.human = next((b for b in self.bots if isinstance(b, HumanSeat)), None)
+        if self.human is not None:
+            self.human.session = self
+        self._lock = threading.Lock()
+        self._go = threading.Event()
+        self._answer = threading.Event()
+        self._stop = False
+        self._action: Any = None
+        self._snap = Snapshot()
+        self._game: Optional[PerudoGame] = None
+        self._thread: Optional[threading.Thread] = None
+        self.result = None
+
+    # -- control from the UI ---------------------------------------------
+
+    def start(self) -> None:
+        ROUTER.install()
+        ROUTER.listener = self._on_talk
+        self._thread = threading.Thread(target=self._run, name="perudo-game", daemon=True)
+        self._thread.start()
+
+    def next(self) -> None:
+        """Step mode: let the next turn happen."""
+        self._go.set()
+
+    def set_auto(self, auto: bool, delay: Optional[float] = None) -> None:
+        self.step = not auto
+        if delay is not None:
+            self.delay = delay
+        if auto:
+            self._go.set()
+
+    def submit(self, action: Any) -> None:
+        """The human's decision for the pending observation."""
+        with self._lock:
+            self._action = action
+            self._snap.pending = None
+        self._answer.set()
+
+    def stop(self) -> None:
+        self._stop = True
+        self._go.set()
+        self._answer.set()
+
+    def snapshot(self) -> Snapshot:
+        with self._lock:
+            s = self._snap
+            return Snapshot(s.round_number, s.palifico, list(s.players), list(s.history), s.current_bid,
+                            s.to_act, list(s.log), list(s.commentary), s.pending, s.reveal,
+                            s.finished, s.standings, s.error)
+
+    @property
+    def running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    # -- called from the game thread ------------------------------------
+
+    def ask_human(self, state: Observation):
+        with self._lock:
+            self._snap.pending = state
+            self._action = None
+        self._answer.clear()
+        self._answer.wait()
+        if self._stop:
+            raise SessionStopped()
+        return self._action
+
+    def _wait_turn(self) -> None:
+        if self._stop:
+            raise SessionStopped()
+        if self.step:
+            self._go.clear()
+            self._go.wait()
+        elif self.delay > 0:
+            time.sleep(self.delay)
+        if self._stop:
+            raise SessionStopped()
+
+    def _before_turn(self, obs: Observation) -> None:
+        game = self._game
+        with self._lock:
+            s = self._snap
+            s.round_number = obs.round_number
+            s.palifico = obs.palifico
+            s.current_bid = obs.current_bid
+            s.to_act = obs.players[obs.my_id].name
+            s.history = [f"{r.player}: {fmt_action(r.action)}" for r in obs.history]
+            s.players = [PlayerView(p.name, p.dice_count, p.alive, tuple(p.dice), isinstance(p.bot, HumanSeat))
+                         for p in game.players]
+            s.reveal = None
+        if not (self.human is not None and obs.players[obs.my_id].name == self.human.name):
+            self._wait_turn()
+
+    def _before_reveal(self, challenge_type, challenger, bidder, current_bid) -> None:
+        self._log(f"{challenger} calls {'Dudo' if challenge_type == 'dudo' else 'Calza'} on {bidder}'s {fmt_bid(current_bid)}")
+        self._wait_turn()
+
+    def _on_event(self, event) -> None:
+        if isinstance(event, BidEvent):
+            self._log(f"{event.player} bids {fmt_bid(event.bid)}")
+        elif isinstance(event, RevealEvent):
+            with self._lock:
+                self._snap.reveal = {
+                    "dice": [(n, tuple(d)) for n, d in event.dice],
+                    "bid": event.current_bid, "actual": event.actual_count,
+                    "type": event.challenge_type, "challenger": event.challenger,
+                    "bidder": event.bidder, "result": event.result,
+                }
+            if event.challenge_type == "dudo":
+                who = event.challenger if event.result == "bidder_correct" else event.bidder
+                self._log(f"{event.actual_count} on the table: {who} loses a die")
+            else:
+                self._log(f"{event.actual_count} on the table: Calza {'exact' if event.result == 'correct' else 'wrong'}")
+        elif isinstance(event, DieGainedEvent):
+            self._log(f"{event.player} gains a die ({event.dice_count})")
+        elif isinstance(event, PlayerEliminatedEvent):
+            self._log(f"{event.player} is out")
+        elif isinstance(event, RoundEndedEvent):
+            if event.palifico_next:
+                self._log(f"Palifico next, {event.next_starting_player} starts")
+        elif isinstance(event, GameEndedEvent):
+            with self._lock:
+                self._snap.finished = True
+                self._snap.standings = event.standings
+                self._snap.to_act = None
+                self._snap.pending = None
+            self._log(f"{event.winner} wins")
+
+    def _on_talk(self, speaker: str, text: str, lang: str) -> None:
+        with self._lock:
+            self._snap.commentary.append(f"{speaker}: {text}")
+            del self._snap.commentary[:-self.log_limit]
+
+    def _log(self, line: str) -> None:
+        with self._lock:
+            self._snap.log.append(line)
+            del self._snap.log[:-self.log_limit]
+
+    def _run(self) -> None:
+        try:
+            self._game = PerudoGame(bots=self.bots, seed=self.seed, before_turn=self._before_turn,
+                                    before_reveal=self._before_reveal, listeners=[self._on_event])
+            self.result = self._game.play()
+        except SessionStopped:
+            with self._lock:
+                self._snap.finished = True
+                self._snap.pending = None
+        except Exception as exc:        # a bot crashed: show it instead of hanging
+            with self._lock:
+                self._snap.finished = True
+                self._snap.pending = None
+                self._snap.error = f"{type(exc).__name__}: {exc}"
+        finally:
+            if ROUTER.listener == self._on_talk:
+                ROUTER.listener = None
+
+
+# ---------------------------------------------------------------------------
+# simulations with live standings
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Standing:
+    name: str
+    wins: int
+    games: int
+    position_sum: int
+
+    @property
+    def win_pct(self) -> float:
+        return 100.0 * self.wins / self.games if self.games else 0.0
+
+    @property
+    def avg_position(self) -> float:
+        return self.position_sum / self.games if self.games else 0.0
+
+
+class Simulation:
+    """Many games in a thread; the same bot instances play every game, so
+    bots that learn keep learning. standings() is safe to call any time."""
+
+    def __init__(self, bots: Sequence[Any], games: int, seed: Optional[int] = None, round_limit: int = 2000):
+        self.bots = list(bots)
+        self.games = games
+        self.seed = seed if seed is not None else random.SystemRandom().randrange(2**63)
+        self.round_limit = round_limit
+        self._lock = threading.Lock()
+        self._stop = False
+        self._played = 0
+        self._wins = defaultdict(int)
+        self._positions = defaultdict(int)
+        self._thread: Optional[threading.Thread] = None
+        self.error: Optional[str] = None
+
+    def start(self) -> None:
+        ROUTER.install()
+        ROUTER.listener = None
+        self._thread = threading.Thread(target=self._run, name="perudo-sim", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop = True
+
+    @property
+    def running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    @property
+    def played(self) -> int:
+        with self._lock:
+            return self._played
+
+    def standings(self) -> List[Standing]:
+        with self._lock:
+            rows = [Standing(b.name, self._wins[b.name], self._played, self._positions[b.name]) for b in self.bots]
+        return sorted(rows, key=lambda r: (-r.wins, r.position_sum, r.name))
+
+    def _run(self) -> None:
+        rng = random.Random(self.seed)
+        try:
+            for _ in range(self.games):
+                if self._stop:
+                    break
+                rounds = {"n": 0}
+
+                def limit(event, rounds=rounds):
+                    if isinstance(event, RoundEndedEvent):
+                        rounds["n"] += 1
+                        if rounds["n"] > self.round_limit:
+                            raise RuntimeError("round limit")
+
+                try:
+                    result = PerudoGame(bots=self.bots, seed=rng.randrange(2**63), listeners=[limit]).play()
+                except RuntimeError as exc:
+                    if "round limit" in str(exc):
+                        continue
+                    raise
+                with self._lock:
+                    self._played += 1
+                    self._wins[result.winner] += 1
+                    for pos, name in enumerate(result.standings, start=1):
+                        self._positions[name] += pos
+        except Exception as exc:
+            self.error = f"{type(exc).__name__}: {exc}"
+
+
+# ---------------------------------------------------------------------------
+# settings
+# ---------------------------------------------------------------------------
+
+DEFAULT_SETTINGS = {
+    "tts": False,
+    "tts_lang": "nl",
+    "show_dice": True,
+    "sim_games": 200,
+    "step_delay": 1.0,
+    "human_name": "You",
+}
+
+
+class Settings:
+    def __init__(self, path: Optional[str] = None):
+        self.path = Path(path) if path else None
+        self.values: Dict[str, Any] = dict(DEFAULT_SETTINGS)
+        self.load()
+
+    def load(self) -> None:
+        if self.path and self.path.is_file():
+            try:
+                self.values.update(json.loads(self.path.read_text()))
+            except Exception:
+                pass
+
+    def save(self) -> None:
+        if self.path:
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                self.path.write_text(json.dumps(self.values, indent=1))
+            except OSError:
+                pass
+
+    def __getitem__(self, key):
+        return self.values.get(key, DEFAULT_SETTINGS.get(key))
+
+    def __setitem__(self, key, value):
+        self.values[key] = value
+        self.save()
+
+
+# ---------------------------------------------------------------------------
+# helpers for the human's bid picker
+# ---------------------------------------------------------------------------
+
+def legal_bids(state: Observation) -> List[Bid]:
+    return [a for a in state.legal_actions if isinstance(a, Bid)]
+
+
+def lowest_legal(state: Observation, face: int) -> Optional[Bid]:
+    bids = [b for b in legal_bids(state) if b.face == face]
+    return min(bids, key=lambda b: b.quantity) if bids else None
+
+
+def can(state: Observation, kind: type) -> bool:
+    return any(isinstance(a, kind) for a in state.legal_actions)

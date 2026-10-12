@@ -18,3 +18,9 @@ losses*.csv
 
 # temporary pre-change copies of bots, for paired comparisons only
 perudo/bots/*_old.py
+
+# Android app: synced engine copy and build output
+app/perudo/
+app/bin/
+app/.buildozer/
+app/.venv/
