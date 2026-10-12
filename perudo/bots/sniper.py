@@ -51,8 +51,9 @@ class SniperBot:
     # then the risky raise is taken anyway.
     FORCED_DUDO_BELOW = 0.75
     # Credit a player for every bid they made on a face (False, the original)
-    # or only for their latest bid (True): in a chain of raises every player
-    # just tops the previous bid, which is not more evidence.
+    # or once per face per round, and never for the bid being judged itself
+    # (True): in a chain of raises every player just tops the previous bid,
+    # which is not more evidence.
     HINT_ONCE = False
     # In Palifico every later bid is forced onto the opener's face, but a
     # player who raises instead of calling Dudo still probably holds some of
@@ -96,11 +97,13 @@ class SniperBot:
         self._tail_cache[key] = result
         return result
 
-    def _hint(self, state, face):
-        """Extra dice of `face` we expect among opponents, based on their bids."""
+    def _hint(self, state, face, exclude_current=False):
+        """Extra dice of `face` we expect among opponents, based on their bids.
+        exclude_current: leave out the bid being judged (the last record)."""
+        records = state.history[:-1] if exclude_current else state.history
         # In Palifico only the opener chose the face; later bids are forced
         # (and count at PALIFICO_FOLLOW_HINT).
-        history = state.history[:1] if (state.palifico and not self.PALIFICO_FOLLOW_HINT) else state.history
+        history = records[:1] if (state.palifico and not self.PALIFICO_FOLLOW_HINT) else records
         dice_of = {p.name: p.dice_count for p in state.players}
 
         bids_by_player = {}
@@ -109,7 +112,9 @@ class SniperBot:
                 continue
             bids_by_player.setdefault(rec.player, []).append(rec.action)
         if self.HINT_ONCE:
-            bids_by_player = {who: bids[-1:] for who, bids in bids_by_player.items()}
+            # One bid per face per player (the weight depends on the face only).
+            bids_by_player = {who: list({b.face: b for b in bids}.values())
+                              for who, bids in bids_by_player.items()}
 
         total = 0.0
         opener = history[0].player if history else None
@@ -169,7 +174,12 @@ class SniperBot:
             # Opening: there is always a legal bid.
             return best
 
-        p_cur = self._prob_true(state, cur, n_unknown, hints)
+        if self.HINT_ONCE:
+            # The bid we judge is not evidence for itself.
+            faced = {face: self._hint(state, face, exclude_current=True) for face in range(1, 7)}
+            p_cur = self._prob_true(state, cur, n_unknown, faced)
+        else:
+            p_cur = self._prob_true(state, cur, n_unknown, hints)
         if best is None or (best_p < self.MIN_ACCEPT and p_cur < self.FORCED_DUDO_BELOW) or p_cur < 1 - best_p:
             return Dudo()
         return best

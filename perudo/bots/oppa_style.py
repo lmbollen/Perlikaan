@@ -45,6 +45,18 @@ class OppaStyleBot:
     TRUST_PRIOR = 0.6
     CALZA_MIN = 0.42
 
+    # -- fixes (False restores the old behaviour, for benchmarks) ----------
+    # _calza_prob rounded the hint (0.6 -> 1), so a bid that was exactly our
+    # count plus the hint got need = -1 and P(exact) = 0.0 right where exact
+    # was the likeliest outcome. Now it uses the same fractional need as
+    # _prob and interpolates the exact mass between the whole needs.
+    FIX_CALZA_ROUNDING = True
+    # Palifico was inferred from the reveal (a non-Paco bid whose count
+    # ignores Pacos), which fails for Paco-face rounds and rounds with no
+    # Pacos on the table: forced followers were graded as if they chose the
+    # face. Now it is tracked from RoundEndedEvent.palifico_next.
+    FIX_PALIFICO_TRACK = True
+
     def __init__(self):
         self.name = BOT_NAME
         self.rng = random.Random()
@@ -59,6 +71,7 @@ class OppaStyleBot:
         self.last_bidder = None
         self.round_opener = None
         self.my_dice_count = 5
+        self._palifico_round = False    # is the round being played a Palifico round?
 
     # -- probability helpers ------------------------------------------------
 
@@ -133,6 +146,13 @@ class OppaStyleBot:
         p = self._face_p(bid.face, state.palifico)
         mine = self._mine(state.my_dice, bid.face, state.palifico)
         hint = self._hints(state, bid.face)
+        if self.FIX_CALZA_ROUNDING:
+            # The same fractional need as _prob: interpolate the exact mass
+            # between the whole needs on either side of it.
+            need = bid.quantity - mine - min(hint, n_unknown)
+            lo = math.floor(need)
+            frac = need - lo
+            return (1 - frac) * self._exact(n_unknown, p, lo) + frac * self._exact(n_unknown, p, lo + 1)
         # Shift the distribution by the (rounded) hint and take exact mass.
         need = bid.quantity - mine - round(hint)
         return self._exact(n_unknown, p, need)
@@ -140,6 +160,7 @@ class OppaStyleBot:
     # -- decision making ------------------------------------------------------
 
     def play(self, state):
+        self._palifico_round = state.palifico
         total = sum(p.dice_count for p in state.players if p.alive)
         n_unknown = total - state.my_dice_count
         cur = state.current_bid
@@ -216,6 +237,7 @@ class OppaStyleBot:
         self.round_bids = {}
         self.last_bidder = None
         self.my_dice_count = 5
+        self._palifico_round = False
 
     def observe(self, event):
         if isinstance(event, BidEvent):
@@ -231,19 +253,29 @@ class OppaStyleBot:
             self.last_bidder = None
             return
 
+        if _is(event, "RoundEndedEvent"):
+            self._palifico_round = event.palifico_next
+            return
+        if _is(event, "GameEndedEvent"):
+            self._palifico_round = False
+            return
+
         if _is(event, "DieLostEvent") and event.player == self.name:
             self.my_dice_count = event.dice_count
         elif _is(event, "DieGainedEvent") and event.player == self.name:
             self.my_dice_count = event.dice_count
 
     def _learn(self, event):
-        # Palifico-ness isn't in the reveal; infer it from the counting rule:
-        # if a non-paco bid's count ignores pacos, it was a Palifico round.
         dice = event.dice_by_player()
         bid = event.current_bid
-        all_dice = [d for ds in dice.values() for d in ds]
-        with_pacos = sum(1 for d in all_dice if d == bid.face or d == PACO)
-        palifico = bid.face != PACO and event.actual_count != with_pacos
+        if self.FIX_PALIFICO_TRACK:
+            palifico = self._palifico_round
+        else:
+            # Palifico-ness isn't in the reveal; infer it from the counting rule:
+            # if a non-paco bid's count ignores pacos, it was a Palifico round.
+            all_dice = [d for ds in dice.values() for d in ds]
+            with_pacos = sum(1 for d in all_dice if d == bid.face or d == PACO)
+            palifico = bid.face != PACO and event.actual_count != with_pacos
 
         for who, bids in self.round_bids.items():
             if who == self.name or who not in dice:

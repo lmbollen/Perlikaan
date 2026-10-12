@@ -47,6 +47,15 @@ CHALLENGE_FACTOR = 0.8       # how likely a shaky bid is to be challenged (for d
 HINT_PRIOR_HITS = 3.0        # prior for "opponent holds the face they bid on"
 HINT_PRIOR_TRIES = 3.0
 
+# -- fixes (False restores the old behaviour, for benchmarks) -----------------
+# Trust (P(holds the face | bid on it)) started at 3/3 = certainty, so a fresh
+# 1-die bidder's die was pinned as a sure match (a 1-die opener's 2x4 could
+# never be called), and it was learned from every raise, forced Palifico bids
+# included. Now: prior 2/3, one sample per face per round, no Palifico followers.
+FIX_TRUST = True
+TRUST_PRIOR_HITS = 2.0
+TRUST_PRIOR_TRIES = 3.0
+
 
 def _count_matches(dice_values: Sequence[int], face: int, palifico: bool) -> int:
     """How many dice count towards a bid on `face`."""
@@ -73,7 +82,7 @@ class Fabulous:
         # Learned across games: how often each opponent actually held the
         # face they bid on.  name -> [hits, tries]
         self._hint_stats: Dict[str, List[float]] = defaultdict(
-            lambda: [HINT_PRIOR_HITS, HINT_PRIOR_TRIES]
+            lambda: [TRUST_PRIOR_HITS, TRUST_PRIOR_TRIES] if FIX_TRUST else [HINT_PRIOR_HITS, HINT_PRIOR_TRIES]
         )
 
         # Per-game / per-round state.
@@ -216,7 +225,10 @@ class Fabulous:
         return pmf
 
     def _player_pmf(self, n: int, p: float, pinned_probs: List[float]) -> List[float]:
-        """Mixture: each 'pinned' die is a match with prob `trust`, else a coin."""
+        """Mixture over the pinned dice: each pinned die is a match with its
+        probability (`trust`), otherwise it is removed from the pool, i.e. it
+        counts as a non-match and does NOT get a coin flip. Only the n -
+        len(pinned_probs) other dice are coins with probability `p`."""
         result = [0.0] * (n + 1)
         # Enumerate which pinned dice actually are matches.
         combos = [([], 1.0)]
@@ -283,9 +295,18 @@ class Fabulous:
 
     def _learn_from_reveal(self, event: RevealEvent) -> None:
         dice = event.dice_by_player()
+        opener = self._round_bids[0][0] if self._round_bids else None
+        seen = set()
         for player, bid in self._round_bids:
             if player == self.name or player not in dice:
                 continue
+            if FIX_TRUST:
+                # Only a bid that chose its face is a sample: the player's
+                # first bid on that face this round, and in Palifico only the
+                # opener's (every later bid is forced onto the same face).
+                if (player, bid.face) in seen or (self._palifico_now and player != opener):
+                    continue
+                seen.add((player, bid.face))
             held = _count_matches(dice[player], bid.face, self._palifico_now) > 0
             stats = self._hint_stats[player]
             stats[0] += 1.0 if held else 0.0
