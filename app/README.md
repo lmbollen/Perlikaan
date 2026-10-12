@@ -53,6 +53,43 @@ runs `uv sync`, so Buildozer and Cython come from `uv.lock`. The first build
 still fetches python-for-android and the Python packages it compiles for the
 phone, and takes a while.
 
+## Restricted networks
+
+The build fetches from four kinds of hosts: PyPI (Buildozer, Cython, the
+pure-Python packages), GitHub (python-for-android itself, SDL2 and its
+libraries as release assets), the upstream source hosts python-for-android
+compiles from (python.org, sqlite.org, openssl.org, GitHub source archives),
+and dl.google.com (the Android SDK and NDK, fetched by Nix). Where only
+the last two are blocked:
+
+```sh
+cd app
+uv run python tools/seed_sources.py   # ~100 MB from PyPI, GitHub releases, archive.ubuntu.com
+nix develop .#prebuilt                # needs ANDROIDSDK and ANDROIDNDK set to an SDK and NDK you have
+./build.sh
+```
+
+`tools/seed_sources.py` fetches the python-for-android release from PyPI
+into `app/.p4a-src` (used through `p4a.source_dir`, so Buildozer never
+clones GitHub) and CPython, SQLite, OpenSSL, libffi, Kivy and pyjnius from
+PyPI, GitHub release assets and Ubuntu's package pool, repacked under the
+file names python-for-android expects in its download cache with the
+markers that make it skip the download. `buildozer.spec` pins `python3`,
+`hostpython3` and `sqlite3` to the versions it can fetch.
+
+`build.sh` passes the SDK, NDK and python-for-android checkout to Buildozer
+through the environment (`APP_ANDROID_SDK_PATH`, `APP_ANDROID_NDK_PATH`,
+`APP_P4A_SOURCE_DIR`; Buildozer reads any spec key as `SECTION_KEY`), so
+`buildozer.spec` holds no machine-specific paths. `P4A_SOURCE_DIR` overrides
+the checkout `seed_sources.py` made.
+
+The SDK and NDK are not covered: Google serves them only from dl.google.com,
+and Nix, Buildozer and the SDK manager all fetch from there. The `prebuilt`
+shell is for an SDK (platform 33 and build tools installed) and an NDK
+(25 to 28) from another machine or a container image such as
+`saschpe/android-ndk`; `nix develop` (the default shell) is for networks
+where dl.google.com is reachable.
+
 ## Tests
 
 ```sh

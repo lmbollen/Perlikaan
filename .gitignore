@@ -23,4 +23,5 @@ perudo/bots/*_old.py
 app/perudo/
 app/bin/
 app/.buildozer/
+app/.p4a-src/
 app/.venv/
