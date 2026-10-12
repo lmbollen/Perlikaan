@@ -371,3 +371,19 @@ def test_bar_padding_pads_only_what_the_bars_cover():
     assert bar_padding(2220, 2400, 0, 120, 0, 60) == [0, 0, 0, 0]
     # drawn under the status bar only
     assert bar_padding(2340, 2400, 0, 120, 0, 60) == [0, 120, 0, 0]
+
+
+def test_bots_no_longer_announce_their_moves_but_keep_their_quotes(monkeypatch):
+    import perudo.talk as talk
+    from perudo_app.core import ROUTER
+
+    ROUTER.install()
+    heard = []
+    monkeypatch.setattr(ROUTER, "speak", lambda text, lang, seed: heard.append(text))
+    monkeypatch.setattr(talk, "QUOTE_CHANCE", 1.0)
+    bot = type("Bot", (), {"name": "Sniper"})()
+    talk.Mouth(bot, {}).say("raise", announce="4x 5", bid="4x 5")
+    talk.Mouth(bot, {}).say("dudo", announce="Dudo!")
+    assert heard == []                                      # bare announcements are gone
+    talk.Mouth(bot, {"raise": ["Hoppa, {bid}!"]}).say("raise", announce="4x 5", bid="4x 5")
+    assert heard == ["Hoppa, 4x 5!"]                         # a quote is still said

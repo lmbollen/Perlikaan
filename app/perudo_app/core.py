@@ -293,6 +293,15 @@ class TalkRouter:
         talk.speak = speak
         talk.tts_enabled = lambda: True      # Mouth.say only composes a line when talk or tts is on
         talk.talk_enabled = lambda: False    # never print to the console from the app
+
+        # The app shows every move, so a bot no longer announces its bid (or
+        # "Dudo!", "Calza!") when it has nothing else to say; its quotes stay.
+        original_say = talk.Mouth.say
+
+        def say(mouth, key, announce=None, **fmt):
+            return original_say(mouth, key, None, **fmt)
+
+        talk.Mouth.say = say
         self._installed = True
 
 
