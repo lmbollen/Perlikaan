@@ -26,9 +26,12 @@ android fetches itself; aiohttp and the rest come from PyPI. The Android
 SDK and NDK are not covered: they only exist on dl.google.com (or inside
 container images); see README.md.
 
-The versions below are the ones python-for-android 2026.5.9 pins; the
-Python and SQLite versions are the nearest Ubuntu carries, and
-buildozer.spec pins the recipes to them with `python3==...`.
+The versions below are the ones python-for-android 2026.5.9 pins, except
+Python and SQLite, which are the nearest Ubuntu carries. Those two differ
+from the recipes' versions, so the script writes `.p4a-src/requirements`
+(the spec's list with `python3==...` pins) for build.sh to pass as
+APP_REQUIREMENTS, and reshapes the one CPython file that python-for-android
+patches so its patch still applies.
 """
 
 from __future__ import annotations
@@ -69,15 +72,67 @@ def pypi_sdist(name: str, version: str) -> bytes:
     return fetch(url)
 
 
-def retar(data: bytes, top: str) -> bytes:
-    """A .tar.gz of the archive with its top-level directory renamed to `top`."""
+def retar(data: bytes, top: str, edit=None) -> bytes:
+    """A .tar.gz of the archive with its top-level directory renamed to `top`.
+
+    `edit(path, content) -> content` may rewrite files (path below `top`)."""
     out = io.BytesIO()
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tf, tarfile.open(fileobj=out, mode="w:gz") as of:
         for m in tf.getmembers():
             parts = m.name.split("/", 1)
             m.name = top + ("/" + parts[1] if len(parts) > 1 else "")
-            of.addfile(m, tf.extractfile(m) if m.isfile() else None)
+            if m.isfile():
+                content = tf.extractfile(m).read()
+                if edit is not None and len(parts) > 1:
+                    content = edit(parts[1], content)
+                m.size = len(content)
+                of.addfile(m, io.BytesIO(content))
+            else:
+                of.addfile(m)
     return out.getvalue()
+
+
+# CPython 3.14.3 added the "arm" and "armv8l" entries that python-for-android's
+# 3.14_armv7l_fix.patch adds itself, and the patch no longer applies. Give the
+# dict its 3.14.2 shape so the patch applies (it puts "arm" back; "armv8l" is
+# only consulted on 32-bit ARM devices, and this app is built for arm64-v8a).
+_SYSCONFIG_NEW = '''        machine = {
+            "aarch64": "arm64_v8a",
+            "arm": "armeabi_v7a",
+            "armv7l": "armeabi_v7a",
+            "armv8l": "armeabi_v7a",
+            "i686": "x86",
+            "x86_64": "x86_64",
+        }[machine]
+'''
+_SYSCONFIG_OLD = '''        machine = {
+            "x86_64": "x86_64",
+            "i686": "x86",
+            "aarch64": "arm64_v8a",
+            "armv7l": "armeabi_v7a",
+        }[machine]
+'''
+
+
+def edit_cpython(path: str, content: bytes) -> bytes:
+    if path == "Lib/sysconfig/__init__.py":
+        text = content.decode()
+        if _SYSCONFIG_NEW not in text:
+            raise SystemExit(f"CPython {PYTHON}: Lib/sysconfig/__init__.py has changed; update edit_cpython()")
+        return text.replace(_SYSCONFIG_NEW, _SYSCONFIG_OLD).encode()
+    return content
+
+
+def pinned_requirements() -> str:
+    """The spec's requirement list with the seeded Python and SQLite versions."""
+    for line in (APP / "buildozer.spec").read_text().splitlines():
+        if line.startswith("requirements ="):
+            items = [r.strip() for r in line.split("=", 1)[1].split(",")]
+            break
+    else:
+        raise SystemExit("buildozer.spec has no requirements line")
+    pins = {"python3": PYTHON, "hostpython3": PYTHON, "sqlite3": SQLITE}
+    return ",".join(f"{r}=={pins[r]}" if r in pins else r for r in items)
 
 
 def rezip(data: bytes, top: str) -> bytes:
@@ -110,7 +165,7 @@ def main() -> None:
 
     print("CPython from Ubuntu's pool")
     py = fetch(f"{UBUNTU}/p/python3.{PYTHON.split('.')[1]}/python3.{PYTHON.split('.')[1]}_{PYTHON}.orig.tar.xz")
-    data = retar(py, f"cpython-{PYTHON}")
+    data = retar(py, f"cpython-{PYTHON}", edit_cpython)
     seed("python3", f"v{PYTHON}.tar.gz", data)
     seed("hostpython3", f"v{PYTHON}.tar.gz", data)
 
@@ -128,8 +183,10 @@ def main() -> None:
     seed("kivy", f"{KIVY}.zip", rezip(pypi_sdist("kivy", KIVY), f"kivy-{KIVY}"))
     seed("pyjnius", f"{PYJNIUS}.zip", rezip(pypi_sdist("pyjnius", PYJNIUS), f"pyjnius-{PYJNIUS}"))
 
-    print("\nSeeded. Build with:")
-    print(f"  P4A_SOURCE_DIR={src} ./build.sh")
+    (P4A_SRC / "requirements").write_text(pinned_requirements() + "\n")
+    print(f"  -> {P4A_SRC / 'requirements'}")
+
+    print("\nSeeded. ./build.sh now uses this python-for-android and these versions.")
 
 
 if __name__ == "__main__":

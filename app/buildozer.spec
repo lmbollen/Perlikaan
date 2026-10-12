@@ -10,9 +10,10 @@ version = 0.1.0
 
 # The engine and the bots are copied in by build.sh (app/perudo). edge-tts
 # is pure Python; aiohttp and its helpers have python-for-android recipes.
-# python3 and sqlite3 are pinned to the versions tools/seed_sources.py can
-# fetch on a restricted network (both exist upstream too).
-requirements = python3==3.14.4,hostpython3==3.14.4,sqlite3==3.53.4,kivy==2.3.1,edge-tts,aiohttp,aiosignal,aiohappyeyeballs,attrs,frozenlist,multidict,yarl,propcache,idna,certifi,typing_extensions,tabulate,srt
+# python3, hostpython3 and sqlite3 are left at the versions python-for-android
+# pins (tools/seed_sources.py overrides them through APP_REQUIREMENTS on a
+# restricted network).
+requirements = python3,hostpython3,sqlite3,kivy==2.3.1,edge-tts,aiohttp,aiosignal,aiohappyeyeballs,attrs,frozenlist,multidict,yarl,propcache,idna,certifi,typing_extensions,tabulate,srt
 
 orientation = portrait
 fullscreen = 0
@@ -33,6 +34,10 @@ android.ant_path =
 android.skip_update = True
 android.accept_sdk_license = True
 
+# python-for-android release 2026.05.09 (the same release tools/seed_sources.py
+# takes from PyPI), so builds are reproducible.
+p4a.branch = master
+p4a.commit = 58d21141f17c889bf8585f5665921d72028f8831
 # A python-for-android checkout to use instead of cloning it from GitHub
 # (build.sh sets it through APP_P4A_SOURCE_DIR from P4A_SOURCE_DIR or
 # app/.p4a-src; tools/seed_sources.py fetches the release from PyPI for

@@ -86,8 +86,12 @@ into `app/.p4a-src` (used through `p4a.source_dir`, so Buildozer never
 clones GitHub) and CPython, SQLite, OpenSSL, libffi, Kivy and pyjnius from
 PyPI, GitHub release assets and Ubuntu's package pool, repacked under the
 file names python-for-android expects in its download cache with the
-markers that make it skip the download. `buildozer.spec` pins `python3`,
-`hostpython3` and `sqlite3` to the versions it can fetch.
+markers that make it skip the download. Ubuntu carries newer CPython and
+SQLite releases than python-for-android pins, so the script writes
+`app/.p4a-src/requirements`, the spec's list with `python3`, `hostpython3`
+and `sqlite3` pinned to the versions it fetched, which `build.sh` passes to
+Buildozer, and reshapes the one CPython file python-for-android patches so
+the patch still applies.
 
 `build.sh` passes the SDK, NDK and python-for-android checkout to Buildozer
 through the environment (`APP_ANDROID_SDK_PATH`, `APP_ANDROID_NDK_PATH`,

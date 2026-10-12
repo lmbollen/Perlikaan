@@ -42,4 +42,9 @@ if [ -n "${P4A_SOURCE_DIR:-}" ]; then
 elif [ -d .p4a-src ]; then
   export APP_P4A_SOURCE_DIR="$(ls -d "$PWD"/.p4a-src/python*android* | head -1)"
 fi
+# tools/seed_sources.py leaves the requirement list with the versions it
+# could fetch (python3, hostpython3, sqlite3 pinned); use it when present.
+if [ -f .p4a-src/requirements ]; then
+  export APP_REQUIREMENTS="$(cat .p4a-src/requirements)"
+fi
 exec uv run buildozer android "${1:-debug}"

@@ -36,9 +36,10 @@ jobs:
             app/.buildozer
             ~/.gradle/caches
             ~/.gradle/wrapper
+          # Exact key only: python-for-android reuses an unpacked source tree
+          # without checking its version, so a build tree from another spec
+          # must not be restored.
           key: buildozer-${{ runner.os }}-${{ hashFiles('app/buildozer.spec', 'app/uv.lock', 'app/flake.lock') }}
-          restore-keys: |
-            buildozer-${{ runner.os }}-
 
       - name: Build
         working-directory: app
