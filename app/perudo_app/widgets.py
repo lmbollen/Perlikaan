@@ -227,7 +227,7 @@ class Btn(ButtonBehavior, Label):
     """A rounded button. kind: primary (gold), secondary, danger (Dudo),
     calza, ghost (no fill), outline, seg_on / seg_off (segmented control)."""
     kind = OptionProperty("secondary", options=["primary", "secondary", "danger", "calza", "ghost", "outline",
-                                                 "seg_on", "seg_off"])
+                                                 "seg_on", "seg_off", "danger_ghost"])
     fill = ListProperty(T.RAISED)
     ink = ListProperty(T.TEXT)
     outline = ListProperty(T.CLEAR)
@@ -242,6 +242,7 @@ class Btn(ButtonBehavior, Label):
         "outline": (T.CLEAR, T.TEXT, T.LINE),
         "seg_on": (T.GOLD, T.GOLD_INK, T.CLEAR),
         "seg_off": (T.CLEAR, T.MUTED, T.CLEAR),
+        "danger_ghost": (T.CLEAR, T.RED, T.CLEAR),
     }
 
     def __init__(self, **kw):

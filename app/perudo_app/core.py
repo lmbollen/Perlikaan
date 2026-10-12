@@ -8,13 +8,14 @@ thread; the UI polls `snapshot()` and feeds decisions in with `submit()`.
 
 from __future__ import annotations
 
-import importlib.util
 import inspect
 import json
 import random
+import shutil
 import sys
 import threading
 import time
+import types
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -77,31 +78,119 @@ class BotEntry:
 
 
 class BotRegistry:
-    """The bots the app can seat: the ones bundled in perudo/bots plus any
-    bot file the user loads."""
+    """The bots the app can seat: the ones bundled from the repository
+    (perudo/bots, seated by default per their `count`) plus the bots the
+    user imported. Imports are copied into `user_dir`, which is loaded again
+    on every start, so they persist."""
 
-    def __init__(self):
+    def __init__(self, user_dir: Optional[str] = None):
         self.entries: List[BotEntry] = []
         self.errors: List[str] = []
+        self.user_dir = Path(user_dir) if user_dir else None
+        self._mtimes: Dict[str, float] = {}
 
     def scan_bundled(self) -> None:
         for cls in bot_loader.discover_bot_classes():
             self._add(cls, "bundled")
 
+    # -- imported bots ---------------------------------------------------
+
+    def scan_user(self) -> None:
+        """Load the bot files in user_dir: new and changed files are
+        (re)loaded, entries of deleted files are dropped."""
+        if self.user_dir is None:
+            return
+        self.user_dir.mkdir(parents=True, exist_ok=True)
+        present = {str(p): p for p in sorted(self.user_dir.glob("*.py"))}
+        for gone in [src for src in self._mtimes if src not in present]:
+            self._drop_source(gone)
+            del self._mtimes[gone]
+        for src, p in present.items():
+            mtime = p.stat().st_mtime
+            if self._mtimes.get(src) != mtime:
+                self._reload(p)
+                self._mtimes[src] = mtime
+
+    def import_file(self, path: str) -> List[BotEntry]:
+        """Copy a bot file into user_dir (replacing an earlier import with
+        the same file name) and load it. A file without a working bot is
+        not kept."""
+        if self.user_dir is None:
+            return self.add_file(path)
+        src = Path(path)
+        self.user_dir.mkdir(parents=True, exist_ok=True)
+        dest = self.user_dir / src.name
+        previous = dest.read_bytes() if dest.exists() else None
+        if src.resolve() != dest.resolve():
+            shutil.copyfile(src, dest)
+        added = self._reload(dest)
+        if not added:                  # broken: put back what was there
+            if previous is not None:
+                dest.write_bytes(previous)
+                self._reload(dest)
+            elif dest.exists():
+                dest.unlink()
+            self._mtimes.pop(str(dest), None)
+        else:
+            self._mtimes[str(dest)] = dest.stat().st_mtime
+        return added
+
+    def remove(self, entry: BotEntry) -> None:
+        """Forget an imported bot and delete its file (with every bot in it)."""
+        if entry.source == "bundled":
+            return
+        self._drop_source(entry.source)
+        self._mtimes.pop(entry.source, None)
+        try:
+            Path(entry.source).unlink()
+        except OSError:
+            pass
+
+    def _reload(self, p: Path) -> List[BotEntry]:
+        """(Re)load one file, keeping the seat settings of its bots."""
+        kept = {e.class_name: (e.enabled, e.copies) for e in self.entries if e.source == str(p)}
+        self._drop_source(str(p))
+        added = self.add_file(str(p))
+        for e in added:
+            if e.class_name in kept:
+                e.enabled, e.copies = kept[e.class_name]
+        return added
+
+    def _drop_source(self, source: str) -> None:
+        self.entries = [e for e in self.entries if e.source != source]
+
+    # -- the table, saved between runs -------------------------------------
+
+    @staticmethod
+    def key(entry: BotEntry) -> str:
+        where = "bundled" if entry.source == "bundled" else Path(entry.source).name
+        return f"{where}:{entry.class_name}"
+
+    def selection(self) -> Dict[str, list]:
+        return {self.key(e): [e.enabled, e.copies] for e in self.entries}
+
+    def apply_selection(self, saved: Optional[Dict[str, Any]]) -> None:
+        for e in self.entries:
+            value = (saved or {}).get(self.key(e))
+            if isinstance(value, (list, tuple)) and len(value) == 2:
+                e.enabled, e.copies = bool(value[0]), max(1, min(6, int(value[1])))
+
     def add_file(self, path: str) -> List[BotEntry]:
         """Load every bot class from a Python file. Returns the new entries."""
         p = Path(path)
         module_name = f"perudo_app_user_bots.{p.stem}"
-        spec = importlib.util.spec_from_file_location(module_name, p)
-        if spec is None or spec.loader is None:
-            self.errors.append(f"{p.name}: not a Python module")
-            return []
-        module = importlib.util.module_from_spec(spec)
+        # Compiled straight from the source, not through the import system:
+        # its bytecode cache could serve an earlier version of a re-imported
+        # file (it trusts whole-second mtimes and sizes).
+        module = types.ModuleType(module_name)
+        module.__file__ = str(p)
         try:
+            source = p.read_text(encoding="utf-8")
             sys.modules[module_name] = module
-            spec.loader.exec_module(module)
+            exec(compile(source, str(p), "exec"), module.__dict__)
         except Exception as exc:       # a user's file may fail in any way
-            self.errors.append(f"{p.name}: {exc}")
+            sys.modules.pop(module_name, None)
+            self.errors.append(f"{p.name}: {type(exc).__name__}: {exc}")
             return []
         added = []
         for _, obj in inspect.getmembers(module, inspect.isclass):
@@ -126,7 +215,8 @@ class BotRegistry:
                 return e
         default_copies = getattr(cls, "count", 1)
         entry = BotEntry(cls.__name__, display, cls, source,
-                         enabled=default_copies > 0, copies=max(1, default_copies))
+                         enabled=default_copies > 0 if source == "bundled" else True,
+                         copies=max(1, default_copies))
         self.entries.append(entry)
         return entry
 
@@ -575,6 +665,7 @@ DEFAULT_SETTINGS = {
     "sim_games": 200,
     "step_delay": 1.0,
     "human_name": "You",
+    "table": {},          # who is seated: BotRegistry.selection()
 }
 
 

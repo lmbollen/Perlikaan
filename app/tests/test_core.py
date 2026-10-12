@@ -202,3 +202,98 @@ def test_settings_persist(tmp_path):
     s["sim_games"] = 50
     again = Settings(str(tmp_path / "settings.json"))
     assert again["tts"] is True and again["sim_games"] == 50
+
+
+BOT_SOURCE = (
+    "from perudo.models import Bid, Dudo\n"
+    "class {cls}:\n"
+    "    name = '{name}'\n"
+    "    def play(self, state):\n"
+    "        bids = [a for a in state.legal_actions if isinstance(a, Bid)]\n"
+    "        return bids[0] if bids else Dudo()\n"
+)
+
+
+def test_repo_bots_are_seated_by_default_per_their_count():
+    reg = BotRegistry()
+    reg.scan_bundled()
+    seated = {e.class_name for e in reg.entries if e.enabled}
+    assert {"CarlosDosBot", "Trihard", "PokerfaceBot"} <= seated
+    assert not {"RandomBot", "MinRaiseBot"} & seated          # count = 0 in the repo
+
+
+def test_imported_bots_are_copied_and_come_back_after_a_restart(tmp_path):
+    downloads, store = tmp_path / "downloads", tmp_path / "store"
+    downloads.mkdir()
+    (downloads / "mine.py").write_text(BOT_SOURCE.format(cls="MineBot", name="Mine"))
+    reg = BotRegistry(str(store))
+    reg.scan_bundled()
+    reg.scan_user()
+    added = reg.import_file(str(downloads / "mine.py"))
+    assert [e.display_name for e in added] == ["Mine"] and added[0].enabled
+    assert (store / "mine.py").exists() and added[0].source == str(store / "mine.py")
+    (downloads / "mine.py").unlink()                           # the original may go away
+    added[0].copies = 3
+    saved = reg.selection()
+
+    again = BotRegistry(str(store))                            # the next start of the app
+    again.scan_bundled()
+    again.scan_user()
+    again.apply_selection(saved)
+    mine = next(e for e in again.entries if e.class_name == "MineBot")
+    assert mine.enabled and mine.copies == 3
+    assert [b.name for b in again.make([mine])] == ["Mine", "Mine 2", "Mine 3"]
+
+
+def test_reimport_replaces_the_file_and_keeps_the_seats(tmp_path):
+    store = tmp_path / "store"
+    src = tmp_path / "mine.py"
+    src.write_text(BOT_SOURCE.format(cls="MineBot", name="Mine v1"))
+    reg = BotRegistry(str(store))
+    first = reg.import_file(str(src))[0]
+    first.copies = 2
+    src.write_text(BOT_SOURCE.format(cls="MineBot", name="Mine v2"))
+    second = reg.import_file(str(src))
+    mine = [e for e in reg.entries if e.class_name == "MineBot"]
+    assert len(mine) == 1 and mine[0] is second[0]
+    assert mine[0].display_name == "Mine v2" and mine[0].copies == 2
+
+
+def test_a_broken_import_is_not_kept_and_remove_deletes_the_file(tmp_path):
+    store = tmp_path / "store"
+    bad = tmp_path / "bad.py"
+    bad.write_text("this is not python(\n")
+    reg = BotRegistry(str(store))
+    assert reg.import_file(str(bad)) == []
+    assert not (store / "bad.py").exists() and reg.errors
+    good = tmp_path / "good.py"
+    good.write_text(BOT_SOURCE.format(cls="GoodBot", name="Good"))
+    entry = reg.import_file(str(good))[0]
+    reg.remove(entry)
+    assert not (store / "good.py").exists()
+    assert all(e.class_name != "GoodBot" for e in reg.entries)
+
+
+def test_files_dropped_into_the_folder_are_picked_up_and_deleted_ones_dropped(tmp_path):
+    store = tmp_path / "store"
+    reg = BotRegistry(str(store))
+    reg.scan_user()
+    (store / "dropped.py").write_text(BOT_SOURCE.format(cls="DroppedBot", name="Dropped"))
+    reg.scan_user()
+    assert any(e.class_name == "DroppedBot" for e in reg.entries)
+    (store / "dropped.py").unlink()
+    reg.scan_user()
+    assert all(e.class_name != "DroppedBot" for e in reg.entries)
+
+
+def test_the_table_selection_is_saved_in_settings(tmp_path):
+    reg = BotRegistry()
+    reg.scan_bundled()
+    for e in reg.entries:
+        e.enabled = e.class_name == "RandomBot"
+    settings = Settings(str(tmp_path / "settings.json"))
+    settings["table"] = reg.selection()
+    fresh = BotRegistry()
+    fresh.scan_bundled()
+    fresh.apply_selection(Settings(str(tmp_path / "settings.json"))["table"])
+    assert [e.class_name for e in fresh.selected()] == ["RandomBot"]

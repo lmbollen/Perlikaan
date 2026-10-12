@@ -8,9 +8,14 @@ What it does:
 
 - **Home**: start a game at the table, watch one, or run a simulation; the
   bots currently seated are listed underneath.
-- **Players**: switch each bundled bot on or off and set its copies. *Load
-  file* adds any single-file bot from the phone's storage (it must follow the
-  same API as the example bot).
+- **Players**: every bot of this repository is included and seated by
+  default (as in the bot battle, a bot with `count = 0` starts unseated).
+  Switch each on or off and set its copies; the table is remembered. *Load
+  file* imports any single-file bot (same API as the example bot) by copying
+  it into the app's bots folder, so it is there again after a restart; Remove
+  deletes that copy. On Android the folder is
+  `Android/data/org.perlikaan.perudo/files/bots`, reachable over USB: `.py`
+  files copied in there by hand are picked up as well.
 - **Watch a game**: plays by itself (Play / Pause, or Step one turn at a
   time). The card on top shows the current bid, who made it and who is
   thinking. The *Dice* switch shows every player's dice, with the total per

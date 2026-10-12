@@ -23,6 +23,7 @@ from kivy.uix.filechooser import FileChooserListView
 from kivy.uix.label import Label
 from kivy.uix.modalview import ModalView
 from kivy.uix.screenmanager import Screen, ScreenManager, SlideTransition
+from kivy.uix.widget import Widget
 
 from perudo.models import Bid, Calza, Dudo
 from perudo_app import theme as T
@@ -226,7 +227,7 @@ KV = """
 
 <BotRow>:
     size_hint_y: None
-    height: dp(74)
+    height: dp(96) if root.removable else dp(74)
     padding: dp(14), dp(12)
     spacing: dp(12)
     radius: dp(18)
@@ -251,9 +252,22 @@ KV = """
             font_size: sp(12.5)
             color: T.FAINT
             halign: "left"
-            valign: "top"
+            valign: "top" if not root.removable else "middle"
             text_size: self.size
             shorten: True
+            size_hint_y: 1 if not root.removable else None
+            height: dp(20)
+        Btn:
+            kind: "danger_ghost"
+            text: "Remove"
+            font_size: sp(13)
+            halign: "left"
+            radius: dp(8)
+            size_hint: None, None
+            size: (dp(64), dp(26)) if root.removable else (0, 0)
+            opacity: 1 if root.removable else 0
+            disabled: not root.removable
+            on_release: root.ask_remove()
     BoxLayout:
         size_hint_x: None
         width: dp(108)
@@ -949,21 +963,37 @@ class HomeScreen(Screen):
 # players
 # ---------------------------------------------------------------------------
 
+def _heading(text: str) -> Label:
+    """A dialog title that wraps to the card's width."""
+    label = Label(text=text, markup=True, bold=True, font_size=sp(19), color=T.TEXT, size_hint_y=None,
+                  halign="left", valign="middle")
+    label.bind(width=lambda w, v: setattr(w, "text_size", (v, None)),
+               texture_size=lambda w, v: setattr(w, "height", max(dp(30), v[1])))
+    return label
+
+
 class BotRow(Surface):
     display = StringProperty("")
     origin = StringProperty("")
     enabled = BooleanProperty(True)
     copies = NumericProperty(1)
     seat = ListProperty(T.PLAYER_COLORS[0])
+    removable = BooleanProperty(False)
 
-    def __init__(self, entry, on_change, **kw):
+    def __init__(self, entry, on_change, on_remove=None, **kw):
         self.entry = entry
         self._on_change = on_change
+        self._on_remove = on_remove
         super().__init__(**kw)
         self.display = entry.display_name
-        self.origin = "Bundled bot" if entry.source == "bundled" else f"From {Path(entry.source).name}"
+        self.removable = entry.source != "bundled"
+        self.origin = "From the repository" if entry.source == "bundled" else f"Imported \u00b7 {Path(entry.source).name}"
         self.enabled = entry.enabled
         self.copies = entry.copies
+
+    def ask_remove(self):
+        if self._on_remove is not None:
+            self._on_remove(self.entry)
 
     def on_enabled(self, *_):
         self.entry.enabled = self.enabled
@@ -982,6 +1012,7 @@ class BotsScreen(Screen):
     too_few = BooleanProperty(False)
 
     def on_pre_enter(self, *_):
+        App.get_running_app().registry.scan_user()      # picks up files copied into the folder by hand
         self.refresh()
 
     def refresh(self):
@@ -989,12 +1020,58 @@ class BotsScreen(Screen):
         rows = self.ids.rows
         rows.clear_widgets()
         self._rows = []
-        for entry in app.registry.entries:
-            row = BotRow(entry, self.update)
-            self._rows.append(row)
-            rows.add_widget(row)
+        bundled = [e for e in app.registry.entries if e.source == "bundled"]
+        imported = [e for e in app.registry.entries if e.source != "bundled"]
+        rows.add_widget(Caption(text="From the repository"))
+        for entry in bundled:
+            self._add_row(entry)
+        rows.add_widget(Widget(size_hint_y=None, height=dp(4)))
+        rows.add_widget(Caption(text="Imported"))
+        folder = T.esc(str(app.registry.user_dir)) if app.registry.user_dir else ""
+        note = ("Bots you load are copied into the app and stay after a restart. "
+                f"Files copied into this folder are picked up too:\n[color={T.HEX['muted']}]{folder}[/color]")
+        if not imported:
+            note = "None yet. Tap Load file to add a bot. " + note
+        rows.add_widget(Body(text=note, color=T.FAINT, font_size=sp(13)))
+        for entry in imported:
+            self._add_row(entry)
         self.errors = "\n".join(app.registry.errors[-3:])
         self.update()
+
+    def _add_row(self, entry):
+        row = BotRow(entry, self.update, self.confirm_remove)
+        self._rows.append(row)
+        self.ids.rows.add_widget(row)
+
+    def confirm_remove(self, entry):
+        app = App.get_running_app()
+        sheet = ModalView(size_hint=(0.88, None), height=dp(210), background="", background_color=T.CLEAR,
+                          overlay_color=T.BG[:3] + [0.75])
+        card = Surface(orientation="vertical", padding=dp(20), spacing=dp(10), radius=dp(22))
+        card.add_widget(_heading(f"Remove {T.esc(entry.display_name)}?"))
+        others = [e.display_name for e in app.registry.entries if e.source == entry.source and e is not entry]
+        what = f"{Path(entry.source).name} is deleted from the app's bots folder"
+        if others:
+            what += f", with {', '.join(others)}"
+        card.add_widget(Body(text=what + ". The file you loaded it from is not touched."))
+        buttons = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(10))
+        cancel = Btn(text="Cancel", kind="outline")
+        cancel.bind(on_release=lambda _b: sheet.dismiss())
+        remove = Btn(text="Remove", kind="danger")
+
+        def do_remove(_b):
+            app.registry.remove(entry)
+            sheet.dismiss()
+            self.refresh()
+            app.toast(f"Removed {T.esc(entry.display_name)}")
+
+        remove.bind(on_release=do_remove)
+        buttons.add_widget(cancel)
+        buttons.add_widget(remove)
+        card.add_widget(Widget())
+        card.add_widget(buttons)
+        sheet.add_widget(card)
+        sheet.open()
 
     def update(self):
         app = App.get_running_app()
@@ -1003,6 +1080,7 @@ class BotsScreen(Screen):
         for row in getattr(self, "_rows", []):
             if id(row.entry) in first:
                 row.seat = T.seat_color(first[id(row.entry)])
+        app.save_table()
         self.seats_title = f"{seats} seat{'s' if seats != 1 else ''}"
         self.too_few = seats < 2
         self.seats_sub = ("Seat at least two bots to watch or simulate" if seats < 2
@@ -1019,17 +1097,18 @@ class BotsScreen(Screen):
         popup = ModalView(size_hint=(0.94, 0.86), background="", background_color=T.CLEAR,
                           overlay_color=T.BG[:3] + [0.75])
         card = Surface(orientation="vertical", padding=dp(16), spacing=dp(6))
-        card.add_widget(Label(text="Load a bot", bold=True, font_size=sp(19), color=T.TEXT, size_hint_y=None,
-                              height=dp(30), halign="left", text_size=(dp(300), None)))
+        card.add_widget(_heading("Load a bot"))
         card.add_widget(box)
         popup.add_widget(card)
 
         def load(_):
             if chooser.selection:
-                added = app.registry.add_file(chooser.selection[0])
+                added = app.registry.import_file(chooser.selection[0])
                 self.refresh()
                 if added:
-                    app.toast(f"Added {', '.join(e.display_name for e in added)}")
+                    app.toast(f"Added {T.esc(', '.join(e.display_name for e in added))}, kept in the app")
+                else:
+                    app.toast("No bot found in that file")
             popup.dismiss()
 
         cancel = Btn(text="Cancel", kind="outline")
@@ -1641,8 +1720,10 @@ class PerudoApp(App):
         Window.bind(on_keyboard=self._on_key)
         data_dir = Path(self.user_data_dir)
         self.settings = Settings(str(data_dir / "settings.json"))
-        self.registry = BotRegistry()
+        self.registry = BotRegistry(str(self._user_bots_dir(data_dir)))
         self.registry.scan_bundled()
+        self.registry.scan_user()
+        self.registry.apply_selection(self.settings["table"])
         self.bots_dir = self._bots_dir()
         self.speaker = Speaker(str(data_dir / "edge-tts"), play=self._play_mp3, enabled=self.settings["tts"])
         ROUTER.install()
@@ -1654,6 +1735,23 @@ class PerudoApp(App):
             sm.add_widget(cls(name=name))
         self.sm = sm
         return sm
+
+    @staticmethod
+    def _user_bots_dir(data_dir: Path) -> Path:
+        """Where imported bots live. On Android the app's folder on shared
+        storage (Android/data/<package>/files/bots), so files can also be
+        copied in over USB; elsewhere next to the settings."""
+        try:
+            from android import mActivity   # type: ignore
+            files = mActivity.getExternalFilesDir(None)
+            if files is not None:
+                return Path(files.getAbsolutePath()) / "bots"
+        except Exception:
+            pass
+        return data_dir / "bots"
+
+    def save_table(self):
+        self.settings["table"] = self.registry.selection()
 
     def _bots_dir(self) -> str:
         try:
