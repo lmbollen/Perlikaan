@@ -88,7 +88,7 @@ class Loss:
 
 
 def job(a):
-    seed, games, bot_name, settings, pool = a
+    seed, games, bot_name, settings, pool, sizes = a
     rng = random.Random(seed)
     classes = discover_bot_classes_by_name()
     cls = classes[bot_name]
@@ -96,7 +96,7 @@ def job(a):
     me_name = cls().name
     out = []
     for _ in range(games):
-        size = rng.randint(2, 7)
+        size = rng.choice(sizes)
         opp = rng.sample([p for p in pool if p != bot_name], size - 1)
         gseed = rng.randrange(2**63)
         seat = rng.randrange(size)
@@ -134,6 +134,7 @@ def main():
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--pool", nargs="*", default=None, help="Opponent class names (default: all).")
+    parser.add_argument("--sizes", default="2,3,4,5,6,7", help="Table sizes to draw from, e.g. 2 for heads-up only.")
     parser.add_argument("--false-penalty", type=float, default=0.5,
                         help="Penalised score = score - this * (false bids per bid + missed calls per "
                              "faced bid): a bid not on the table counts against the bot even when "
@@ -144,14 +145,15 @@ def main():
     pool = tuple(args.pool) if args.pool else POOL
     variants = [""] + args.variants
     chunks = 16
-    jobs = [(seed * 100 + c, args.games // chunks, args.bot, parse_settings(v), pool)
+    sizes = tuple(int(x) for x in args.sizes.split(","))
+    jobs = [(seed * 100 + c, args.games // chunks, args.bot, parse_settings(v), pool, sizes)
             for v in variants for c in range(chunks)]
     with Pool(args.jobs) as p:
         res = p.map(job, jobs)
     per = [sum(res[i * chunks:(i + 1) * chunks], []) for i in range(len(variants))]
     ok = [i for i in range(len(per[0])) if all(v[i] is not None for v in per)]
     base = per[0]
-    print(f"{args.bot}: {len(ok)} paired games, tables of 2-7")
+    print(f"{args.bot}: {len(ok)} paired games, tables of {args.sizes}")
     lam = args.false_penalty
 
     def penalised(row):
