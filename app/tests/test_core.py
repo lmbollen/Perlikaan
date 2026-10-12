@@ -459,15 +459,32 @@ def test_the_next_turn_waits_for_speech():
     session.stop()
 
 
-def test_the_table_starts_empty_but_copies_are_remembered():
-    reg = BotRegistry()
-    reg.scan_bundled()
-    sniper = next(e for e in reg.entries if e.class_name == "SniperBot")
+def test_the_table_is_empty_on_the_first_start_and_restored_after():
+    first = BotRegistry()
+    first.scan_bundled()
+    first.clear_table()
+    first.apply_selection({})                       # nothing saved yet
+    assert first.selected() == []
+    sniper = next(e for e in first.entries if e.class_name == "SniperBot")
     sniper.enabled, sniper.copies = True, 3
-    saved = reg.selection()
-    fresh = BotRegistry()
-    fresh.scan_bundled()
-    fresh.apply_selection(saved, seats=False)
-    fresh.clear_table()
-    assert fresh.selected() == []
-    assert next(e for e in fresh.entries if e.class_name == "SniperBot").copies == 3
+    saved = first.selection()
+    later = BotRegistry()                           # the next start
+    later.scan_bundled()
+    later.clear_table()
+    later.apply_selection(saved)
+    assert [(e.class_name, e.copies) for e in later.selected()] == [("SniperBot", 3)]
+    later.clear_table()
+    assert later.selected() == []
+
+
+def test_files_found_in_the_folder_are_listed_but_not_seated(tmp_path):
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "found.py").write_text(BOT_SOURCE.format(cls="FoundBot", name="Found"))
+    reg = BotRegistry(str(store))
+    reg.scan_user()
+    found = next(e for e in reg.entries if e.class_name == "FoundBot")
+    assert not found.enabled
+    src = tmp_path / "loaded.py"
+    src.write_text(BOT_SOURCE.format(cls="LoadedBot", name="Loaded"))
+    assert reg.import_file(str(src))[0].enabled             # what you load is seated

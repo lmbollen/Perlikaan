@@ -371,10 +371,17 @@ KV = """
                     valign: "top"
                     text_size: self.size
             Btn:
+                kind: "outline"
+                text: "Clear"
+                size_hint_x: None
+                width: dp(84)
+                disabled: root.empty
+                on_release: root.clear_table()
+            Btn:
                 kind: "primary"
                 text: "Done"
                 size_hint_x: None
-                width: dp(116)
+                width: dp(96)
                 on_release: app.back()
 
 # ---------------------------------------------------------------- the game
@@ -1062,6 +1069,7 @@ class BotsScreen(Screen):
     seats_title = StringProperty("")
     seats_sub = StringProperty("")
     too_few = BooleanProperty(False)
+    empty = BooleanProperty(True)
 
     def on_pre_enter(self, *_):
         App.get_running_app().registry.scan_user()      # picks up files copied into the folder by hand
@@ -1088,6 +1096,12 @@ class BotsScreen(Screen):
         for entry in imported:
             self._add_row(entry)
         self.errors = "\n".join(app.registry.errors[-3:])
+        self.update()
+
+    def clear_table(self):
+        App.get_running_app().registry.clear_table()
+        for row in self._rows:
+            row.enabled = False                 # each row writes its entry and saves the table
         self.update()
 
     def _add_row(self, entry):
@@ -1135,6 +1149,7 @@ class BotsScreen(Screen):
         app.save_table()
         self.seats_title = f"{seats} seat{'s' if seats != 1 else ''}"
         self.too_few = seats < 2
+        self.empty = seats == 0
         self.seats_sub = ("Seat at least two bots to watch or simulate" if seats < 2
                           else f"{len(plan)} different bot{'s' if len(plan) != 1 else ''}")
 
@@ -1820,9 +1835,9 @@ class PerudoApp(App):
         self.registry = BotRegistry(str(self._user_bots_dir(data_dir)))
         self.registry.scan_bundled()
         self.registry.scan_user()
-        # The table starts empty every time: you choose who plays (copies are remembered).
-        self.registry.apply_selection(self.settings["table"], seats=False)
+        # Nobody is seated on the first start; after that the table is as you left it.
         self.registry.clear_table()
+        self.registry.apply_selection(self.settings["table"])
         self.bots_dir = self._bots_dir()
         self.speaker = Speaker(str(data_dir / "edge-tts"), play=self._play_mp3, enabled=self.settings["tts"],
                                engine=self.settings["tts_engine"])

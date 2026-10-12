@@ -131,7 +131,7 @@ class BotRegistry:
         for src, p in present.items():
             mtime = p.stat().st_mtime
             if self._mtimes.get(src) != mtime:
-                self._reload(p)
+                self._reload(p, seat=False)      # found in the folder: listed, not seated
                 self._mtimes[src] = mtime
 
     def import_file(self, path: str) -> List[BotEntry]:
@@ -169,14 +169,17 @@ class BotRegistry:
         except OSError:
             pass
 
-    def _reload(self, p: Path) -> List[BotEntry]:
-        """(Re)load one file, keeping the seat settings of its bots."""
+    def _reload(self, p: Path, seat: bool = True) -> List[BotEntry]:
+        """(Re)load one file, keeping the seat settings of its bots; new bots
+        are seated when `seat` (an import), else just listed."""
         kept = {e.class_name: (e.enabled, e.copies) for e in self.entries if e.source == str(p)}
         self._drop_source(str(p))
         added = self.add_file(str(p))
         for e in added:
             if e.class_name in kept:
                 e.enabled, e.copies = kept[e.class_name]
+            else:
+                e.enabled = seat
         return added
 
     def _drop_source(self, source: str) -> None:

@@ -8,14 +8,15 @@ What it does:
 
 - **Home**: start a game at the table, watch one, or run a simulation; the
   bots currently seated are listed underneath.
-- **Players**: every bot of this repository is listed. The table is empty
-  when the app starts: switch on the bots you want and set their copies (the
-  copies are remembered). *Load
+- **Players**: every bot of this repository is listed. Nobody is seated the
+  first time the app starts; switch on the bots you want and set their
+  copies, and the table stays as you left it after a restart. *Clear*
+  unseats everyone. *Load
   file* imports any single-file bot (same API as the example bot) by copying
   it into the app's bots folder, so it is there again after a restart; Remove
   deletes that copy. On Android the folder is
   `Android/data/org.perlikaan.perudo/files/bots`, reachable over USB: `.py`
-  files copied in there by hand are picked up as well.
+  files copied in there by hand are picked up as well (listed, not seated).
 - **Watch a game**: starts paused; Play lets it run (Pause stops it at once),
   Step plays one turn at a time. The card on top shows the current bid, who made it and who is
   thinking. The *Dice* switch shows every player's dice, with the total per
