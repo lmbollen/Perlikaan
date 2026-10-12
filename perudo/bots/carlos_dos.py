@@ -97,6 +97,28 @@ def _binomial(n: int, p: float) -> List[float]:
     return pmf
 
 
+_MOST: Dict[Tuple[int, bool], List[float]] = {}
+
+
+def _most_held(n: int, pal: bool) -> List[float]:
+    """Distribution of the count of the face a player holds most of (Pacos
+    wild unless Palifico), over all 6^n hands."""
+    key = (n, pal)
+    out = _MOST.get(key)
+    if out is None:
+        out = [0.0] * (n + 1)
+        for code in range(6 ** n):
+            hand, c = [], code
+            for _ in range(n):
+                hand.append(c % 6 + 1)
+                c //= 6
+            best = max(_count_matches(hand, f, pal) for f in (range(1, 7) if pal else _NORMAL_FACES))
+            out[best] += 1
+        out = [v / 6 ** n for v in out]
+        _MOST[key] = out
+    return out
+
+
 def _conv(a: Sequence[float], b: Sequence[float]) -> List[float]:
     out = [0.0] * (len(a) + len(b) - 1)
     for i, x in enumerate(a):
@@ -200,7 +222,9 @@ class CarlosDosBot:
     # A bid that is not on the table costs this per unit of P(false), on top
     # of what the model expects from challenges.
     FALSE_PENALTY = 0.2
-    # Value of raising when a bid comes back to us: -(1 - P(next raise true)) * this.
+    # When a bid comes back to us we weigh Dudo, Calza and our next raise,
+    # the raise against the next player's reaction model. Beyond that one
+    # level, raising is valued as -(1 - P(raise true)) * this.
     RETURN_RISK = 0.5
     # Moves within this of the best count as equally good (picked at random).
     TIE_EPS = 0.01
@@ -215,44 +239,30 @@ class CarlosDosBot:
     # Quantities for the bluff face: the minimum and this many above.
     BLUFF_SPAN = 2
 
-    # -- opponent model priors (new players start as the table average) --------
-    # Measured with measure_dos.py over 300 games against the other bots, so
-    # a single game starts from the field's average and learns from there.
-    # Dudo logit: w0 + w1 * P(bid true from their dice) + w2 * their dice share.
-    DUDO_PRIOR = (2.5, -12.5, -0.7)
-    # Calza logit: w0 + w1 * P(bid exact from their dice).
-    CALZA_PRIOR = (-6.0, 6.3)
+    # -- starting model: probability only (the field is unknown) ---------------
+    # A player calls Dudo when the bid looks unlikely from their dice: the
+    # logit w0 + w1 * P(true) + w2 * dice share is 50% at P(true) = 0.3,
+    # about where calling breaks even at a table of 3-4.
+    DUDO_PRIOR = (3.0, -10.0, 0.0)
+    # Calza: w0 + w1 * P(exact), 50% at P(exact) = 0.5 (break-even: a die
+    # won against a die lost).
+    CALZA_PRIOR = (-6.0, 12.0)
     # Added to the Dudo logit on OUR bids: TRUST_WEIGHT * (1 - trust).
     TRUST_WEIGHT = 2.0
     TRUST_START = 0.7
     TRUST_LR = 0.15
-    # Source model before we know a player, per kind of bid: the residual
-    # (implied - held, from -R_MAX to +R_MAX) when the quantity says something
-    # about the hand (a chosen face is held about as implied, a followed face
-    # one less: followers bluff), and the held count on the face when it does
-    # not (by dice count; a player who picks a face holds about half their
-    # dice on it). Weight of that prior and of the table's pooled model, in bids.
-    RESID_PRIOR = {
-        "choice":      (0.00, 0.01, 0.10, 0.31, 0.31, 0.18, 0.06, 0.02, 0.01),
-        "follow":      (0.00, 0.00, 0.03, 0.14, 0.21, 0.24, 0.20, 0.12, 0.06),
-        "paco-choice": (0.00, 0.00, 0.02, 0.19, 0.39, 0.33, 0.07, 0.00, 0.00),
-        "paco-follow": (0.00, 0.00, 0.01, 0.05, 0.11, 0.33, 0.33, 0.12, 0.05),
-        "pal-choice":  (0.00, 0.00, 0.01, 0.04, 0.90, 0.04, 0.01, 0.00, 0.00),
-        "pal-follow":  (0.00, 0.00, 0.00, 0.03, 0.16, 0.45, 0.27, 0.05, 0.03),
-    }
-    CHOSEN_PRIOR = {
-        "choice": {1: (0.24, 0.76), 2: (0.10, 0.65, 0.25), 3: (0.07, 0.46, 0.42, 0.05),
-                   4: (0.05, 0.26, 0.52, 0.16, 0.01), 5: (0.03, 0.16, 0.47, 0.27, 0.06, 0.01)},
-        "paco-choice": {1: (0.61, 0.39), 2: (0.49, 0.44, 0.07), 3: (0.30, 0.49, 0.20, 0.01),
-                        4: (0.17, 0.48, 0.31, 0.04, 0.00), 5: (0.10, 0.35, 0.41, 0.14, 0.00, 0.00)},
-    }
-    # Per-die chance for the kinds and dice counts not in the table.
-    CHOSEN_P = {"choice": 0.48, "follow": 0.48, "paco-choice": 0.3, "paco-follow": 1 / 6,
-                "pal-choice": 0.97, "pal-follow": 0.12}
-    SOURCE_PRIOR = 8.0
-    SOURCE_SHRINK = 8.0
-    # Honesty prior: (real, bluff) pseudo-bids.
-    HONESTY_PRIOR = (4.0, 2.0)
+    # Source model before we know a player: a bid is real with probability
+    # REAL_PRIOR (per kind of bid, learned per player from then on) and a
+    # bluff otherwise. A real bid on a chosen face means the face is the one
+    # the player holds most of (the distribution of that count follows from
+    # the dice); a real bid whose quantity says something means the player
+    # holds at least what it implies. A bluff says nothing about the hand.
+    # Weight of that prior and of the table's pooled model, in bids.
+    REAL_PRIOR = 0.7
+    SOURCE_PRIOR = 4.0
+    SOURCE_SHRINK = 4.0
+    # Honesty: pseudo-bids behind REAL_PRIOR.
+    HONESTY_N = 4.0
     # Online learning rate of the logistic models, and the pull of a player's
     # model towards the table's per game (0.95: a game 14 games ago counts half).
     LEARN_RATE = 0.15
@@ -260,7 +270,7 @@ class CarlosDosBot:
     # Bounds of the learned weights.
     W_MIN, W_MAX = -30.0, 8.0
     # Raise step (quantity per raise) learned over the table; start.
-    STEP_START = 1.07
+    STEP_START = 1.0
     STEP_LR = 0.05
 
     _LEARNED = ("players", "table")
@@ -378,7 +388,7 @@ class CarlosDosBot:
         implied = self._implied(bid, n, total, pal)
         k = _count_matches(hand, bid.face, pal)
         for src in (self._player(who).source, self.table["source"]):
-            if implied >= 1:
+            if 1 <= implied <= n:
                 r = max(-R_MAX, min(R_MAX, implied - k))
                 src.resid[kind][r] = src.resid[kind].get(r, 0.0) + 1
             else:
@@ -395,36 +405,72 @@ class CarlosDosBot:
         return round(bid.quantity - (total - n) * _face_p(bid.face, pal))
 
     def honesty(self, name, kind):
-        """Share of a player's bids of this kind that were real (the hand covered
-        what the bid implied); the rest were bluffs."""
-        real, bids = self._player(name).source.honesty[kind]
-        a, b = self.HONESTY_PRIOR
-        return (real + a) / (bids + a + b)
+        """Share of a player's bids of this kind that were real (the hand
+        covered what the bid implied); the rest were bluffs. Their own
+        record, shrunk to the table's and to REAL_PRIOR."""
+        own = self._player(name).source.honesty[kind]
+        table = self.table["source"].honesty[kind]
+        f = min(1.0, self.SOURCE_SHRINK / table[1]) if table[1] else 0.0
+        real = own[0] + f * table[0] + self.REAL_PRIOR * self.HONESTY_N
+        bids = own[1] + f * table[1] + self.HONESTY_N
+        return real / bids
 
-    def _resid_pmf(self, name, kind):
-        """residual -> probability for this player and kind, shrunk to the table
-        and the prior."""
-        prior = [v + 0.002 for v in self.RESID_PRIOR[kind]]
-        z = sum(prior)
-        table = self.table["source"].resid[kind]
-        pooled = [self.SOURCE_PRIOR * v / z + table.get(r, 0.0) for r, v in zip(range(-R_MAX, R_MAX + 1), prior)]
-        z = sum(pooled)
-        own = self._player(name).source.resid[kind]
-        out = [self.SOURCE_SHRINK * v / z + own.get(r, 0.0) for r, v in zip(range(-R_MAX, R_MAX + 1), pooled)]
+    def _blend(self, prior, name, kind, pmf_of):
+        """Blend the prior distribution with what the table and the player
+        showed, each weighted by its bids."""
+        own_w, own = pmf_of(self._player(name).source)
+        table_w, table = pmf_of(self.table["source"])
+        table_w = min(table_w, self.SOURCE_SHRINK)
+        out = [self.SOURCE_PRIOR * a + table_w * b + own_w * c for a, b, c in zip(prior, table, own)]
         z = sum(out)
         return [v / z for v in out]
 
-    def _chosen_pmf(self, name, kind, n):
+    def _resid_pmf(self, name, kind, n, implied, p):
+        """held -> probability given a bid that implies `implied` of the face:
+        prior from the dice (real: at least implied, bluff: anything), blended
+        with the learned residual histograms."""
+        h = self.honesty(name, kind)
+        binom = _binomial(n, p)
+        pal = kind.startswith("pal")
+        # a real bid holds at least what it implies; on a chosen face it is
+        # the face the player holds most of
+        base = binom if kind.endswith("follow") or kind.startswith("paco") else _most_held(n, pal)
+        real = [b if k >= implied else 0.0 for k, b in enumerate(base)]
+        z = sum(real)
+        prior = [h * r / z + (1 - h) * b for r, b in zip(real, binom)]
+
+        def pmf_of(src):
+            d = src.resid[kind]
+            w = sum(d.values())
+            if not w:
+                return 0.0, prior
+            pmf = [d.get(max(-R_MAX, min(R_MAX, implied - k)), 0.0) for k in range(n + 1)]
+            z = sum(pmf)
+            return (w, [v / z for v in pmf]) if z else (0.0, prior)
+        return self._blend(prior, name, kind, pmf_of)
+
+    def _chosen_pmf(self, name, kind, n, pal):
         """held -> probability on a face a player bid on without the quantity
-        saying anything, shrunk to the table and the prior."""
-        prior = self.CHOSEN_PRIOR.get(kind, {}).get(n) or _binomial(n, self.CHOSEN_P[kind])
-        table = self.table["source"].chosen.get((kind, n))
-        pooled = [self.SOURCE_PRIOR * v + (table[k] if table else 0.0) for k, v in enumerate(prior)]
-        z = sum(pooled)
-        own = self._player(name).source.chosen.get((kind, n))
-        out = [self.SOURCE_SHRINK * v / z + (own[k] if own else 0.0) for k, v in enumerate(pooled)]
-        z = sum(out)
-        return [v / z for v in out]
+        saying anything: real bids come from the face they hold most of,
+        bluffs from any hand; blended with what they showed before."""
+        h = self.honesty(name, kind)
+        if kind.startswith("paco"):
+            binom = _binomial(n, 1 / 6)
+            real = [0.0] + list(binom[1:])          # a real Paco bid holds a Paco
+            z = sum(real)
+            real = [v / z for v in real]
+        else:
+            binom = _binomial(n, 1 / 6 if pal else 1 / 3)
+            real = _most_held(n, pal)
+        prior = [h * r + (1 - h) * b for r, b in zip(real, binom)]
+
+        def pmf_of(src):
+            w = src.chosen.get((kind, n))
+            if not w or not sum(w):
+                return 0.0, prior
+            z = sum(w)
+            return z, [v / z for v in w]
+        return self._blend(prior, name, kind, pmf_of)
 
     def _learn_reaction(self, who, action, bid, bidder, dice, counts, total, pal):
         """Fit the player's Dudo / Calza logistics on what they did facing `bid`."""
@@ -494,14 +540,10 @@ class CarlosDosBot:
             if pl.name in latest:
                 bid, kind = latest[pl.name]
                 implied = self._implied(bid, n, total, pal)
-                if implied >= 1:
-                    # the residual histogram is the hand given such a bid itself
-                    resid = self._resid_pmf(pl.name, kind)
-                    pmf = [resid[max(-R_MAX, min(R_MAX, implied - k)) + R_MAX] for k in range(n + 1)]
-                    s = sum(pmf)
-                    pmf = [v / s for v in pmf]
-                else:
-                    pmf = self._chosen_pmf(pl.name, kind, n)
+                if 1 <= implied <= n:
+                    pmf = self._resid_pmf(pl.name, kind, n, implied, p)
+                else:       # a low bid, or one beyond their dice: only the face tells
+                    pmf = self._chosen_pmf(pl.name, kind, n, pal)
             hands[pl.name] = pmf
         return hands
 
@@ -566,7 +608,7 @@ class CarlosDosBot:
         for cand in self._candidates(state, alive, total, legal):
             full, excl, nxt_pmf = model(cand.face)
             options.append((cand, self._bid_value(cand, full, excl, nxt_pmf, nxt, n_alive, total,
-                                                  w_other, recovery, pal)))
+                                                  w_other, recovery, pal, state.my_dice_count, 0)))
         return options
 
     def _candidates(self, state, alive, total, legal):
@@ -623,7 +665,8 @@ class CarlosDosBot:
             return faces_w[-1][0]
         return self._rng.choice(unheld)
 
-    def _bid_value(self, cand, full, excl, nxt_pmf, nxt, n_alive, total, w_other, recovery, pal):
+    def _bid_value(self, cand, full, excl, nxt_pmf, nxt, n_alive, total, w_other, recovery, pal,
+                   my_dice, depth):
         q = cand.quantity
         p_true_all = _tail(full, q)
         value = -self.FALSE_PENALTY * (1 - p_true_all)
@@ -651,15 +694,18 @@ class CarlosDosBot:
             v += p_calza * (exact_real * -gain_other + (1 - exact_real) * w_other)
             if p_raise > 1e-9:
                 if cont is None:
-                    cont = self._continuation(cand, full, n_alive, w_other)
+                    cont = self._continuation(cand, full, excl, nxt_pmf, nxt, n_alive, total, w_other,
+                                              recovery, pal, my_dice, depth)
                 v += p_raise * cont
             value += wk * v
         return value
 
-    def _continuation(self, cand, full, n_alive, w_other):
+    def _continuation(self, cand, full, excl, nxt_pmf, nxt, n_alive, total, w_other, recovery, pal,
+                      my_dice, depth):
         """After the next player raises: the players beyond may end the round
         (an opponent loses a die) or raise; what comes back to us is valued
-        by our best answer to it."""
+        by our best answer to it: Dudo, Calza, or a raise that the next
+        player may call."""
         step = max(1, round(self.table["step"]))
         tw = self.table["dudo_w"]
         cw = self.table["calza_w"]
@@ -674,8 +720,15 @@ class CarlosDosBot:
             value += alive_prob * p_end * w_other
             alive_prob *= 1 - p_end
             q += step
-        # back to us, facing quantity q
+        # back to us, facing quantity q on the same face
         pt = _tail(full, q)
+        pe = _at(full, q)
         dudo = (1 - pt) * w_other - pt
-        raise_ = -self.RETURN_RISK * (1 - _tail(full, q + step))
-        return value + alive_prob * max(dudo, raise_)
+        gain = self.CALZA_GAIN if (recovery and my_dice < 5) else self.CALZA_FREE_PASS
+        calza = pe * gain - (1 - pe)
+        if depth == 0 and q + step <= total:
+            raise_ = self._bid_value(Bid(q + step, cand.face), full, excl, nxt_pmf, nxt, n_alive, total,
+                                     w_other, recovery, pal, my_dice, depth + 1)
+        else:
+            raise_ = -self.RETURN_RISK * (1 - _tail(full, q + step))
+        return value + alive_prob * max(dudo, calza, raise_)
