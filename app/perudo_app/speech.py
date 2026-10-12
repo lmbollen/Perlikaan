@@ -125,7 +125,10 @@ class AndroidVoice:
         tts.setPitch(pitch)
         tts.setSpeechRate(rate)
         self._count += 1
-        if tts.speak(text, TextToSpeech.QUEUE_ADD, None, f"perudo-{self._count}") != TextToSpeech.SUCCESS:
+        # speak(CharSequence, int, Bundle, String): pyjnius does not turn a Python str into a
+        # CharSequence by itself, so hand it a java.lang.String
+        JString = self.jnius.autoclass("java.lang.String")
+        if tts.speak(JString(text), TextToSpeech.QUEUE_ADD, None, f"perudo-{self._count}") != TextToSpeech.SUCCESS:
             raise RuntimeError("the phone's text-to-speech refused the line")
         # wait for this line, so the next bot's voice settings do not apply to it
         time.sleep(0.2)

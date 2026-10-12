@@ -29,6 +29,10 @@ class FakeVoice:
         return self.network
 
 
+class FakeJString(str):
+    """java.lang.String: the only thing pyjnius passes as a CharSequence."""
+
+
 class FakeTTS:
     SUCCESS, QUEUE_ADD = 0, 1
     instances = []
@@ -59,7 +63,9 @@ class FakeTTS:
         self.calls.append(("rate", r))
 
     def speak(self, text, mode, params, utterance):
-        self.calls.append(("speak", text, mode))
+        if not isinstance(text, FakeJString):     # what pyjnius does with a plain str
+            raise TypeError("No methods called speak in android/speech/tts/TextToSpeech matching your arguments")
+        self.calls.append(("speak", str(text), mode))
         return 0
 
     def isSpeaking(self):
@@ -81,6 +87,8 @@ class FakeJnius:
     def autoclass(name):
         if name == "android.speech.tts.TextToSpeech":
             return FakeTTS
+        if name == "java.lang.String":
+            return FakeJString
         if name == "java.util.Locale":
             return type("Locale", (), {"forLanguageTag": staticmethod(lambda tag: tag)})
         raise KeyError(name)

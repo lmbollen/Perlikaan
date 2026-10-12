@@ -841,7 +841,7 @@ KV = """
                     Divider:
                     SettingRow:
                         title: "Voice language"
-                        sub: "Every bot keeps its own voice"
+                        sub: "The language the bots speak"
                         Segmented:
                             size_hint_x: None
                             width: dp(120)
