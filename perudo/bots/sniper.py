@@ -54,6 +54,7 @@ class SniperBot:
     # or once per face per round, and never for the bid being judged itself
     # (True): in a chain of raises every player just tops the previous bid,
     # which is not more evidence.
+    # Paired, 480 games at tables of 2-6: True costs 8.5 +/- 2.3 pp, so it stays off.
     HINT_ONCE = False
     # In Palifico every later bid is forced onto the opener's face, but a
     # player who raises instead of calling Dudo still probably holds some of

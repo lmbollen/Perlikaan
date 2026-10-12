@@ -53,11 +53,13 @@ class SonnyBoy:
     # five; a wrong one always costs one. Calza was called at CALZA_MIN even
     # when it could gain nothing. Now, when it cannot gain, only a near
     # certain exact count (CALZA_FREE_PASS_MIN) is worth the free pass.
+    # Paired, 480 games at tables of 2-6: +1.7 +/- 1.2 pp win rate.
     FIX_CALZA_GAIN = True
     CALZA_FREE_PASS_MIN = 0.85
     # The bid we face was scored with the learned credit for the bidders on
     # its face, the candidate raises without, so the Dudo-vs-raise comparison
     # mixed two estimates. Now both sides use the credit.
+    # Paired, 480 games: +0.2 +/- 2.0 pp (within noise).
     FIX_CREDIT_CONSISTENT = True
 
     def __init__(self):

@@ -745,6 +745,7 @@ class PokerfaceBot:
     # (challenged and false), while ev_dudo and ev_calza both include the
     # upside of an opponent losing a die. Add the raise's upside: a true
     # raise that still gets challenged costs the challenger a die.
+    # Paired, 480 games at tables of 2-7: +0.2 +/- 0.8 pp (within noise).
     FIX_RAISE_UPSIDE = True
     # In Palifico a follower could have called Dudo instead of raising, so
     # their raise says something about their hand too (Sniper ignores it).

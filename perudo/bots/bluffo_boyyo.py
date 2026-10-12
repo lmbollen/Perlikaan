@@ -150,10 +150,12 @@ class BluffoBoyyo:
     # dice held, about 2 for an honest opener), but applied only on high bids
     # as implied + stat: those dice were counted twice. Now the statistic is
     # the residual of bids where implied >= 1, trained and applied there only.
+    # Paired, 480 games at tables of 2-6: -0.8 +/- 1.9 pp (within noise).
     FIX_HINT_SAMPLE = True
     # gain_ok is OUR die-gain eligibility; the Calza term of a bid we place
     # is about the NEXT player's Calza, which gains them a die only while
     # nobody is out and THEY hold under five dice.
+    # Paired, 480 games: -0.2 +/- 0.6 pp (within noise).
     FIX_OPP_CALZA_GAIN = True
 
     # Learned state, shared by every instance of this class (per bot name).

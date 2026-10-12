@@ -50,11 +50,13 @@ class OppaStyleBot:
     # count plus the hint got need = -1 and P(exact) = 0.0 right where exact
     # was the likeliest outcome. Now it uses the same fractional need as
     # _prob and interpolates the exact mass between the whole needs.
+    # Paired, 480 games at tables of 2-6: +6.7 +/- 1.6 pp win rate.
     FIX_CALZA_ROUNDING = True
     # Palifico was inferred from the reveal (a non-Paco bid whose count
     # ignores Pacos), which fails for Paco-face rounds and rounds with no
     # Pacos on the table: forced followers were graded as if they chose the
     # face. Now it is tracked from RoundEndedEvent.palifico_next.
+    # Paired, 480 games: -0.2 +/- 0.6 pp (within noise).
     FIX_PALIFICO_TRACK = True
 
     def __init__(self):

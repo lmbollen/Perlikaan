@@ -70,7 +70,7 @@ FREE_PASS_VALUE = 0.3           # value of a correct Calza when recovery is off 
 BID_EV_TOLERANCE = 0.0          # bids within this EV of the best are tied; prefer the higher quantity
 HONESTY_GRID = (0.0, 0.5, 1.0, 2.0, 4.0, 8.0)  # candidate honesty exponents beta, see _player_pmf_for
 HONESTY_DEFAULT = 1.0           # beta for a player we have not learned about yet (also for me, in their eyes)
-HONESTY_PRIOR_LL = 1.0          # FIX_HONESTY_PRIOR: prior weight (nats) on HONESTY_DEFAULT; about 3 clear reveals overrule it
+HONESTY_PRIOR_LL = 3.0          # FIX_HONESTY_PRIOR: prior weight (nats) on HONESTY_DEFAULT; about 10 clear reveals overrule it
 HONESTY_FLOOR = 0.05            # even a hopeless bid gets made sometimes (bluffs, forced raises)
 PACO_MENTION_WEIGHT = 0.5       # a Paco bid is weaker evidence about a normal face (Pacos still count for it)
 
@@ -137,10 +137,12 @@ class TheDonBot:
     # reveal already pushed it to 0.0 or 8.0 and HONESTY_DEFAULT was never used
     # again. Now the default gets a log-prior of HONESTY_PRIOR_LL nats, so a
     # few clear reveals are needed before another beta takes over.
+    # Paired, 480 games at tables of 2-7: +3.3 +/- 2.1 pp win rate.
     FIX_HONESTY_PRIOR = True
     # The learned Dudo thresholds were fitted on P(true) computed WITHOUT the
     # bid the player was facing as a hint, while _best_bid applies them to an
     # estimate that includes our bid as a hint. Learn on the same scale.
+    # Paired, 480 games: -0.6 +/- 1.4 pp (within noise; kept, it is the right scale).
     FIX_THRESHOLD_SCALE = True
 
     def _trihard_init(self) -> None:

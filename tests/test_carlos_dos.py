@@ -174,3 +174,26 @@ def test_models_decay_towards_the_prior():
     after = bot._player("C").dudo_w
     for i in range(len(w)):
         assert abs(after[i] - (prior[i] + CarlosDosBot.GAME_DECAY * (w[i] - prior[i]))) < 1e-9
+
+
+def test_continuation_reads_assumed_raises_as_evidence():
+    """A raise on a face is evidence of holding it: after the assumed raises
+    the bid that comes back to us is likelier than the untouched hands say."""
+    bot = CarlosDosBot()
+    state = _state([2, 3, 4, 5, 6], others=(("A", 5), ("B", 5), ("C", 5)))
+    alive = list(state.players)
+    bot._n_alive = 4
+    order = sorted(alive, key=lambda p: p.id)
+    bot._later = [order[2], order[3]]
+    nxt = order[1]
+    full, excl, nxt_pmf, others, hands, mine = bot._face_model(state, 6, alive, 20, nxt)
+    cand = Bid(7, 6)
+    bot.FIX_CONT_HANDS = False
+    stale = bot._continuation(cand, full, excl, nxt_pmf, nxt, 4, 20, 1 / 3, True, False, 5, 1, lambda c: full, hands, mine)
+    bot.FIX_CONT_HANDS = True
+    fresh = bot._continuation(cand, full, excl, nxt_pmf, nxt, 4, 20, 1 / 3, True, False, 5, 1, lambda c: full, hands, mine)
+    CarlosDosBot.FIX_CONT_HANDS = True
+    # three assumed raises on sixes make the returned 10x6 likelier, so Dudo on it is worth less
+    assert fresh < stale
+    cur = bot._condition(hands["A"], "A", Bid(9, 6), "follow", 5, 20, False)
+    assert sum(k * w for k, w in enumerate(cur)) > sum(k * w for k, w in enumerate(hands["A"]))
