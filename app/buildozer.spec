@@ -4,7 +4,7 @@ package.name = perudo
 package.domain = org.perlikaan
 source.dir = .
 source.include_exts = py,kv,json,txt,md
-source.exclude_dirs = tests, bin, tools, .buildozer, .p4a-src, __pycache__, .venv
+source.exclude_dirs = tests, bin, tools, p4a-recipes, .buildozer, .p4a-src, __pycache__, .venv
 source.exclude_patterns = flake.nix, flake.lock, build.sh, README.md
 version = 0.1.0
 
@@ -33,6 +33,10 @@ android.ndk_path =
 android.ant_path =
 android.skip_update = True
 android.accept_sdk_license = True
+
+# Recipes overriding python-for-android's (aiohttp as pure Python, see
+# p4a-recipes/aiohttp/__init__.py).
+p4a.local_recipes = ./p4a-recipes
 
 # python-for-android release 2026.05.09 (the same release tools/seed_sources.py
 # takes from PyPI), so builds are reproducible.

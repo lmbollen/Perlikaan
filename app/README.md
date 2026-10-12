@@ -56,6 +56,11 @@ runs `uv sync`, so Buildozer and Cython come from `uv.lock`. The first build
 still fetches python-for-android and the Python packages it compiles for the
 phone, and takes a while.
 
+`p4a-recipes/` holds recipes overriding python-for-android's: aiohttp is
+installed as pure Python from a current release, because the bundled recipe's
+3.8.3 does not compile against Python 3.14 (`build.sh` makes aiohttp's
+helpers pure Python the same way).
+
 ## Build on GitHub Actions
 
 `.github/workflows/android.yml` runs the same build on every push that

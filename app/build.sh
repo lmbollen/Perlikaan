@@ -47,4 +47,10 @@ fi
 if [ -f .p4a-src/requirements ]; then
   export APP_REQUIREMENTS="$(cat .p4a-src/requirements)"
 fi
+# aiohttp's helpers ship C accelerators with pure-Python fallbacks.
+# python-for-android installs them with the build machine's pip, which would
+# otherwise pick wheels built for this machine, not the phone: take the
+# sources and build them pure.
+export PIP_NO_BINARY=multidict,yarl,frozenlist,propcache
+export MULTIDICT_NO_EXTENSIONS=1 YARL_NO_EXTENSIONS=1 FROZENLIST_NO_EXTENSIONS=1 PROPCACHE_NO_EXTENSIONS=1
 exec uv run buildozer android "${1:-debug}"
