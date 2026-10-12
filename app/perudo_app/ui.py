@@ -28,7 +28,8 @@ from kivy.uix.widget import Widget
 from perudo.models import Bid, Calza, Dudo
 from perudo_app import theme as T
 from perudo_app.core import (
-    FACES, ROUTER, BotRegistry, GameSession, HumanSeat, Settings, Simulation, can, legal_bids, lowest_legal,
+    FACES, ROUTER, BotRegistry, GameSession, HumanSeat, Settings, Simulation, bar_padding, can, legal_bids,
+    lowest_legal,
 )
 from perudo_app.speech import Speaker
 from perudo_app.widgets import (  # noqa: F401  (registers the widget classes for the KV rules)
@@ -1734,7 +1735,25 @@ class PerudoApp(App):
                           (SimScreen, "sim"), (SettingsScreen, "settings")):
             sm.add_widget(cls(name=name))
         self.sm = sm
-        return sm
+        # The screens sit in a frame padded clear of the phone's status and
+        # navigation bars (Android 15 draws apps under them).
+        self.frame = BoxLayout()
+        self.frame.add_widget(sm)
+        Window.bind(on_resize=lambda *_: Clock.schedule_once(self.fit_system_bars, 0.1))
+        return self.frame
+
+    def on_start(self):
+        for delay in (0, 0.4, 1.5):          # the insets are known once the view is attached
+            Clock.schedule_once(self.fit_system_bars, delay)
+
+    def on_resume(self):
+        Clock.schedule_once(self.fit_system_bars, 0.3)
+
+    def fit_system_bars(self, *_):
+        bars = system_bars()
+        if bars is not None:
+            window_height, left, top, right, bottom = bars
+            self.frame.padding = bar_padding(Window.height, window_height, left, top, right, bottom)
 
     @staticmethod
     def _user_bots_dir(data_dir: Path) -> Path:
@@ -1791,7 +1810,7 @@ class PerudoApp(App):
             Color(*T.RAISED)
             bg = RoundedRectangle(radius=[dp(18)])
         label.bind(pos=lambda w, _v: setattr(bg, "pos", w.pos), size=lambda w, _v: setattr(bg, "size", w.size))
-        label.pos = (Window.width / 2 - label.width / 2, dp(96))
+        label.pos = (Window.width / 2 - label.width / 2, dp(96) + self.frame.padding[3])
         Window.add_widget(label)
         anim = Animation(opacity=1, d=0.15) + Animation(d=2.2) + Animation(opacity=0, d=0.3)
         anim.bind(on_complete=lambda *_: Window.remove_widget(label))
@@ -1841,6 +1860,31 @@ class PerudoApp(App):
                 _play_mp3(Path(path).read_bytes())
             except Exception as exc:
                 self.speaker.error = f"{type(exc).__name__}: {exc}"
+
+
+def system_bars():
+    """(window height, left, top, right, bottom) of the system bars in
+    pixels on Android, or None elsewhere or when not known yet."""
+    try:
+        from android import mActivity    # type: ignore
+        from jnius import autoclass       # type: ignore
+    except Exception:
+        return None
+    try:
+        decor = mActivity.getWindow().getDecorView()
+        insets = decor.getRootWindowInsets()
+        if insets is None or decor.getHeight() <= 0:
+            return None
+        if autoclass("android.os.Build$VERSION").SDK_INT >= 30:
+            kinds = autoclass("android.view.WindowInsets$Type")
+            bars = insets.getInsets(kinds.systemBars() | kinds.displayCutout())
+            sides = (bars.left, bars.top, bars.right, bars.bottom)
+        else:
+            sides = (insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(),
+                     insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom())
+        return (decor.getHeight(),) + tuple(int(v) for v in sides)
+    except Exception:
+        return None
 
 
 def run():

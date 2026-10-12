@@ -8,8 +8,10 @@ thread; the UI polls `snapshot()` and feeds decisions in with `submit()`.
 
 from __future__ import annotations
 
+import importlib
 import inspect
 import json
+import pkgutil
 import random
 import shutil
 import sys
@@ -21,7 +23,6 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
-from perudo import bot_loader
 from perudo.game import PerudoGame
 from perudo.models import (
     PACO,
@@ -90,8 +91,30 @@ class BotRegistry:
         self._mtimes: Dict[str, float] = {}
 
     def scan_bundled(self) -> None:
-        for cls in bot_loader.discover_bot_classes():
+        for cls in self._discover_bundled():
             self._add(cls, "bundled")
+
+    def _discover_bundled(self) -> List[type]:
+        """The bot classes in perudo.bots, by the rules of
+        perudo.bot_loader.discover_bot_classes (a class defined in its
+        module, with a play() method), but found through the import system:
+        the loader looks for *.py files, and an APK built by
+        python-for-android carries only compiled *.pyc files."""
+        import perudo.bots as package
+        classes: List[type] = []
+        for info in sorted(pkgutil.iter_modules(package.__path__), key=lambda m: m.name):
+            if info.ispkg:
+                continue
+            name = f"{package.__name__}.{info.name}"
+            try:
+                module = importlib.import_module(name)
+            except Exception as exc:         # one broken bot must not hide the others
+                self.errors.append(f"{info.name}: {type(exc).__name__}: {exc}")
+                continue
+            for _, obj in inspect.getmembers(module, inspect.isclass):
+                if obj.__module__ == module.__name__ and hasattr(obj, "play"):
+                    classes.append(obj)
+        return classes
 
     # -- imported bots ---------------------------------------------------
 
@@ -713,3 +736,22 @@ def lowest_legal(state: Observation, face: int) -> Optional[Bid]:
 
 def can(state: Observation, kind: type) -> bool:
     return any(isinstance(a, kind) for a in state.legal_actions)
+
+
+# ---------------------------------------------------------------------------
+# the phone's system bars
+# ---------------------------------------------------------------------------
+
+def bar_padding(surface_height: int, window_height: int, left: int, top: int, right: int,
+                bottom: int) -> List[int]:
+    """Padding [left, top, right, bottom] that keeps the app clear of the
+    status and navigation bars. Since Android 15 apps are drawn edge to
+    edge, under the bars; older systems lay the app out between them. Only
+    the part of the bars the app's surface actually reaches under is
+    padded: the surface is `surface_height` tall in a window (the screen)
+    of `window_height`, with bars of `top` and `bottom` pixels."""
+    under = max(0, min(top + bottom, surface_height - (window_height - top - bottom)))
+    pad_top = min(top, under)
+    pad_bottom = min(bottom, under - pad_top)
+    sides = under > 0
+    return [left if sides else 0, pad_top, right if sides else 0, pad_bottom]

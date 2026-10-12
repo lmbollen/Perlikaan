@@ -297,3 +297,40 @@ def test_the_table_selection_is_saved_in_settings(tmp_path):
     fresh.scan_bundled()
     fresh.apply_selection(Settings(str(tmp_path / "settings.json"))["table"])
     assert [e.class_name for e in fresh.selected()] == ["RandomBot"]
+
+
+def test_bundled_bots_are_found_when_only_compiled_files_ship(tmp_path):
+    """python-for-android puts only *.pyc files in the APK (compileall -b
+    -OO, then the sources are left out); the registry must still find the
+    repository's bots there."""
+    import compileall
+    import os
+    import shutil
+    import subprocess
+
+    shutil.copytree(ROOT / "perudo", tmp_path / "perudo", ignore=shutil.ignore_patterns("__pycache__"))
+    assert compileall.compile_dir(str(tmp_path / "perudo"), legacy=True, optimize=2, quiet=1)
+    for source in (tmp_path / "perudo").rglob("*.py"):
+        source.unlink()
+    assert not list((tmp_path / "perudo" / "bots").glob("*.py"))
+    script = (
+        "from perudo_app.core import BotRegistry\n"
+        "reg = BotRegistry(); reg.scan_bundled()\n"
+        "print(sorted(e.class_name for e in reg.entries)); print(reg.errors)\n"
+    )
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(tmp_path), str(ROOT / "app")]))
+    out = subprocess.run([sys.executable, "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    names, errors = out.stdout.strip().splitlines()
+    assert "CarlosDosBot" in names and "Trihard" in names and "PokerfaceBot" in names
+    assert errors == "[]"
+
+
+def test_bar_padding_pads_only_what_the_bars_cover():
+    from perudo_app.core import bar_padding
+    # Android 15: the app fills the screen, under a 120 px status bar and a 60 px gesture bar
+    assert bar_padding(2400, 2400, 0, 120, 0, 60) == [0, 120, 0, 60]
+    # older Android: the app is laid out between the bars already
+    assert bar_padding(2220, 2400, 0, 120, 0, 60) == [0, 0, 0, 0]
+    # drawn under the status bar only
+    assert bar_padding(2340, 2400, 0, 120, 0, 60) == [0, 120, 0, 0]
