@@ -67,7 +67,7 @@ def test_a_real_bid_raises_the_count():
     bot = CarlosDosBot()
     state = _state([2, 3], [ActionRecord("A", Bid(4, 6))], Bid(4, 6))
     alive = list(state.players)
-    full, _, _ = bot._face_model(state, 6, alive, 12, alive[2])
+    full = bot._face_model(state, 6, alive, 12, alive[2])[0]
     prior = bot._face_model(_state([2, 3]), 6, alive, 12, alive[2])[0]
     assert _tail(full, 4) > _tail(prior, 4)
 
