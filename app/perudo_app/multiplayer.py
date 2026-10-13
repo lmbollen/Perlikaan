@@ -33,6 +33,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Dict, List, Optional
 
+from perudo.game import Forfeit, Interrupt
 from perudo.models import PACO, Calza, Dudo, Observation
 from perudo_app import net, relay as online
 from perudo_app.core import (
@@ -40,6 +41,7 @@ from perudo_app.core import (
 )
 
 NAME_MAX = 20
+INTERRUPTED = object()          # LobbyHost.ask: the turn was cut short (someone left)
 BOT_ANSWER_TIMEOUT = 60.0
 
 
@@ -124,7 +126,13 @@ class RemoteSeat:
         self.person = person
 
     def play(self, state: Observation):
+        if self.host.has_left(self.name):
+            raise Forfeit()
         action = self.host.ask(self, state)
+        if self.host.has_left(self.name):          # left while it was this seat's turn
+            raise Forfeit()
+        if action is INTERRUPTED:
+            raise Interrupt()
         if action is None or action not in state.legal_actions:
             action = fallback_action(state)
         return action
@@ -166,6 +174,7 @@ class LobbyHost:
         self._reqs = iter(range(1, 1_000_000_000))
         self._waiting: Dict[int, dict] = {}
         self._seat_names: Dict[int, str] = {}    # member id -> name of their seat in the game
+        self._game_seats: Dict[int, List[str]] = {}   # member id -> every seat they play in the game
         self.online = relay is not None
         self._server = self._hub = None
         if self.online:
@@ -262,10 +271,13 @@ class LobbyHost:
             host = self.members[0]
             bots: List[Any] = [HumanSeat(unique(host.name))]
             self._seat_names = {0: bots[0].name}
+            self._game_seats = defaultdict(list)
+            self._game_seats[0].append(bots[0].name)
             guests = [m for m in self.members.values() if not m.is_host]
             for m in guests:
                 seat = RemoteSeat(self, m.id, None, unique(m.name), person=True)
                 self._seat_names[m.id] = seat.name
+                self._game_seats[m.id].append(seat.name)
                 bots.append(seat)
             assignments: Dict[int, list] = defaultdict(list)
             entries = {self.registry.key(e): e for e in self.registry.entries}
@@ -277,12 +289,14 @@ class LobbyHost:
                         continue
                     local_classes.add(entry.cls)
                     bots.append((entry.cls, unique(s.name)))   # made after the learning reset below
+                    self._game_seats[0].append(bots[-1][1])
                 else:
                     owner = self.members.get(s.owner)
                     if owner is None:
                         continue
                     name = unique(f"{s.name} ({owner.name})")
                     bots.append(RemoteSeat(self, s.owner, s.id, name))
+                    self._game_seats[s.owner].append(name)
                     assignments[s.owner].append({"seat": s.id, "key": s.key, "name": name})
             _reset_learning(local_classes)
             for i, b in enumerate(bots):
@@ -303,6 +317,28 @@ class LobbyHost:
         threading.Thread(target=self._sync, args=(session, self.game_id), name="perudo-sync",
                          daemon=True).start()
         return session
+
+    def seats_of(self, member_id: int) -> List[str]:
+        """The seats this member plays in the game (themselves and their bots)."""
+        with self._lock:
+            return list(self._game_seats.get(member_id, ()))
+
+    def has_left(self, name: str) -> bool:
+        session = self.session
+        return session is not None and session.has_left(name)
+
+    def forfeit(self, member_id: int = 0) -> None:
+        """A member walks away from the game: they and their bots lose at
+        once, and the others play on."""
+        with self._lock:
+            session = self.session
+            names = list(self._game_seats.get(member_id, ()))
+            if session is None or not names:
+                return
+            for w in self._waiting.values():          # their pending turns end
+                if w["member"] == member_id:
+                    w["event"].set()
+        session.forfeit(names)
 
     def end_game(self) -> None:
         """Back to the lobby (ends a game still going on)."""
@@ -354,6 +390,10 @@ class LobbyHost:
                     raise SessionStopped()
                 if deadline is not None and time.monotonic() > deadline:
                     return None
+                if session.forfeit_waiting() and not self.has_left(seat.name):
+                    if seat.person:                   # take the question off their screen
+                        member.conn.send({"t": "cancel", "req": req})
+                    return INTERRUPTED
             if session is None or session._stop:
                 raise SessionStopped()
             data = waiting["action"]
@@ -436,6 +476,10 @@ class LobbyHost:
                     waiting["event"].set()
             elif kind == "talk":
                 session = self.session
+            elif kind == "forfeit":
+                if msg.get("game") == self.game_id:
+                    threading.Thread(target=self.forfeit, args=(member.id,), daemon=True).start()
+                return
         if session is not None:
             session.inject_talk(str(msg.get("speaker", "")), str(msg.get("text", "")), str(msg.get("lang", "nl")))
 
@@ -446,11 +490,11 @@ class LobbyHost:
                 return
             if self.phase == "lobby":
                 self.seats = [s for s in self.seats if s.owner != member.id]
-            for w in self._waiting.values():          # their seats fall back to a default move
-                if w["member"] == member.id:
-                    w["event"].set()
+            playing = self.phase == "game" and self.session is not None
             if not self.closed:
                 self._changed()
+        if playing:                                   # gone mid-game: they and their bots lose
+            self.forfeit(member.id)
 
     # -- the table, as each guest may see it -------------------------------------
 
@@ -522,6 +566,8 @@ class RemoteSession:
         self._pending = None
         self._req = None
         self.ended = False
+        self.mine: List[str] = [you]           # this phone's seats: the guest and their bots
+        self.left = False                      # walked away from this game
 
     # what the game screen calls
     def snapshot(self) -> Snapshot:
@@ -579,8 +625,16 @@ class RemoteSession:
 
     def ask(self, req: int, obs) -> None:
         with self._lock:
+            if self.left:
+                return
             self._pending = net.decode(obs)
             self._req = req
+
+    def cancel(self, req) -> None:
+        """The host took back its question (someone left mid-round)."""
+        with self._lock:
+            if self._req == req:
+                self._pending = self._req = None
 
     def end(self, reason: str) -> None:
         with self._lock:
@@ -643,6 +697,16 @@ class LobbyClient:
     def remove_bot(self, seat_id: int) -> None:
         self.send({"t": "remove_bot", "seat": seat_id})
 
+    def forfeit(self) -> None:
+        """Walk away from the game going on: this guest and their bots lose."""
+        session = self.session
+        if session is None or session.left:
+            return
+        with session._lock:
+            session.left = True
+            session._pending = session._req = None
+        self.send({"t": "forfeit", "game": session.game_id})
+
     def my_name(self) -> str:
         for m in self.lobby.get("members", []):
             if m["id"] == self.my_id:
@@ -696,6 +760,9 @@ class LobbyClient:
                 self._jobs.put(lambda m=msg: self._bot_act(m))
         elif kind == "call":
             self._jobs.put(lambda m=msg: self._bot_call(m))
+        elif kind == "cancel":
+            if self.session is not None:
+                self.session.cancel(msg.get("req"))
 
     def _on_close(self, _conn) -> None:
         if not self.closed:
@@ -732,6 +799,7 @@ class LobbyClient:
         self._jobs.put(setup)
         self.session = RemoteSession(self, msg.get("game"), msg.get("order", []), msg.get("you", ""),
                                      msg.get("host", ""))
+        self.session.mine += [a["name"] for a in msg.get("seats", [])]
         self.version += 1
 
     def _bot_act(self, msg: dict) -> None:

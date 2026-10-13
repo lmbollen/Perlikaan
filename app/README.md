@@ -32,7 +32,9 @@ What it does:
 - **Join the table**: you take a seat. Only your own dice are shown until a
   reveal. Tap a die for the face, set the quantity (the lowest legal bid is
   preselected), and bid, or call Dudo or Calza when they are legal. When a
-  round is decided the cups stay up until you tap *Next round*.
+  round is decided the cups stay up until you tap *Next round*. Once you lose
+  your last die you can go back to the menu instead of watching the bots
+  finish.
 - **Play together**: friends anywhere (over the internet, when the build has
   an Ably key) or on the same Wi-Fi or one phone's hotspot play at one table,
   each on their own phone. One phone hosts a lobby and
@@ -43,8 +45,12 @@ What it does:
   and the guests'). A guest's bots run on the guest's phone: only what the
   engine tells a bot and the bot's answers travel. Every phone sees only its
   owner's dice until the cups come up; the host starts each next round and
-  can deal again from the results. The host's phone runs the game; if a
-  guest's phone drops out, its seats play a safe default move.
+  can deal again from the results. The host's phone runs the game.
+  Anyone can leave a game going on: while you or one of your bots is still
+  in it, the app warns first, because leaving means you and your bots lose
+  at once (the round is abandoned without anyone losing a die and rolled
+  again without you; the others play on). The host can also end the game
+  for everyone. A guest whose phone drops out mid-game loses the same way.
 - **Simulation**: 100 to 5000 games with the same bot instances (so learning
   bots keep learning), with a live leaderboard: win rate, wins, average place
   and bars scaled to the leader, re-ranked as the games come in.
@@ -52,7 +58,9 @@ What it does:
   per turn); bids are not read out, the screen shows them. Speech only
   happens in the game on screen, never in simulations or warm-up games, and
   the next turn waits until the bots have finished speaking.
-- **Settings**: read the table talk aloud, every bot with its own voice. By
+- **Settings**: show the table talk in the game's feed or not, and read it
+  aloud, every bot with its own voice. Both, and the speed, can also be
+  changed during a game with the gear at the top of the table. By
   default with the phone's own text-to-speech voices (offline); Microsoft's
   online neural voices through edge-tts can be chosen instead, and the
   phone's voices take over whenever that service refuses (it has refused

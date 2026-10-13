@@ -519,3 +519,29 @@ def test_at_the_table_a_reveal_waits_for_next_round():
     result = next(f for f in reversed(after.feed) if f.kind == "result")
     assert result.loser in {p.name for p in after.players} or result.good
     session.stop()
+
+
+def test_the_human_can_leave_on_their_turn_and_the_bots_play_on():
+    reg = BotRegistry()
+    reg.scan_bundled()
+    picks = [e for e in reg.entries if e.class_name in ("RandomBot", "MinRaiseBot", "ExampleBot")]
+    session = GameSession(reg.make(picks) + [HumanSeat("You")], seed=74120938, step=False, delay=0.0)
+    session.start()
+    assert wait(lambda: session.snapshot().pending is not None, timeout=30)
+    session.forfeit(["You"])                                # walks away while asked to move
+    assert wait(lambda: session.snapshot().finished, timeout=30)
+    final = session.snapshot()
+    assert final.error is None and final.pending is None
+    assert final.standings[-1] == "You"
+    assert any(f.kind == "out" and f.player == "You" and f.text == "left the game" for f in final.feed)
+
+
+def test_a_held_reveal_goes_on_by_itself_with_a_hold_timeout():
+    reg = BotRegistry()
+    reg.scan_bundled()
+    picks = [e for e in reg.entries if e.class_name in ("RandomBot", "MinRaiseBot")]
+    session = GameSession(reg.make(picks), seed=31008265, step=False, delay=0.0, hold_reveals=True)
+    session.hold_timeout = 0.05
+    session.start()
+    assert wait(lambda: session.snapshot().finished, timeout=30)
+    assert session.snapshot().error is None

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 import random
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, List, Optional, Sequence, Tuple
 
@@ -51,6 +52,27 @@ def _call(bot: Any, method_name: str, *args: Any) -> None:
     method = getattr(bot, method_name, None)
     if method is not None:
         method(*args)
+
+
+class Forfeit(Exception):
+    """Raised from a bot's play() when its seat leaves the game (a player
+    walked away from the table). The seat loses at once; see
+    PerudoGame.forfeit."""
+
+
+class Interrupt(Exception):
+    """Raised from a bot's play() to give up its turn because another seat
+    has left (forfeit_pending()): the round is abandoned at once instead of
+    after this turn."""
+
+
+class _RoundAbandoned(Exception):
+    """A seat left mid-round: the round ends without a reveal."""
+
+    def __init__(self, next_idx: int, palifico: bool):
+        super().__init__()
+        self.next_idx = next_idx
+        self.palifico = palifico
 
 
 @dataclass
@@ -106,6 +128,16 @@ class PerudoGame:
         self.dice_recovery_enabled = True
         self.round_number = 0
         self._eliminated_order: List[str] = []
+        self._forfeits: set = set()           # names that asked to leave, not yet out
+        self._forfeit_lock = threading.Lock()
+
+    def forfeit(self, name: str) -> None:
+        """Take a seat out of the game: it loses at once, below everyone
+        still playing. Safe to call from any thread; it takes effect before
+        the next turn. A round going on is abandoned (nobody loses a die)
+        and the next one is rolled without that seat."""
+        with self._forfeit_lock:
+            self._forfeits.add(name)
 
     # -- public API ---------------------------------------------------
 
@@ -117,12 +149,23 @@ class PerudoGame:
         starter_idx = self.rng.randrange(len(self.players))
         palifico_next = False
 
-        while self._alive_count() > 1:
+        while True:
+            if self._apply_forfeits():
+                if not self.players[starter_idx].alive:
+                    starter_idx = self._next_alive(starter_idx)
+            if self._alive_count() <= 1:
+                break
             self.round_number += 1
             self._roll_round()
-            next_starter_idx, palifico_next = self._play_round(
-                starter_idx, palifico_next
-            )
+            try:
+                next_starter_idx, palifico_next = self._play_round(
+                    starter_idx, palifico_next
+                )
+            except _RoundAbandoned as abandoned:
+                self._apply_forfeits()
+                next_starter_idx, palifico_next = abandoned.next_idx, abandoned.palifico
+                if self._alive_count() > 1 and not self.players[next_starter_idx].alive:
+                    next_starter_idx = self._next_alive(next_starter_idx)
             starter_idx = next_starter_idx
 
             if self._alive_count() > 1:
@@ -161,11 +204,23 @@ class PerudoGame:
                 current_idx, current_bid, palifico, tuple(history), actions
             )
 
+            if self.forfeit_pending():
+                raise _RoundAbandoned(current_idx, palifico)
             if self.before_turn is not None:
                 self.before_turn(observation)
+            if self.forfeit_pending():
+                raise _RoundAbandoned(current_idx, palifico)
 
             player = self.players[current_idx]
-            action = player.bot.play(observation)
+            try:
+                action = player.bot.play(observation)
+            except Forfeit:
+                self.forfeit(player.name)
+                raise _RoundAbandoned(current_idx, palifico)
+            except Interrupt:
+                if self.forfeit_pending():
+                    raise _RoundAbandoned(current_idx, palifico)
+                continue                              # nobody left after all: ask again
 
             if action not in actions:
                 raise IllegalActionError(player.name, action, current_bid, actions)
@@ -295,6 +350,31 @@ class PerudoGame:
             return True
 
         return False
+
+    def forfeit_pending(self) -> bool:
+        """Has a seat still in the game asked to leave? (Any thread.)"""
+        if not self._forfeits:
+            return False
+        with self._forfeit_lock:
+            names = set(self._forfeits)
+        return any(p.alive and p.name in names for p in self.players)
+
+    def _apply_forfeits(self) -> bool:
+        """Put the seats that left out of the game, in seat order. The last
+        seat standing is never put out: it has won. True if anyone left."""
+        with self._forfeit_lock:
+            names, self._forfeits = self._forfeits, set()
+        left = False
+        for player in self.players:
+            if player.name in names and player.alive and self._alive_count() > 1:
+                player.alive = False
+                player.dice_count = 0
+                player.dice = []
+                self._eliminated_order.append(player.name)
+                self._emit(PlayerEliminatedEvent(player=player.name))
+                self.dice_recovery_enabled = False
+                left = True
+        return left
 
     def _gain_die(self, idx: int) -> None:
         player = self.players[idx]

@@ -23,7 +23,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
-from perudo.game import PerudoGame
+from perudo.game import Forfeit, Interrupt, PerudoGame
 from perudo.models import (
     PACO,
     Bid,
@@ -458,6 +458,8 @@ class GameSession:
         self.speech_idle = speech_idle          # the next turn waits until this says True
         self.speech_timeout = speech_timeout
         self.hold_reveals = hold_reveals        # after a reveal, wait for next_round()
+        self.hold_timeout: Optional[float] = None   # ... or at most this long (nobody at the table)
+        self._left: set = set()                 # seats that walked away (forfeit)
         self._next_round = threading.Event()
         self._talk_rng = random.Random(self.seed ^ 0x7A1C)
         self._spoke: set = set()                # bots that said something this turn
@@ -500,6 +502,25 @@ class GameSession:
             self._snap.pending = None
         self._answer.set()
 
+    def forfeit(self, names: Sequence[str]) -> None:
+        """These seats leave the game: they lose at once and the others play
+        on (see PerudoGame.forfeit). The human's pending turn, if any, ends."""
+        names = [n for n in names if n not in self._left]
+        if not names:
+            return
+        with self._lock:
+            self._left.update(names)
+            game = self._game
+        if game is not None:
+            for name in names:
+                game.forfeit(name)
+        if self.human is not None and self.human.name in names:
+            self._answer.set()
+        self._pause.set()                       # no need to sit out the pause between turns
+
+    def has_left(self, name: str) -> bool:
+        return name in self._left
+
     def stop(self) -> None:
         self._stop = True
         self._go.set()
@@ -523,11 +544,26 @@ class GameSession:
         with self._lock:
             self._snap.pending = state
             self._action = None
+        if self.human is not None and self.human.name in self._left:
+            raise Forfeit()
         self._answer.clear()
-        self._answer.wait()
+        interrupted = False
+        while not self._answer.wait(0.2):
+            if self.forfeit_waiting():          # someone else left: this turn is cut short
+                interrupted = True
+                break
         if self._stop:
             raise SessionStopped()
+        if (self.human is not None and self.human.name in self._left) or interrupted:
+            with self._lock:
+                self._snap.pending = None
+            raise Forfeit() if not interrupted else Interrupt()
         return self._action
+
+    def forfeit_waiting(self) -> bool:
+        """Has a seat left that the game has not put out yet?"""
+        game = self._game
+        return game is not None and game.forfeit_pending()
 
     def _wait_turn(self) -> None:
         if self._stop:
@@ -559,8 +595,10 @@ class GameSession:
             self._next_round.clear()
             self._snap.awaiting_next_round = True
             self._snap.to_act = None
+        start = time.monotonic()
         while not self._stop and not self._next_round.wait(0.1):
-            pass
+            if self.hold_timeout is not None and time.monotonic() - start >= self.hold_timeout:
+                break
         with self._lock:
             self._snap.awaiting_next_round = False
             self._snap.reveal = None
@@ -631,9 +669,10 @@ class GameSession:
             with self._lock:
                 self._feed(FeedItem("gain", event.player, f"gains a die ({event.dice_count})"))
         elif isinstance(event, PlayerEliminatedEvent):
-            self._log(f"{event.player} is out")
+            text = "left the game" if event.player in self._left else "is out"
+            self._log(f"{event.player} {text}")
             with self._lock:
-                self._feed(FeedItem("out", event.player, "is out"))
+                self._feed(FeedItem("out", event.player, text))
         elif isinstance(event, RoundEndedEvent):
             if event.palifico_next:
                 self._log(f"Palifico next, {event.next_starting_player} starts")
@@ -714,9 +753,14 @@ class GameSession:
             self._warm_up()
             if self._stop:
                 raise SessionStopped()
-            self._game = PerudoGame(bots=self.bots, seed=self.seed, before_turn=self._before_turn,
-                                    before_reveal=self._before_reveal, listeners=[self._on_event])
-            self.result = self._game.play()
+            game = PerudoGame(bots=self.bots, seed=self.seed, before_turn=self._before_turn,
+                              before_reveal=self._before_reveal, listeners=[self._on_event])
+            with self._lock:
+                self._game = game
+                left = set(self._left)
+            for name in left:                   # left during the warm-up
+                game.forfeit(name)
+            self.result = game.play()
         except SessionStopped:
             with self._lock:
                 self._snap.finished = True
@@ -838,6 +882,7 @@ class Simulation:
 
 DEFAULT_SETTINGS = {
     "tts": False,
+    "chat": True,              # show what the bots say in the game's feed
     "tts_engine": "system",   # the phone's own voices, or "edge" (Microsoft's online voices)
     "tts_lang": "nl",
     "show_dice": True,

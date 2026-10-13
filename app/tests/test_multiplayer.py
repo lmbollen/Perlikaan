@@ -184,6 +184,70 @@ def test_a_guest_who_leaves_mid_game_does_not_stall_it(host):
     ben.close()
     _play_people(host, [], until=lambda: session.snapshot().finished)
     assert session.snapshot().finished and session.snapshot().error is None
+    # gone mid-game: Ben and his bot lost at once
+    assert set(session.snapshot().standings[-2:]) == {"Ben", "Random Bot (Ben)"}
+
+
+def _out(snap):
+    return {f.player: f.text for f in snap.feed if f.kind == "out"}
+
+
+def test_a_guest_who_walks_away_loses_with_their_bots_and_the_rest_play_on(host):
+    reg_ben, reg_carla = registry(), registry()
+    ben = LobbyClient("Ben", reg_ben, host.code, local_ips=LOCAL)
+    carla = LobbyClient("Carla", reg_carla, host.code, local_ips=LOCAL)
+    try:
+        ben.add_bot(key(reg_ben, "MinRaiseBot"), "MinRaise Bot")
+        host.add_bot(key(host.registry, "RandomBot"), "Random Bot")
+        assert wait(lambda: len(host.state()["seats"]) == 2)
+        session = host.start_game(delay=0.0)
+        assert wait(lambda: ben.session is not None and carla.session is not None)
+        assert ben.session.mine == ["Ben", "MinRaise Bot (Ben)"]
+        assert host.seats_of(0) == ["Anna", "Random Bot"]
+        # everyone else plays until it is Ben's turn (or a round has gone by)
+        _play_people(host, [carla], until=lambda: ben.session.snapshot().pending is not None
+                     or session.snapshot().round_number >= 2, timeout=20)
+        ben.forfeit()                                   # possibly while it is Ben's turn
+        assert ben.session.snapshot().pending is None
+        assert wait(lambda: {"Ben", "MinRaise Bot (Ben)"} <= set(_out(session.snapshot())))
+        assert _out(session.snapshot())["Ben"] == "left the game"
+        _play_people(host, [carla], until=lambda: session.snapshot().finished)
+        final = session.snapshot()
+        assert final.finished and final.error is None
+        assert set(final.standings[-2:]) == {"Ben", "MinRaise Bot (Ben)"}
+        assert wait(lambda: ben.session.snapshot().finished)    # Ben can still watch it end
+        assert not ben.closed
+    finally:
+        ben.close()
+        carla.close()
+
+
+def test_the_host_can_walk_away_and_the_guests_play_on(host):
+    reg = registry()
+    ben = LobbyClient("Ben", reg, host.code, local_ips=LOCAL)
+    carla = LobbyClient("Carla", registry(), host.code, local_ips=LOCAL)
+    try:
+        host.add_bot(key(host.registry, "MinRaiseBot"), "MinRaise Bot")
+        ben.add_bot(key(reg, "RandomBot"), "Random Bot")
+        assert wait(lambda: len(host.state()["seats"]) == 2)
+        session = host.start_game(delay=0.0)
+        assert wait(lambda: ben.session is not None and carla.session is not None)
+        session.hold_timeout = 0.05                     # nobody at the host's table presses Next round
+        host.forfeit()
+        assert wait(lambda: {"Anna", "MinRaise Bot"} <= set(_out(session.snapshot())))
+        end = time.time() + 60
+        while time.time() < end and not session.snapshot().finished:
+            for c in (ben, carla):
+                snap = c.session.snapshot()
+                if snap.pending is not None:
+                    c.session.submit(fallback_action(snap.pending))
+            time.sleep(0.005)
+        final = session.snapshot()
+        assert final.finished and final.error is None
+        assert set(final.standings[-2:]) == {"Anna", "MinRaise Bot"}
+    finally:
+        ben.close()
+        carla.close()
 
 
 def test_the_host_leaving_closes_the_lobby_for_guests():

@@ -17,6 +17,7 @@ from kivy.app import App
 from kivy.clock import Clock
 from kivy.core.audio import SoundLoader
 from kivy.core.window import Window
+from kivy.factory import Factory
 from kivy.lang import Builder
 from kivy.metrics import dp, sp
 from kivy.properties import BooleanProperty, ListProperty, NumericProperty, ObjectProperty, StringProperty
@@ -467,6 +468,12 @@ KV = """
                 opacity: 0 if root.human_playing else 1
                 disabled: root.human_playing
                 on_release: root.show_dice = not root.show_dice
+            IconBtn:
+                text: T.icon("\\u2699")
+                color: T.MUTED
+                size_hint_x: None
+                width: dp(44)
+                on_release: root.open_settings()
         BoxLayout:
             orientation: "vertical"
             padding: dp(14), dp(0), dp(14), dp(10)
@@ -851,12 +858,21 @@ KV = """
                 padding: dp(16), dp(4), dp(16), dp(28)
                 spacing: dp(10)
                 Caption:
-                    text: "Speech"
+                    text: "Table talk"
                 Surface:
                     orientation: "vertical"
                     size_hint_y: None
                     height: self.minimum_height
                     padding: dp(16), dp(2)
+                    SettingRow:
+                        title: "Show the table talk"
+                        sub: "What the bots say, in the game's feed"
+                        Toggle:
+                            id: chat_toggle
+                            active: app.settings["chat"]
+                            pos_hint: {"center_y": 0.5}
+                            on_active: app.set_setting("chat", self.active)
+                    Divider:
                     SettingRow:
                         title: "Read the table talk aloud"
                         sub: "Every bot speaks with its own voice"
@@ -1322,6 +1338,7 @@ class GameScreen(Screen):
         self._feed_last = None
         self._close_sheet()
         self._sheet_shown = False
+        self._out_shown = False
         self.awaiting_next_round = False
         # Watching starts paused (Play or Step starts it); at the table the bots play by themselves.
         self.auto = human
@@ -1335,11 +1352,15 @@ class GameScreen(Screen):
     def on_pre_enter(self, *_):
         if self.session is not None and self._poll is None:     # back from the lobby
             self._poll = Clock.schedule_interval(self.refresh, 0.12)
+        if self.multiplayer and hasattr(self.session, "hold_timeout"):
+            self.session.hold_timeout = None                    # the host presses Next round again
 
     def on_leave(self, *_):
         if self.multiplayer and self._poll is not None:         # the game goes on; draw it when back
             self._poll.cancel()
             self._poll = None
+        if self.multiplayer and hasattr(self.session, "hold_timeout"):
+            self.session.hold_timeout = 4.0     # the host is away: reveals go on by themselves
 
     def leave(self):
         if self.multiplayer:
@@ -1416,6 +1437,7 @@ class GameScreen(Screen):
         self._draw_bid_card(snap)
         self._draw_feed(snap)
         self._draw_composer(snap)
+        self._check_out(snap)
         if snap.finished and not self._sheet_shown and not snap.error and snap.standings:
             self._sheet_shown = True
             Clock.schedule_once(lambda _dt: self._show_sheet(snap), 0.9)
@@ -1590,7 +1612,10 @@ class GameScreen(Screen):
         self._feed_last = feed[-1]
         box, scroll = self.ids.feed, self.ids.feed_scroll
         at_bottom = scroll.scroll_y <= 0.02 or box.height <= scroll.height
+        chat = App.get_running_app().settings["chat"]
         for item in feed[start:][-self.FEED_KEEP:]:
+            if item.kind == "talk" and not chat:
+                continue
             text, bubble, halign = self._feed_markup(item)
             # Recycle a line: creating a widget applies its KV rules, which is
             # the most expensive thing a refresh would otherwise do.
@@ -1606,6 +1631,106 @@ class GameScreen(Screen):
             box.add_widget(line)
         if at_bottom:
             Clock.schedule_once(lambda _dt: setattr(scroll, "scroll_y", 0), 0)
+
+    def redraw_feed(self):
+        """Draw the feed again from the start (the chat setting changed)."""
+        if self.session is None:
+            return
+        self._feed_pool.extend(self.ids.feed.children)
+        self.ids.feed.clear_widgets()
+        self._feed_last = None
+        self._draw_feed(self.session.snapshot())
+
+    # -- the settings, during a game -----------------------------------------
+
+    def open_settings(self):
+        app = App.get_running_app()
+        guest = self.multiplayer and not self.can_continue      # a guest's game runs at the host's pace
+        sheet = ModalView(size_hint=(0.9, None), height=dp(310 if guest else 420), background="",
+                          background_color=T.CLEAR, overlay_color=T.BG[:3] + [0.75])
+        card = Surface(orientation="vertical", padding=(dp(20), dp(14), dp(20), dp(18)), spacing=dp(4),
+                       radius=dp(24))
+        title = Label(text=T.color(T.icon("\u2699"), T.HEX["gold"]) + "  Settings", markup=True, bold=True,
+                      font_size=sp(19), color=T.TEXT, size_hint_y=None, height=dp(40), halign="left",
+                      valign="middle")
+        title.bind(size=lambda w, v: setattr(w, "text_size", v))
+        card.add_widget(title)
+
+        def toggle_row(title, sub, key):
+            row = SettingRow(title=title, sub=sub)
+            switch = Toggle(active=bool(app.settings[key]), pos_hint={"center_y": 0.5})
+            switch.bind(active=lambda _w, value: app.set_setting(key, value))
+            row.add_widget(switch)
+            card.add_widget(row)
+
+        toggle_row("Show the table talk", "What the bots say, in the feed", "chat")
+        card.add_widget(Factory.Divider())
+        toggle_row("Read the table talk aloud", "Every bot with its own voice", "tts")
+        if not guest:
+            card.add_widget(Factory.Divider())
+            card.add_widget(SettingRow(title="Speed", sub="Time between the bots' turns"))
+            speed = Segmented(size_hint_y=None, height=dp(40))
+            speed.options = [(0.3, "Fast"), (1.0, "Normal"), (2.0, "Slow")]    # not in the constructor:
+            speed.value = float(app.settings["step_delay"])                     # its buttons need a canvas
+            speed.bind(value=lambda _w, value: self.set_speed(value))
+            card.add_widget(speed)
+        card.add_widget(Widget())
+        done = Btn(text="Done", kind="primary", size_hint_y=None, height=dp(48))
+        done.bind(on_release=lambda *_: sheet.dismiss())
+        card.add_widget(done)
+        sheet.add_widget(card)
+        sheet.open()
+
+    def set_speed(self, value):
+        if value is None:
+            return
+        app = App.get_running_app()
+        app.set_setting("step_delay", float(value))
+        if self.session is not None:
+            self.session.set_auto(self.auto, float(value))
+
+    # -- being out ------------------------------------------------------------
+
+    def _check_out(self, snap):
+        """You lost your last die and the game goes on: offer the way out."""
+        if self._out_shown or snap.finished or not self.human_playing or self._sheet is not None:
+            return
+        me = next((p for p in snap.players if p.is_human), None)
+        if me is None or me.alive:
+            return
+        self._out_shown = True
+        if getattr(self.session, "left", False) or (
+                hasattr(self.session, "has_left") and self.session.has_left(me.name)):
+            return                                    # walked away, and came back to watch
+        if self.manager is None or self.manager.current != self.name:
+            return
+        place = sum(1 for p in snap.players if p.alive) + 1
+        app = App.get_running_app()
+        bots = [n for n in app.my_seats_in_play() if n != me.name] if self.multiplayer else []
+        text = f"You finished {_ordinal(place)}."
+        if bots:
+            text += f" Your {'bot' if len(bots) == 1 else 'bots'} {', '.join(bots)} {'plays' if len(bots) == 1 else 'play'} on."
+        sheet = ModalView(size_hint=(0.88, None), height=dp(200 if bots else 180), background="",
+                          background_color=T.CLEAR, overlay_color=T.BG[:3] + [0.75])
+        card = Surface(orientation="vertical", padding=dp(20), spacing=dp(10), radius=dp(22),
+                       border=T.LINE, border_width=dp(1))
+        title = Label(text="[b]You're out[/b]", markup=True, font_size=sp(20), color=T.TEXT,
+                      size_hint_y=None, height=dp(32), halign="left", valign="middle")
+        title.bind(size=lambda w, v: setattr(w, "text_size", v))
+        card.add_widget(title)
+        card.add_widget(Body(text=text))
+        card.add_widget(Widget())
+        buttons = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(10))
+        watch = Btn(text="Keep watching", kind="outline")
+        watch.bind(on_release=lambda *_: self._close_sheet())
+        out = Btn(text="Lobby" if self.multiplayer else "Menu", kind="primary")
+        out.bind(on_release=lambda *_: (self._close_sheet(), self.leave()))
+        buttons.add_widget(watch)
+        buttons.add_widget(out)
+        card.add_widget(buttons)
+        sheet.add_widget(card)
+        self._sheet = sheet
+        sheet.open()
 
     # -- the human's decision -----------------------------------------------
 
@@ -1880,6 +2005,8 @@ class SettingsScreen(Screen):
 
     def on_pre_enter(self, *_):
         app = App.get_running_app()
+        self.ids.chat_toggle.active = bool(app.settings["chat"])     # may have changed during a game
+        self.ids.tts_toggle.active = bool(app.settings["tts"])
         self.ids.speed.value = float(app.settings["step_delay"])
         self._describe_speed(app.settings["step_delay"])
         self.show_speech()
@@ -2087,27 +2214,84 @@ class PerudoApp(App):
         if self.lobby is not None and self.lobby.session is not None:
             self._show_lobby_game(self.lobby.session)
 
+    def my_seats_in_play(self) -> list:
+        """While playing together: this phone's seats (the player and their
+        bots) still in the game going on."""
+        lobby = self.lobby
+        session = lobby.session if lobby is not None else None
+        if session is None or not session.running:
+            return []
+        if self.lobby_host:
+            mine = lobby.seats_of(0)
+            if any(session.has_left(n) for n in mine):
+                return []
+        else:
+            if session.left:
+                return []
+            mine = session.mine
+        snap = session.snapshot()
+        if snap.finished:
+            return []
+        if not snap.players:                        # not dealt yet: everyone is in
+            return list(mine)
+        alive = {p.name for p in snap.players if p.alive}
+        return [n for n in mine if n in alive]
+
     def leave_lobby_game(self):
-        """Back from the game screen while playing together."""
+        """Back from the game screen while playing together. A game that
+        goes on goes on without you; while you or your bots are still in
+        it, leaving means losing, so ask first."""
         lobby = self.lobby
         if lobby is None:
             self.go("together", back=True)
             return
-        if not self.lobby_host:
+        from perudo_app.lobby_ui import choose
+        session = lobby.session
+        host = self.lobby_host
+        if session is None or not session.running or session.snapshot().finished:
+            if host:
+                lobby.end_game()
             self.go("lobby", back=True)
             return
-        session = lobby.session
-        if session is not None and session.running and not session.snapshot().finished:
-            from perudo_app.lobby_ui import confirm
 
-            def end():
-                lobby.end_game()
-                self.go("lobby", back=True)
+        def to_lobby():
+            self.go("lobby", back=True)
 
-            confirm("End the game?", "Everyone goes back to the lobby.", "End game", end)
-            return
-        lobby.end_game()
-        self.go("lobby", back=True)
+        def walk_away():
+            if host:
+                lobby.forfeit(0)
+            else:
+                lobby.forfeit()
+            to_lobby()
+
+        def end():
+            lobby.end_game()
+            to_lobby()
+
+        still = self.my_seats_in_play()
+        if still:
+            me = session.human.name if session.human is not None else None
+            bots = [n for n in still if n != me]
+            names = ", ".join(bots)
+            if me in still and bots:
+                text = (f"You and your {'bot' if len(bots) == 1 else 'bots'} ({names}) are still in the game. "
+                        "If you leave now, you all lose at once.")
+            elif me in still:
+                text = "You are still in the game. If you leave now, you lose at once."
+            elif len(bots) == 1:
+                text = f"Your bot {names} is still in the game. If you leave now, it loses at once."
+            else:
+                text = f"Your bots ({names}) are still in the game. If you leave now, they lose at once."
+            options = [("Leave and lose", "danger", walk_away)]
+            if host:
+                options.append(("End the game for everyone", "outline", end))
+            choose("Leave the game?", text, options, cancel="Stay")
+        elif host:
+            choose("Leave the table?", "The game goes on without you; you can come back from the lobby.",
+                   [("Back to the lobby", "primary", to_lobby), ("End the game for everyone", "danger", end)],
+                   cancel="Stay")
+        else:
+            to_lobby()
 
     def restart_lobby_game(self):
         if self.lobby is None or not self.lobby_host:
@@ -2150,6 +2334,12 @@ class PerudoApp(App):
         self.settings[key] = value
         if key == "tts":
             self.speaker.enabled = bool(value)
+            if not value:
+                self.speaker.clear()            # stop what was still to be said
+        elif key == "chat":
+            game = self.sm.get_screen("game")
+            if game.session is not None:
+                game.redraw_feed()
         elif key == "tts_engine":
             self.speaker.engine = value
             self.speaker.error = self.speaker.note = None

@@ -655,4 +655,25 @@ def confirm(title, text, yes, then):
     LobbyScreen._confirm(None, title, text, yes, then)
 
 
+def choose(title, text, options, cancel="Cancel"):
+    """A sheet with a few choices, one under the other: options is a list of
+    (label, button kind, then), then a button that only closes it."""
+    sheet = ModalView(size_hint=(0.88, None), height=dp(150 + 58 * (len(options) + 1)), background="",
+                      background_color=T.CLEAR, overlay_color=T.BG[:3] + [0.75])
+    card = Surface(orientation="vertical", padding=dp(20), spacing=dp(10), radius=dp(22))
+    card.add_widget(_label(f"[b]{title}[/b]", 19))
+    card.add_widget(Body(text=text))
+    card.add_widget(Widget())
+    for label, kind, then in options:
+        b = Btn(text=label, kind=kind, size_hint_y=None, height=dp(48))
+        b.bind(on_release=lambda *_, then=then: (sheet.dismiss(), then()))
+        card.add_widget(b)
+    no = Btn(text=cancel, kind="outline", size_hint_y=None, height=dp(48))
+    no.bind(on_release=lambda *_: sheet.dismiss())
+    card.add_widget(no)
+    sheet.add_widget(card)
+    sheet.open()
+    return sheet
+
+
 Builder.load_string(KV)
