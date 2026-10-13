@@ -654,7 +654,7 @@ KV = """
                     text: root.out_text
                 Widget:
                 Btn:
-                    kind: "primary"
+                    kind: root.out_button_kind
                     text: root.out_button
                     font_size: sp(16)
                     size_hint_y: None
@@ -1324,6 +1324,7 @@ class GameScreen(Screen):
     out = BooleanProperty(False)
     out_text = StringProperty("")
     out_button = StringProperty("Menu")
+    out_button_kind = StringProperty("primary")
 
     def __init__(self, **kw):
         super().__init__(**kw)
@@ -1731,28 +1732,46 @@ class GameScreen(Screen):
 
     def _check_out(self, snap):
         """You lost your last die (or left) while the game goes on: the
-        bidding panel says so and offers the way out; the game stays in view."""
-        if self.out or not self.human_playing:
+        bidding panel says so; the game stays in view. While your bots still
+        play, it asks you to stay; once they are out too, it shows the way
+        back."""
+        if not self.human_playing:
             return
         me = next((p for p in snap.players if p.is_human), None)
         if me is None or me.alive:
             return
-        self.out = True
-        self.out_button = "Back to the lobby" if self.multiplayer else "Back to the menu"
-        if getattr(self.session, "left", False) or (
-                hasattr(self.session, "has_left") and self.session.has_left(me.name)):
-            self.out_text = "You left this game. It goes on above."
+        if not self.out:
+            self.out = True
+            self._out_place = sum(1 for p in snap.players if p.alive) + 1
+            self._out_bots = set()          # my bots seen still playing after I was out
+            self._out_left = bool(getattr(self.session, "left", False) or (
+                hasattr(self.session, "has_left") and self.session.has_left(me.name)))
+            if hasattr(self.session, "hold_timeout"):
+                self.session.hold_timeout = 3.0  # nobody here to tap Next round: reveals go on by themselves
+        back = "Back to the lobby" if self.multiplayer else "Back to the menu"
+        if self._out_left:
+            text = "You left this game." + (" It is over." if snap.finished else " It goes on above.")
+            button, kind = back, "primary"
         else:
-            place = sum(1 for p in snap.players if p.alive) + 1
-            text = f"You finished {_ordinal(place)}."
+            text = f"You finished {_ordinal(self._out_place)}."
             bots = ([n for n in App.get_running_app().my_seats_in_play() if n != me.name]
-                    if self.multiplayer else [])
+                    if self.multiplayer and not snap.finished else [])
             if bots:
-                text += (f" Your {'bot' if len(bots) == 1 else 'bots'} {', '.join(bots)} "
-                         f"{'plays' if len(bots) == 1 else 'play'} on.")
-            self.out_text = text + " The game goes on above."
-        if hasattr(self.session, "hold_timeout"):
-            self.session.hold_timeout = 3.0      # nobody here to tap Next round: reveals go on by themselves
+                self._out_bots.update(bots)
+                one = len(bots) == 1
+                text += (f" Your {'bot' if one else 'bots'} {', '.join(bots)} {'is' if one else 'are'} "
+                         f"still playing: stay and see how {'it does' if one else 'they do'}.")
+                button, kind = "Leave anyway", "outline"
+            else:
+                winner = snap.standings[0] if snap.finished and snap.standings else None
+                if winner in self._out_bots:
+                    text += f" Your bot {winner} won the game!"
+                elif self._out_bots:
+                    text += f" Your {'bot is' if len(self._out_bots) == 1 else 'bots are'} out too."
+                text += " The game is over." if snap.finished else " The game goes on above."
+                button, kind = back, "primary"
+        if (text, button, kind) != (self.out_text, self.out_button, self.out_button_kind):
+            self.out_text, self.out_button, self.out_button_kind = text, button, kind
 
     # -- the human's decision -----------------------------------------------
 

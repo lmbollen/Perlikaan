@@ -51,6 +51,9 @@ What it does:
   at once (the round is abandoned without anyone losing a die and rolled
   again without you; the others play on). The host can also end the game
   for everyone. A guest whose phone drops out mid-game loses the same way.
+  Out of the game yourself while your bots still play, the bidding panel
+  asks you to stay and watch them; the way back to the lobby is offered
+  once they are out too.
 - **Simulation**: 100 to 5000 games with the same bot instances (so learning
   bots keep learning), with a live leaderboard: win rate, wins, average place
   and bars scaled to the leader, re-ranked as the games come in.
