@@ -612,7 +612,7 @@ KV = """
         Collapsible:
             orientation: "vertical"
             shown: root.human_playing
-            full_height: dp(232)
+            full_height: dp(248)
             padding: dp(16), dp(12), dp(16), dp(16)
             spacing: dp(12)
             radius: dp(24)
@@ -623,7 +623,7 @@ KV = """
                 size_hint_y: None
                 height: dp(18)
                 Caption:
-                    text: "Your move"
+                    text: "Out of the game" if root.out else "Your move"
                 Label:
                     markup: True
                     text: root.turn_hint
@@ -633,62 +633,96 @@ KV = """
                     text_size: self.size
                     valign: "middle"
                     shorten: True
-            BoxLayout:
-                id: faces
-                size_hint_y: None
-                height: dp(44)
-                spacing: dp(10)
-            BoxLayout:
-                size_hint_y: None
-                height: dp(50)
-                spacing: dp(8)
-                Btn:
-                    text: "\\u2212"
-                    font_size: sp(22)
-                    size_hint_x: None
-                    width: dp(48)
-                    disabled: not root.my_turn
-                    on_release: root.change_quantity(-1)
-                Label:
-                    text: root.qty_text
-                    bold: True
-                    font_size: sp(26)
-                    color: T.TEXT if root.my_turn else T.FAINT
-                    size_hint_x: None
-                    width: dp(44)
-                Btn:
-                    text: "+"
-                    font_size: sp(22)
-                    size_hint_x: None
-                    width: dp(48)
-                    disabled: not root.my_turn
-                    on_release: root.change_quantity(1)
-                Btn:
-                    kind: "primary"
-                    text: root.bid_button
-                    font_size: sp(16)
-                    disabled: not root.my_turn
-                    on_release: root.submit_bid()
             Collapsible:
-                shown: not root.awaiting_next_round
-                full_height: dp(48)
+                orientation: "vertical"
+                shown: root.out
+                full_height: dp(166)
                 bg: T.CLEAR
                 radius: 0
-                spacing: dp(10)
+                spacing: dp(8)
+                Label:
+                    text: "You're out"
+                    bold: True
+                    font_size: sp(20)
+                    color: T.TEXT
+                    size_hint_y: None
+                    height: dp(30)
+                    halign: "left"
+                    valign: "middle"
+                    text_size: self.size
+                Body:
+                    text: root.out_text
+                Widget:
                 Btn:
-                    kind: "danger"
-                    text: "Dudo!"
+                    kind: "primary"
+                    text: root.out_button
                     font_size: sp(16)
-                    disabled: not root.can_dudo
-                    on_release: root.submit(root.DUDO)
-                Btn:
-                    kind: "calza"
-                    text: "Calza!"
-                    font_size: sp(16)
-                    disabled: not root.can_calza
-                    on_release: root.submit(root.CALZA)
+                    size_hint_y: None
+                    height: dp(48)
+                    on_release: root.leave()
             Collapsible:
-                shown: root.awaiting_next_round
+                orientation: "vertical"
+                shown: not root.out
+                full_height: dp(166) if not root.awaiting_next_round else dp(106)
+                bg: T.CLEAR
+                radius: 0
+                spacing: dp(12)
+                BoxLayout:
+                    id: faces
+                    size_hint_y: None
+                    height: dp(44)
+                    spacing: dp(10)
+                BoxLayout:
+                    size_hint_y: None
+                    height: dp(50)
+                    spacing: dp(8)
+                    Btn:
+                        text: "\\u2212"
+                        font_size: sp(22)
+                        size_hint_x: None
+                        width: dp(48)
+                        disabled: not root.my_turn
+                        on_release: root.change_quantity(-1)
+                    Label:
+                        text: root.qty_text
+                        bold: True
+                        font_size: sp(26)
+                        color: T.TEXT if root.my_turn else T.FAINT
+                        size_hint_x: None
+                        width: dp(44)
+                    Btn:
+                        text: "+"
+                        font_size: sp(22)
+                        size_hint_x: None
+                        width: dp(48)
+                        disabled: not root.my_turn
+                        on_release: root.change_quantity(1)
+                    Btn:
+                        kind: "primary"
+                        text: root.bid_button
+                        font_size: sp(16)
+                        disabled: not root.my_turn
+                        on_release: root.submit_bid()
+                Collapsible:
+                    shown: not root.awaiting_next_round
+                    full_height: dp(48)
+                    bg: T.CLEAR
+                    radius: 0
+                    spacing: dp(10)
+                    Btn:
+                        kind: "danger"
+                        text: "Dudo!"
+                        font_size: sp(16)
+                        disabled: not root.can_dudo
+                        on_release: root.submit(root.DUDO)
+                    Btn:
+                        kind: "calza"
+                        text: "Calza!"
+                        font_size: sp(16)
+                        disabled: not root.can_calza
+                        on_release: root.submit(root.CALZA)
+            Collapsible:
+                shown: root.awaiting_next_round and not root.out
                 full_height: dp(48)
                 bg: T.CLEAR
                 radius: 0
@@ -1286,6 +1320,10 @@ class GameScreen(Screen):
     qty_text = StringProperty("")
     bid_button = StringProperty("Bid")
     turn_hint = StringProperty("")
+    # out of the game: the panel says so and offers the way out
+    out = BooleanProperty(False)
+    out_text = StringProperty("")
+    out_button = StringProperty("Menu")
 
     def __init__(self, **kw):
         super().__init__(**kw)
@@ -1338,7 +1376,7 @@ class GameScreen(Screen):
         self._feed_last = None
         self._close_sheet()
         self._sheet_shown = False
-        self._out_shown = False
+        self.out = False
         self.awaiting_next_round = False
         # Watching starts paused (Play or Step starts it); at the table the bots play by themselves.
         self.auto = human
@@ -1352,7 +1390,7 @@ class GameScreen(Screen):
     def on_pre_enter(self, *_):
         if self.session is not None and self._poll is None:     # back from the lobby
             self._poll = Clock.schedule_interval(self.refresh, 0.12)
-        if self.multiplayer and hasattr(self.session, "hold_timeout"):
+        if self.multiplayer and hasattr(self.session, "hold_timeout") and not self.out:
             self.session.hold_timeout = None                    # the host presses Next round again
 
     def on_leave(self, *_):
@@ -1692,45 +1730,29 @@ class GameScreen(Screen):
     # -- being out ------------------------------------------------------------
 
     def _check_out(self, snap):
-        """You lost your last die and the game goes on: offer the way out."""
-        if self._out_shown or snap.finished or not self.human_playing or self._sheet is not None:
+        """You lost your last die (or left) while the game goes on: the
+        bidding panel says so and offers the way out; the game stays in view."""
+        if self.out or not self.human_playing:
             return
         me = next((p for p in snap.players if p.is_human), None)
         if me is None or me.alive:
             return
-        self._out_shown = True
+        self.out = True
+        self.out_button = "Back to the lobby" if self.multiplayer else "Back to the menu"
         if getattr(self.session, "left", False) or (
                 hasattr(self.session, "has_left") and self.session.has_left(me.name)):
-            return                                    # walked away, and came back to watch
-        if self.manager is None or self.manager.current != self.name:
-            return
-        place = sum(1 for p in snap.players if p.alive) + 1
-        app = App.get_running_app()
-        bots = [n for n in app.my_seats_in_play() if n != me.name] if self.multiplayer else []
-        text = f"You finished {_ordinal(place)}."
-        if bots:
-            text += f" Your {'bot' if len(bots) == 1 else 'bots'} {', '.join(bots)} {'plays' if len(bots) == 1 else 'play'} on."
-        sheet = ModalView(size_hint=(0.88, None), height=dp(200 if bots else 180), background="",
-                          background_color=T.CLEAR, overlay_color=T.BG[:3] + [0.75])
-        card = Surface(orientation="vertical", padding=dp(20), spacing=dp(10), radius=dp(22),
-                       border=T.LINE, border_width=dp(1))
-        title = Label(text="[b]You're out[/b]", markup=True, font_size=sp(20), color=T.TEXT,
-                      size_hint_y=None, height=dp(32), halign="left", valign="middle")
-        title.bind(size=lambda w, v: setattr(w, "text_size", v))
-        card.add_widget(title)
-        card.add_widget(Body(text=text))
-        card.add_widget(Widget())
-        buttons = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(10))
-        watch = Btn(text="Keep watching", kind="outline")
-        watch.bind(on_release=lambda *_: self._close_sheet())
-        out = Btn(text="Lobby" if self.multiplayer else "Menu", kind="primary")
-        out.bind(on_release=lambda *_: (self._close_sheet(), self.leave()))
-        buttons.add_widget(watch)
-        buttons.add_widget(out)
-        card.add_widget(buttons)
-        sheet.add_widget(card)
-        self._sheet = sheet
-        sheet.open()
+            self.out_text = "You left this game. It goes on above."
+        else:
+            place = sum(1 for p in snap.players if p.alive) + 1
+            text = f"You finished {_ordinal(place)}."
+            bots = ([n for n in App.get_running_app().my_seats_in_play() if n != me.name]
+                    if self.multiplayer else [])
+            if bots:
+                text += (f" Your {'bot' if len(bots) == 1 else 'bots'} {', '.join(bots)} "
+                         f"{'plays' if len(bots) == 1 else 'play'} on.")
+            self.out_text = text + " The game goes on above."
+        if hasattr(self.session, "hold_timeout"):
+            self.session.hold_timeout = 3.0      # nobody here to tap Next round: reveals go on by themselves
 
     # -- the human's decision -----------------------------------------------
 

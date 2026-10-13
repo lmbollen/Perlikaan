@@ -33,8 +33,8 @@ What it does:
   reveal. Tap a die for the face, set the quantity (the lowest legal bid is
   preselected), and bid, or call Dudo or Calza when they are legal. When a
   round is decided the cups stay up until you tap *Next round*. Once you lose
-  your last die you can go back to the menu instead of watching the bots
-  finish.
+  your last die, the bidding panel says so and offers the way back to the
+  menu; the game stays in view and goes on by itself if you keep watching.
 - **Play together**: friends anywhere (over the internet, when the build has
   an Ably key) or on the same Wi-Fi or one phone's hotspot play at one table,
   each on their own phone. One phone hosts a lobby and
