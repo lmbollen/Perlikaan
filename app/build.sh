@@ -8,6 +8,18 @@ set -euo pipefail
 cd "$(dirname "$0")"
 rsync -a --delete --exclude __pycache__ ../perudo/ perudo/
 rm -f perudo/bots/*_old.py
+# Playing over the internet needs an Ably key (see perudo_app/relay.py). It
+# is baked into the APK from ABLY_KEY when that is set; without it the app
+# only plays on the local network.
+if [ -n "${ABLY_KEY:-}" ]; then
+  printf 'KEY = %s\n' "$(printf '%s' "$ABLY_KEY" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read().strip()))')" \
+    > perudo_app/online_key.py
+  echo "Online play: on (key from ABLY_KEY)"
+elif [ -f perudo_app/online_key.py ]; then
+  echo "Online play: on (key from an earlier build's perudo_app/online_key.py)"
+else
+  echo "Online play: off (set ABLY_KEY to turn it on)"
+fi
 if [ -z "${ANDROIDSDK:-}" ] || [ -z "${ANDROIDNDK:-}" ]; then
   echo "ANDROIDSDK / ANDROIDNDK are not set: run this inside 'nix develop'" >&2
   echo "(or 'nix develop .#prebuilt' with your own SDK and NDK in those variables)." >&2

@@ -848,6 +848,7 @@ DEFAULT_SETTINGS = {
     "name_confirmed": False,   # asked for the name once (playing together)
     "guest_bots": True,        # hosting: guests may bring bots
     "guest_bot_limit": 2,      # ... at most this many each
+    "host_online": True,       # hosting: over the internet (when the app has an online key), else Wi-Fi
     "table": {},          # who is seated: BotRegistry.selection()
 }
 

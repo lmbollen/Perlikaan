@@ -1,5 +1,5 @@
 """
-Playing together on one local network.
+Playing together, on one local network or over the internet.
 
 The host's phone runs the lobby and the game (a perudo_app.core.GameSession).
 Guests join with the lobby code. On the host, every guest's own seat, and
@@ -9,6 +9,10 @@ legal fallback when the phone is gone or answers nonsense). A guest's bots
 run on the guest's phone; only observations, events and actions travel. The
 host sends each guest the table as that guest may see it: only their own
 dice, everyone's when the cups come up.
+
+The messages travel over a TCP connection on the local network (see
+perudo_app.net), or through a hosted relay over the internet (see
+perudo_app.relay); the lobby and the game do not care which.
 
 Messages are JSON objects with a "t" field:
 
@@ -30,7 +34,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Callable, Dict, List, Optional
 
 from perudo.models import PACO, Calza, Dudo, Observation
-from perudo_app import net
+from perudo_app import net, relay as online
 from perudo_app.core import (
     ROUTER, BotRegistry, FeedItem, GameSession, HumanSeat, PlayerView, SessionStopped, Snapshot, legal_bids,
 )
@@ -142,7 +146,10 @@ class LobbyHost:
     """The lobby on the host's phone. The host is member 0."""
 
     def __init__(self, name: str, registry: BotRegistry, allow_guest_bots: bool = True,
-                 guest_bot_limit: int = 2, ip: Optional[str] = None, slots=range(net.SLOTS)):
+                 guest_bot_limit: int = 2, ip: Optional[str] = None, slots=range(net.SLOTS),
+                 relay=None):
+        """`relay`: a perudo_app.relay backend to host over the internet;
+        None hosts on the local network."""
         self.registry = registry
         self._lock = threading.RLock()
         self.members: Dict[int, Member] = {0: Member(0, clean_name(name, "Host"))}
@@ -159,10 +166,16 @@ class LobbyHost:
         self._reqs = iter(range(1, 1_000_000_000))
         self._waiting: Dict[int, dict] = {}
         self._seat_names: Dict[int, str] = {}    # member id -> name of their seat in the game
-        self._server, slot = net.listen(slots)
-        self.ip = ip or net.local_ipv4s()[0]
-        self.code = net.make_code(self.ip, slot)
-        threading.Thread(target=self._accept, name="perudo-lobby", daemon=True).start()
+        self.online = relay is not None
+        self._server = self._hub = None
+        if self.online:
+            self._hub = online.RelayHost(relay, self._on_message, self._on_close)
+            self.code = self._hub.code
+        else:
+            self._server, slot = net.listen(slots)
+            self.ip = ip or net.local_ipv4s()[0]
+            self.code = net.make_code(self.ip, slot)
+            threading.Thread(target=self._accept, name="perudo-lobby", daemon=True).start()
 
     # -- state for the screens ---------------------------------------------
 
@@ -309,10 +322,13 @@ class LobbyHost:
             members = [m for m in self.members.values() if m.conn is not None]
         if session is not None:
             session.stop()
-        try:
-            self._server.close()
-        except OSError:
-            pass
+        if self._hub is not None:
+            self._hub.close()
+        if self._server is not None:
+            try:
+                self._server.close()
+            except OSError:
+                pass
         for m in members:
             m.conn.close()
 
@@ -580,7 +596,10 @@ class LobbyClient:
     runs the bots it brought and shows the host's game as a RemoteSession."""
 
     def __init__(self, name: str, registry: BotRegistry, code: str, local_ips: Optional[List[str]] = None,
-                 speak: Optional[Callable[[str, str, str], None]] = None, timeout: float = 5.0):
+                 speak: Optional[Callable[[str, str, str], None]] = None, timeout: float = 5.0,
+                 relay=None):
+        """`relay`: a perudo_app.relay backend to join over the internet;
+        None joins on the local network."""
         self.registry = registry
         self.code = net.normalise_code(code)
         self.name = clean_name(name)
@@ -597,8 +616,12 @@ class LobbyClient:
         self._runner = threading.Thread(target=self._run_jobs, name="perudo-guest-bots", daemon=True)
         self._runner.start()
         self._welcome = threading.Event()
-        sock = net.dial(self.code, local_ips)
-        self.conn = net.Connection(sock, self._on_message, self._on_close).start()
+        self.online = relay is not None
+        if self.online:
+            self.conn = online.RelayGuest(relay, self.code, self._on_message, self._on_close).link
+        else:
+            sock = net.dial(self.code, local_ips)
+            self.conn = net.Connection(sock, self._on_message, self._on_close).start()
         self.send({"t": "hello", "name": self.name, "code": self.code, "protocol": net.PROTOCOL})
         if not self._welcome.wait(timeout) or self.my_id is None:
             reason = self.error or "The lobby did not answer"
@@ -744,3 +767,47 @@ class LobbyClient:
                 job()
             except Exception:
                 pass
+
+
+def join_lobby(name: str, registry: BotRegistry, code: str, relay=None,
+               local_ips: Optional[List[str]] = None, speak=None, timeout: float = 6.0) -> LobbyClient:
+    """Join the lobby with this code wherever it is: over the internet (when
+    there is a relay) and on the local network at the same time; the first to
+    answer wins."""
+    if relay is None:
+        return LobbyClient(name, registry, code, local_ips=local_ips, speak=speak, timeout=timeout)
+    done = threading.Event()
+    lock = threading.Lock()
+    found: Dict[str, Any] = {}
+    errors: Dict[str, str] = {}
+
+    def attempt(kind: str) -> None:
+        try:
+            client = LobbyClient(name, registry, code, local_ips=local_ips, speak=speak, timeout=timeout,
+                                 relay=relay if kind == "online" else None)
+        except Exception as exc:
+            with lock:
+                errors[kind] = str(exc) or type(exc).__name__
+                if len(errors) == 2:
+                    done.set()
+            return
+        with lock:
+            if "client" in found:
+                client.close()
+                return
+            found["client"] = client
+        done.set()
+
+    for kind in ("online", "local"):
+        threading.Thread(target=attempt, args=(kind,), daemon=True).start()
+    done.wait(timeout + 20)
+    with lock:
+        if "client" in found:
+            return found["client"]
+        found["client"] = None                 # a late answer is closed
+    # A refusal from a lobby that was found says more than "not found".
+    for kind in ("online", "local"):
+        message = errors.get(kind, "")
+        if message and "did not answer" not in message and "no lobby" not in message.lower():
+            raise ConnectionError(message)
+    raise ConnectionError("No lobby with that code")

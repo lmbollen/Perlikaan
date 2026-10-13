@@ -43,6 +43,10 @@ jobs:
 
       - name: Build
         working-directory: app
+        # The Ably key for playing over the internet (a repository secret);
+        # without it the APK plays on the local network only.
+        env:
+          ABLY_KEY: ${{ secrets.ABLY_KEY }}
         run: nix develop --command ./build.sh debug
 
       - name: Upload the APK

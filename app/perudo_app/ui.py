@@ -192,7 +192,7 @@ KV = """
             ActionCard:
                 glyph: "\\u2687"
                 title: "Play together"
-                subtitle: "Same Wi-Fi: host a lobby or join one"
+                subtitle: "Host a lobby or join one with its code"
                 on_release: app.go("together")
             ActionCard:
                 glyph: "\\u2694"
@@ -2023,21 +2023,28 @@ class PerudoApp(App):
         current = self.settings["human_name"]
         NameDialog("" if current in ("", "You") else current, then).open()
 
-    def host_lobby(self):
+    def relay(self):
+        """The internet relay, when this build has an online key (else None)."""
+        if not hasattr(self, "_relay"):
+            from perudo_app import relay
+            key = relay.ably_key()
+            self._relay = relay.AblyBackend(key) if key else None
+        return self._relay
+
+    def make_host(self, online: bool):
+        """Open a lobby (blocking: call from a worker thread)."""
         from perudo_app.multiplayer import LobbyHost
-        self.leave_lobby(go_back=False)
-        self.lobby = LobbyHost(self.settings["human_name"], self.registry,
-                               allow_guest_bots=bool(self.settings["guest_bots"]),
-                               guest_bot_limit=int(self.settings["guest_bot_limit"] or 2))
-        self.lobby_host = True
-        self.go("lobby")
+        return LobbyHost(self.settings["human_name"], self.registry,
+                         allow_guest_bots=bool(self.settings["guest_bots"]),
+                         guest_bot_limit=int(self.settings["guest_bot_limit"] or 2),
+                         relay=self.relay() if online else None)
 
     def make_client(self, code: str):
-        """Join a lobby (blocking: call from a worker thread)."""
-        from perudo_app.multiplayer import LobbyClient
-        return LobbyClient(self.settings["human_name"], self.registry, code,
-                           speak=lambda text, lang, seed: self.speaker.say(
-                               text, self.settings["tts_lang"] or lang, seed))
+        """Join a lobby, over the internet or nearby (blocking: call from a worker thread)."""
+        from perudo_app.multiplayer import join_lobby
+        return join_lobby(self.settings["human_name"], self.registry, code, relay=self.relay(),
+                          speak=lambda text, lang, seed: self.speaker.say(
+                              text, self.settings["tts_lang"] or lang, seed))
 
     def enter_lobby(self, lobby, host: bool):
         self.leave_lobby(go_back=False)

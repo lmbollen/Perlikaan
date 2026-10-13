@@ -50,7 +50,7 @@ KV = """
                 padding: dp(16), dp(2), dp(16), dp(24)
                 spacing: dp(14)
                 Sub:
-                    text: "Play with friends on the same Wi-Fi, or on the hotspot of one of your phones. One phone hosts the lobby; the others join with its code."
+                    text: ("Play with friends anywhere, or on the same Wi-Fi. " if root.online_ok else "Play with friends on the same Wi-Fi, or on the hotspot of one of your phones. ") + "One phone hosts the lobby; the others join with its code."
                     font_size: sp(14)
                 Surface:
                     orientation: "vertical"
@@ -61,7 +61,15 @@ KV = """
                     Caption:
                         text: "Host"
                     Sub:
-                        text: "Start a lobby on this phone and read its code to the others. You decide which bots play."
+                        text: "Start a lobby on this phone and send its code to the others. You decide which bots play."
+                    Segmented:
+                        size_hint_y: None
+                        height: dp(40) if root.online_ok else 0
+                        opacity: 1 if root.online_ok else 0
+                        disabled: not root.online_ok or root.busy
+                        options: [("online", "Over the internet"), ("local", "Same Wi-Fi")]
+                        value: "online" if app.settings["host_online"] else "local"
+                        on_value: app.set_setting("host_online", self.value == "online")
                     Btn:
                         kind: "primary"
                         text: "Host a lobby"
@@ -212,9 +220,11 @@ class PlayTogetherScreen(Screen):
     status_color = T.MUTED
     busy = BooleanProperty(False)
     player_name = StringProperty("")
+    online_ok = BooleanProperty(False)       # this build can play over the internet
 
     def on_pre_enter(self, *_):
         self.refresh_name()
+        self.online_ok = App.get_running_app().relay() is not None
 
     def refresh_name(self, *_):
         self.player_name = T.esc(App.get_running_app().settings["human_name"] or "You")
@@ -235,10 +245,26 @@ class PlayTogetherScreen(Screen):
     def _host(self):
         app = App.get_running_app()
         self.refresh_name()
-        try:
-            app.host_lobby()
-        except Exception as exc:
-            self._say(f"Could not start a lobby: {exc}", error=True)
+        if self.busy:
+            return
+        online = self.online_ok and bool(app.settings["host_online"])
+        self.busy = True
+        self._say("Opening a lobby…")
+
+        def work():
+            try:
+                lobby = app.make_host(online)
+                Clock.schedule_once(lambda _dt: self._hosted(lobby), 0)
+            except Exception as exc:
+                message = str(exc) or type(exc).__name__
+                Clock.schedule_once(lambda _dt: self._failed(f"Could not start a lobby: {message}"), 0)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _hosted(self, lobby):
+        self.busy = False
+        self.status = ""
+        App.get_running_app().enter_lobby(lobby, host=True)
 
     def join(self):
         if len(self.ids.code.text) != 4 or self.busy:
@@ -269,7 +295,10 @@ class PlayTogetherScreen(Screen):
 
     def _failed(self, message):
         self.busy = False
-        hint = (" Check that you are on the same Wi-Fi as the host." if "no lobby" in message else "")
+        hint = ""
+        if "no lobby" in message.lower():
+            hint = (" Check the code; for a Same Wi-Fi lobby, join from the host's Wi-Fi." if self.online_ok
+                    else " Check that you are on the same Wi-Fi as the host.")
         self._say(message + "." + hint if not message.endswith(".") else message + hint, error=True)
 
 
@@ -447,7 +476,9 @@ class LobbyScreen(Screen):
             code_card.add_widget(Label(text="  ".join(state.get("code", "")), font_size=sp(40), bold=True,
                                        color=T.GOLD, size_hint_y=None, height=dp(58)))
             code_card.add_widget(Body(
-                text=("The others join from Play together with this code, on the same Wi-Fi or your hotspot."
+                text=(("The others join from Play together with this code, from anywhere."
+                       if getattr(self.lobby, "online", False) else
+                       "The others join from Play together with this code, on the same Wi-Fi or your hotspot.")
                       if host else f"You are in {T.esc(state.get('host', ''))}'s lobby."),
                 font_size=sp(13), halign="center"))
             body.add_widget(code_card)

@@ -47,7 +47,10 @@ from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1]
 ARCHS = "arm64-v8a"
-PACKAGES = APP / ".buildozer" / "android" / "platform" / f"build-{ARCHS.replace('-', '_')}" / "packages"
+# Buildozer's storage dir for the arch (build-arm64-v8a; older Buildozers used
+# build-arm64_v8a, which is linked to it below).
+PACKAGES = APP / ".buildozer" / "android" / "platform" / f"build-{ARCHS}" / "packages"
+_OLD_STORAGE = PACKAGES.parent.parent / f"build-{ARCHS.replace('-', '_')}"
 P4A_SRC = APP / ".p4a-src"
 
 P4A_VERSION = "2026.5.9"
@@ -154,6 +157,9 @@ def seed(recipe: str, filename: str, data: bytes) -> None:
 
 
 def main() -> None:
+    PACKAGES.parent.mkdir(parents=True, exist_ok=True)
+    if not _OLD_STORAGE.exists():
+        _OLD_STORAGE.symlink_to(PACKAGES.parent.name)
     print("python-for-android from PyPI")
     sdist = pypi_sdist("python-for-android", P4A_VERSION)
     P4A_SRC.mkdir(exist_ok=True)
