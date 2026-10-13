@@ -52,6 +52,15 @@ ARCHS = "arm64-v8a"
 PACKAGES = APP / ".buildozer" / "android" / "platform" / f"build-{ARCHS}" / "packages"
 _OLD_STORAGE = PACKAGES.parent.parent / f"build-{ARCHS.replace('-', '_')}"
 P4A_SRC = APP / ".p4a-src"
+ANDROID_PYPROJECT = """\
+[build-system]
+requires = [
+    "setuptools",
+    "wheel",
+    "Cython>=0.29,<3.1"
+]
+build-backend = "setuptools.build_meta"
+"""
 
 P4A_VERSION = "2026.5.9"
 PYTHON = "3.14.4"        # python-for-android 2026.5.9 pins 3.14.2; Ubuntu carries 3.14.4
@@ -177,6 +186,10 @@ def main() -> None:
         top = tf.getmembers()[0].name.split("/", 1)[0]
         tf.extractall(P4A_SRC, filter="data")
     src = P4A_SRC / top
+    # The sdist's MANIFEST.in leaves out the android recipe's pyproject.toml,
+    # so its build runs isolated without Cython and fails. Put it back, as it
+    # is in the release's git tag.
+    (src / "pythonforandroid/recipes/android/src/pyproject.toml").write_text(ANDROID_PYPROJECT)
     print(f"  -> {src}")
 
     print("CPython from Ubuntu's pool")
