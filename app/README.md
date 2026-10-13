@@ -170,6 +170,15 @@ The tests cover the app's model (loading bots, stepping a game with all dice
 and totals, the human seat, simulations with live standings, settings) without
 Kivy.
 
+The online tests use an in-memory stand-in for Ably. To run them against Ably
+itself (a whole game, joining, leaving), set `ABLY_KEY` and:
+
+```sh
+cd app && PERUDO_RELAY=ably uv run pytest tests/test_online.py
+```
+
+The key needs the Publish and Subscribe capabilities on `lobby:*`.
+
 ## How playing together works
 
 `perudo_app/net.py` and `perudo_app/multiplayer.py`. A lobby code encodes the

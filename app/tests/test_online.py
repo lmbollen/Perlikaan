@@ -20,8 +20,15 @@ from perudo_app.multiplayer import LobbyClient, LobbyHost, join_lobby  # noqa: E
 from test_multiplayer import _play_people, key, registry, wait         # noqa: E402
 
 
+LIVE = os.environ.get("PERUDO_RELAY") == "ably"     # run these against Ably itself
+
+
 @pytest.fixture
 def backend():
+    if LIVE:
+        if not relay.ably_key():
+            pytest.skip("PERUDO_RELAY=ably needs ABLY_KEY")
+        return relay.AblyBackend(relay.ably_key())
     return relay.MemoryBackend(delay=0.002)
 
 
@@ -32,7 +39,8 @@ def host(backend):
     h.close()
 
 
-def test_a_link_batches_and_keeps_order(backend):
+def test_a_link_batches_and_keeps_order():
+    backend = relay.MemoryBackend(delay=0.002)          # counts requests; Ably can't
     got = []
     sub = backend.subscribe("c", lambda name, data: got.extend(relay._parse(data)), None)
     link = relay.Link(backend, "c", "me", lambda *_: None, lambda *_: None)

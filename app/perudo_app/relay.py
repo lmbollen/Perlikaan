@@ -31,6 +31,7 @@ import json
 import os
 import queue
 import secrets
+import socket
 import ssl
 import threading
 import time
@@ -146,10 +147,14 @@ class _SseSubscription(Subscription):
         self.closed = True
         resp = self._resp
         if resp is not None:
+            # The reading thread sits in readline() holding the response's
+            # lock, so resp.close() would wait until Ably next sends
+            # something (up to a minute). Shutting the socket down wakes the
+            # reader at once; closing the response is left to it.
             try:
-                resp.close()
+                resp.fp.raw._sock.shutdown(socket.SHUT_RDWR)
             except Exception:
-                pass
+                threading.Thread(target=resp.close, daemon=True).start()
 
     def _run(self) -> None:
         failures = 0
