@@ -76,6 +76,7 @@ class MinRaiseBot:
         "others_bluff_caught": [
             "{bidder} heeft gelogen? Dat is zo naar. Maar {challenger}, moest het zo hard?",
             "Arme {bidder}. Nog een knuffel, iemand?",
+            "Arme {bidder}. Sadge. Iemand een knuffel? widepeepoHappy",
         ],
         "others_dudo_wrong": [
             "Zie je, {challenger}? Gewoon geloven wat mensen zeggen. Zoals ik.",
@@ -90,6 +91,7 @@ class MinRaiseBot:
         "last_die": [
             "Nog één steen. Wees lief voor hem, alsjeblieft.",
             "Mijn laatste steentje. Niemand Dudo roepen, oké? Afgesproken?",
+            "Mijn laatste steentje. PepeHands. Wees lief, chat.",
         ],
         "eliminated_other": [
             "{who} ligt eruit. Dat verdiende niemand. Nou ja. Niemand.",

@@ -127,14 +127,17 @@ QUOTES = {
         "{who} roept Dudo op mij. Brutaal!",
         "{who} twijfelt aan Sonny Boy? Aan MIJ? Ik ben gekwetst.",
         "Dudo, {who}? Oké, oké. Even mijn bekertje een knuffel geven.",
+        "{who} roept Dudo op mij? monkaS. Oké, ademen, Sonny.",
     ],
     "bid_held": [
         "Het klopte! {who}, je moet Sonny Boy gewoon geloven. Altijd.",
         "Ha, {who}! Eerlijk als een padvinder. Een padvinder met dobbelstenen.",
+        "Ha {who}! EZ Clap! Sonny Boy liegt nooit. Bijna nooit.",
     ],
     "bid_caught": [
         "Betrapt door {who}. Ik had mijn vingers wel gekruist, hoor.",
         "{who} heeft me. Mijn bekertje en ik gaan even praten.",
+        "Betrapt door {who}. Sadge. Copium: het was een test.",
     ],
     "last_die": [
         "Nog één dobbelsteen. Mijn kleine kampioen. Jij en ik tegen de wereld.",
@@ -147,10 +150,12 @@ QUOTES = {
     "won": [
         "IK HEB GEWONNEN! Mam, kijk! Ik ben op de dobbeltafel!",
         "Gewonnen! Een grote mond en een klein bekertje, meer heb je niet nodig.",
+        "GG EZ! Clip it, chat! Sonny Boy, kampioen van de bekertjes!",
     ],
     "lost_game": [
         "{winner} wint. Goed gedaan. Ik ben niet jaloers. Een beetje.",
         "{winner} wint. Volgende keer neem ik een groter bekertje mee.",
+        "{winner} wint. Skill issue? Nee. Bekertje issue.",
     ],
     "palifico": [
         "Palifico! Alle regels zijn anders. Ik ook. Ik ben ook anders.",

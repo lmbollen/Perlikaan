@@ -85,6 +85,7 @@ class HakamanBot(MinRaiseBot):
         "others_bluff_caught": [
             "{bidder} liegt over {bid}. Amateur. Je moet de stenen aanpassen, niet het bod.",
             "{challenger} vangt {bidder}. Had {bidder} maar beter... gegooid.",
+            "{bidder} betrapt? Amateur. Kappa. Bij mij klopt het altijd.",
         ],
         "others_dudo_wrong": [
             "{bidder} had ze echt. Of iemand heeft geholpen. Ik zeg niks.",
@@ -102,6 +103,7 @@ class HakamanBot(MinRaiseBot):
         "eliminated_other": [
             "{who} ligt eruit. Ik heb er niks mee te maken. Officieel.",
             "Dag {who}. Je stenen liggen nog op tafel. Mag ik ze hebben?",
+            "{who} ligt eruit. GG EZ. Kappa",
         ],
         "won": [
             "GG EZ. Kappa",

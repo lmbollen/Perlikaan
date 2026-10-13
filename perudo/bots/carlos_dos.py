@@ -201,6 +201,7 @@ QUOTES = {
         "{bid}. De som van alle verdelingen zegt: dit kan.",
         "{bid}. Rustig, rustig. Bayes heeft geen haast.",
         "{bid}. Ik heb jullie biedingen gewogen. Sommige wogen niks.",
+        "{bid}. 5Head Bayes. Jullie spelen dammen, ik speel statistiek.",
     ],
     "raise_bluff": [
         "{bid}. Ik volg dit gezicht. Hoeveel ik er heb blijft onder ons.",
@@ -213,6 +214,8 @@ QUOTES = {
         "Dudo. {bidder}, ik heb je biedingen bijgehouden. Allemaal.",
         "Dudo. {bidder}, de likelihood van dit bod is niet in je voordeel.",
         "Dudo. {bidder}, mijn broer zou je nog geloofd hebben. Ik niet.",
+        "Dudo. {bidder}, {pct} procent. KEKW, amigo.",
+        "Dudo. {bidder}, mijn prior lacht je uit. OMEGALUL",
     ],
     "calza": [
         "Calza. {bid}, precies op de top van de verdeling.",
@@ -223,16 +226,19 @@ QUOTES = {
         "Zoals de posterior voorspelde. Gracias, {bidder}.",
         "{bidder}, je bluft vaker dan je denkt. Ik heb het bijgehouden.",
         "Weer een datapunt, {bidder}. En een steen.",
+        "Get rekt, {bidder}. De posterior is meedogenloos. EZ Clap",
     ],
     "dudo_wrong": [
         "{actual}. Een uitschieter in de staart. Gebeurt, amigo.",
         "{actual}? {bidder}, je was eerlijk. Ik pas je model aan.",
         "Ay. {actual}. Bayes geeft, Bayes neemt.",
+        "{actual}. Copium: de prior was te sterk. Sadge",
     ],
     "bid_held": [
         "{actual}. {challenger}, je reageerde precies zoals je model voorspelde.",
         "Klopt, {challenger}. Jouw Dudo-model staat nu een stukje scherper.",
         "{actual}, {challenger}. Mijn biedingen zijn meestal waar. Dat staat in de data.",
+        "{actual}. {challenger}, je likelihood is een skill issue.",
     ],
     "bid_caught": [
         "{actual}. Bien jugado, {challenger}. Mijn vertrouwensscore daalt. Tijdelijk.",
@@ -282,10 +288,12 @@ QUOTES = {
         "Carlos Dos wint. Het vervolg is beter dan het origineel.",
         "Gewonnen. Ik heb van jullie allemaal geleerd. Gracias, amigos.",
         "Victoria! De posterior wist het al na de eerste ronde.",
+        "GG EZ, amigos. Carlos Dos > Carlos. Clip it.",
     ],
     "lost_game": [
         "{winner} wint. Felicidades. Ik werk je model bij.",
         "{winner} wint. Ik onthoud het. Ik onthoud alles.",
+        "{winner} wint. Variantie. Pure variantie. Copium.",
     ],
 }
 

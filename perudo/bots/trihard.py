@@ -187,10 +187,12 @@ QUOTES: Dict[str, Sequence[str]] = {
         "{who} roept Dudo. Gemodelleerd. Verwacht. Ingecalculeerd. Niet nerveus.",
         "Dudo, {who}? Jouw drempel schuift. Ik log het.",
         "{who} callt. TriHard. Kom maar op.",
+        "{who} callt mij? TriHard 7. Kom maar op, ik heb hier op getraind.",
     ],
     "last_die": [
         "Laatste steen. Hoge druk. Ik ben gemaakt voor hoge druk. TriHard.",
         "Eén steen. Elke beslissing telt. Elke beslissing telde altijd al.",
+        "Eén steen. Clutch time. TriHard. Chat, spam die zevens.",
     ],
     "won": [
         "GG EZ. TriHard 7. Zoals gesimuleerd.",

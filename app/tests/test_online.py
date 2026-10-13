@@ -130,3 +130,35 @@ def test_through_ably_itself():
         assert wait(lambda: len(host.state()["members"]) == 1, timeout=15)
     finally:
         host.close()
+
+
+def test_bot_talk_is_said_on_every_phone(host, backend, monkeypatch):
+    """A line any bot says (the host's, or a guest's) is shown and said on
+    the host and on every guest."""
+    from perudo_app import core
+    monkeypatch.setattr(core.GameSession, "TALK_CHANCE", 1.0)
+    host_heard, ben_heard, carla_heard = [], [], []
+    monkeypatch.setattr(core.ROUTER, "speak", lambda text, lang, seed: host_heard.append((seed, text)))
+    # One process plays every phone here, and the talk router is one per
+    # process: keep it with the host's game (on a phone, each has its own).
+    attach = core.ROUTER.attach
+    monkeypatch.setattr(core.ROUTER, "attach", lambda listener, thread: None
+                        if isinstance(getattr(listener, "__self__", None), LobbyClient) else attach(listener, thread))
+    ben = LobbyClient("Ben", registry(), host.code, relay=backend,
+                      speak=lambda text, lang, seed: ben_heard.append((seed, text)))
+    carla = LobbyClient("Carla", registry(), host.code, relay=backend,
+                        speak=lambda text, lang, seed: carla_heard.append((seed, text)))
+    try:
+        host.add_bot(key(host.registry, "RandomBot"), "Random Bot")
+        assert wait(lambda: len(host.state()["seats"]) == 1 and len(host.state()["members"]) == 3)
+        session = host.start_game(delay=0.0)
+        assert wait(lambda: ben.session is not None and carla.session is not None)
+        ben._on_bot_talk("Ben's Bot", "Hallo allemaal", "nl")        # a guest's bot says something
+        _play_people(host, [ben, carla], until=lambda: session.snapshot().finished)
+        assert wait(lambda: ("Ben's Bot", "Hallo allemaal") in carla_heard)
+        for heard in (host_heard, ben_heard, carla_heard):
+            assert ("Ben's Bot", "Hallo allemaal") in heard
+            assert any(seed == "Random Bot" for seed, _ in heard)    # the host's bot, heard everywhere
+    finally:
+        ben.close()
+        carla.close()

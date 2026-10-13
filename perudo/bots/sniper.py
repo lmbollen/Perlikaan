@@ -91,6 +91,7 @@ QUOTES = {
     "others_bluff_caught": [
         "{challenger} raakt {bidder}. Niet slecht. Geen headshot, maar niet slecht.",
         "{bidder} gaf zijn positie weg met {bid}. Beginnersfout.",
+        "{challenger} raakt {bidder}. Clip it. Maar mijn clips zijn beter.",
     ],
     "others_dudo_wrong": [
         "{challenger} schiet mis op {bidder}. Hagel. Ik gebruik één kogel.",
@@ -105,6 +106,7 @@ QUOTES = {
     "last_die": [
         "Laatste kogel in de kamer. Moet raak zijn.",
         "Eén steen. Ik heb er nooit meer dan één nodig gehad.",
+        "Laatste kogel. monkaS. Nee. Geen monkaS. Focus.",
     ],
     "eliminated_other": [
         "{who} is neer. Eén doelwit minder.",

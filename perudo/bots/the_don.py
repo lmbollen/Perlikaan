@@ -630,6 +630,7 @@ QUOTES = {
         "{bid}. Ga je gang, roep maar Dudo.",
         "{bid}. Ik leg dit bod voor je neer. Zoals een paardenhoofd in je bed.",
         "{bid}. Mijn buurman wordt te sterk. Dat kunnen we niet hebben.",
+        "{bid}. Niks persoonlijks, kid. Kappa",
     ],
     "protect": [
         "{bid}. Voor jou maak ik het makkelijk, vriend.",
@@ -655,16 +656,19 @@ QUOTES = {
         "{bidder} betaalt. Zoals iedereen betaalt.",
         "{bidder}, je hebt tegen de Don gelogen. Dat doe je maar één keer.",
         "Een steen voor de familie. Grazie, {bidder}.",
+        "{bidder} betaalt. EZ Clap. De familie neemt wat haar toekomt.",
     ],
     "my_dudo_wrong": [
         "{actual}. Iemand heeft gepraat.",
         "{actual}? Ik wil weten wie mij verkeerd heeft geïnformeerd.",
         "{actual}. Goed, {bidder}. Deze keer. Alleen deze keer.",
+        "{actual}. Copium. Iemand gaat hiervoor boeten. Niet ik.",
     ],
     "my_bid_held": [
         "{actual}. {challenger}, je hebt de familie beledigd. Voor niets.",
         "{challenger}, je twijfelde aan mijn woord. Mijn woord is wet.",
         "Klopt. De Don liegt niet, {challenger}. Hij hoeft niet.",
+        "{actual}. {challenger}, je hebt de Don gecalld? OMEGALUL. Leg je steen maar op tafel.",
     ],
     "my_bluff_caught": [
         "{actual}. Goed gezien, {challenger}. Ik onthoud wie goed ziet.",
@@ -694,6 +698,7 @@ QUOTES = {
         "{who} roept Dudo op de Don. Moedig. Dom, maar moedig.",
         "{who}, je durft wel. Je moeder had je beter moeten opvoeden.",
         "Dudo? Op mij? {who}, we gaan het hier nog over hebben.",
+        "{who}, je roept Dudo op de Don? monkaS. Voor jou dan.",
     ],
     "palifico": [
         "Palifico. Iedereen kalm. Geen wilde dingen aan mijn tafel.",
@@ -715,6 +720,7 @@ QUOTES = {
     "won": [
         "De familie wint. De familie wint altijd.",
         "Gewonnen. Kus de ring.",
+        "GG EZ. De familie wint. Kus de ring, chat.",
     ],
     "lost_game": [
         "{winner} wint. Geniet ervan. Zolang het duurt.",

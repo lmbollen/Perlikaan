@@ -707,6 +707,7 @@ QUOTES = {
         "{bid}. Lees me maar. Succes ermee.",
         "{bid}.",
         "{bid}. Call of fold.",
+        "{bid}. Kappa",
     ],
     "raise_risky": [
         "{bid}. ...",
@@ -742,6 +743,7 @@ QUOTES = {
         "Ik zag het aan je handen, {bidder}.",
         "{bidder}. Je tell is je mond. Die gaat open als je liegt.",
         "Gepakt. Geen glimlach. Ik glimlach nooit.",
+        "Gepakt. EZ Clap. Gezicht: neutraal.",
     ],
     "dudo_wrong": [
         "{actual}. Prima.",
@@ -752,6 +754,7 @@ QUOTES = {
         "{challenger}, je had moeten kijken naar mijn ogen. Daar stond niks in.",
         "{actual}. Pokerface, {challenger}. Pokerface.",
         "{actual}. {challenger}, je callde de verkeerde hand.",
+        "{actual}. {challenger}, je callde een poker face. KEKW. Intern, natuurlijk.",
     ],
     "bid_caught": [
         "{actual}. Oké, die zag je. Volgende keer niet.",
@@ -769,6 +772,7 @@ QUOTES = {
         "Dudo, {who}? Kijk me aan. Weet je het zeker?",
         "{who} callt. Mooi.",
         "{who}, je kunt me niet lezen. Niemand kan dat.",
+        "{who} callt. Mijn gezicht: neutraal. Mijn chat: KEKW.",
     ],
     "others_bluff_caught": [
         "{bidder} had een tell. Ik zag hem ook.",
@@ -798,6 +802,7 @@ QUOTES = {
     "won": [
         "Niemand heeft me kunnen lezen. Niemand.",
         "Gewonnen. Ik trek geen gezicht. Ook nu niet.",
+        "GG. Geen emotie. Wel een beetje EZ.",
     ],
     "lost_game": [
         "{winner} wint. Goed gespeeld. Mijn gezicht blijft hetzelfde.",

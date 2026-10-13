@@ -114,6 +114,7 @@ QUOTES = {
         "{bid}. Ik open waar het pijn doet. Bij jou, niet bij mij.",
         "{bid}. Vertrouw me maar. Iedereen vertrouwt Bluffo. Eén keer.",
         "{bid}. Schrijf het op: Bluffo heeft ze. Met potlood graag.",
+        "{bid}. Kappa. Nee serieus. Kappa.",
     ],
     "raise": [
         "{bid}. Gewoon de waarheid. Voelt raar, maar oké.",
@@ -128,6 +129,8 @@ QUOTES = {
         "{bid}. Mijn verhaal klopt. De stenen moeten nog even bijtrekken.",
         "{bid}. Kijk me aan en zeg dat ik lieg. Durf je niet, hè?",
         "{bid}. Ik verkoop dit bod. Wie koopt?",
+        "{bid}. Chat, niet verklappen. Kappa",
+        "{bid}. Skill issue als je dit gelooft. En ook als je het niet gelooft.",
     ],
     "dudo": [
         "Dudo. {bidder}, ik ken een bluf als ik er een zie. Ik maak ze zelf.",
@@ -135,6 +138,7 @@ QUOTES = {
         "Dudo. {bidder}, ik heb je de vorige keer gezien. Ik onthoud alles.",
         "Dudo. Sorry {bidder}, maar liegen doen we hier niet. Behalve ik.",
         "Dudo! {bidder}, nette poging. Ik geef je een zesje.",
+        "Dudo! {bidder}, Jebaited? Nee. Jij bent de gejebaite.",
     ],
     "calza": [
         "Calza. Precies {bid}. Bluffers weten altijd precies hoeveel er liggen.",
@@ -145,23 +149,28 @@ QUOTES = {
         "{bidder}, van een bluffer kun je niet stelen. Les één.",
         "Zie je {bidder}, ik lees jou als een open boek. Een dun boek.",
         "Zei ik toch. {bidder}, die bluf was amateurwerk.",
+        "{bidder}, dacht je echt dat je Bluffo kon bluffen? KEKW",
+        "Get rekt, {bidder}. Clip it, chat.",
     ],
     "dudo_wrong": [
         "{actual}? {bidder} sprak de waarheid? Wie doet dat nou?",
         "Maar {actual}. Oké {bidder}, die had ik niet zien aankomen. Genoteerd.",
         "{actual}. Ik dacht dat je loog, {bidder}. Ik projecteer, zegt mijn therapeut.",
+        "{actual}. Oké chat, deze knippen we eruit. Sadge",
     ],
     "bid_held": [
         "{actual}! {challenger}, dit keer was het echt. Verwarrend, hè?",
         "Klopt gewoon, {challenger}. Ik lieg alleen als het telt.",
         "{challenger} dacht dat ik bluftte. Dat is precies wat ik wilde.",
         "{actual}. {challenger}, de beste leugen is soms de waarheid.",
+        "{actual}! {challenger} OMEGALUL. Mind games, boyyo.",
     ],
     "bid_caught": [
         "Maar {actual}. Oké {challenger}, die is voor jou. De volgende niet.",
         "Betrapt. Prima. Ik heb nog honderd verhalen, {challenger}.",
         "{challenger} heeft me. Respect. Ik leer snel, boyyo. Héél snel.",
         "Maar {actual}? Iemand heeft mijn stenen verwisseld. Niet ik, voor de verandering.",
+        "Betrapt. Copium: het was een zet voor de lange termijn.",
     ],
     "calza_right": [
         "PRECIES {actual}! Bluffo pakt een steen terug. Smooth.",
@@ -174,6 +183,7 @@ QUOTES = {
         "Dudo op mij, {who}? Spannend. Voor jou.",
         "{who}, je denkt dat je me doorhebt. Iedereen denkt dat.",
         "Dudo, {who}? Ik zeg niks. Ik glimlach alleen.",
+        "{who} roept Dudo. monkaS... grapje. Kappa",
     ],
     "others_bluff_caught": [
         "{bidder} betrapt op {bid}. Pff, amateurs. Zo doe je dat niet.",
@@ -205,10 +215,12 @@ QUOTES = {
         "Gewonnen, boyyo! Met eerlijke stenen. Grapje.",
         "Winnaar! Ik heb tegen iedereen gelogen en iedereen tegen mij. Ik deed het beter.",
         "Gewonnen. Ik heb jullie allemaal geleerd. Jullie mij niet.",
+        "GG EZ boyyo. Kappa 123. Ratio.",
     ],
     "lost_game": [
         "{winner} wint. Goed gespeeld. Volgende keer weet ik alles van je.",
         "{winner} wint. Ik heb aantekeningen gemaakt. Veel aantekeningen.",
+        "{winner} wint. Skill issue. Van mij. Eén keer.",
     ],
 }
 

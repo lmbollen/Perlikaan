@@ -124,10 +124,12 @@ QUOTES = {
         "{who} roept Dudo! De muziek stopt. Iedereen kijkt naar Oppa.",
         "Dudo, {who}? Je onderbreekt mijn dans. Dat doe je niet.",
         "{who} zet de muziek uit. Oké. Spotlight op de stenen.",
+        "{who} roept Dudo op Oppa? monkaS. De beat dropt... op mij.",
     ],
     "others_bluff_caught": [
         "{bidder} betrapt! Valse noot, {bidder}. Valse noot.",
         "{challenger} pakt {bidder}. Wat een drop. Wat een moment.",
+        "{bidder} betrapt! KEKW. Dat was geen dansje, dat was een struikelpartij.",
     ],
     "others_dudo_wrong": [
         "{bidder} had ze gewoon! {challenger}, uit de maat gedanst.",
@@ -140,6 +142,7 @@ QUOTES = {
     "lost_game": [
         "{winner} wint. Oké, oké. Jij krijgt de encore.",
         "{winner} pakt de hoofdprijs. Oppa gaat op wereldtournee. Om te huilen.",
+        "{winner} wint. Sadge. Maar Oppa danst door. catJAM",
     ],
     "won_game": [
         "WINNAAR! PogChamp! Oppa Gangnam style, helemaal naar de top!",

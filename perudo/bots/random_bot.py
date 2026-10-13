@@ -77,6 +77,7 @@ QUOTES = {
     "others_bluff_caught": [
         "{bidder} bluft en wordt gepakt. Ik bluf nooit. Ik weet gewoon niks.",
         "{challenger} wint. Ik had ook op {challenger} gegokt. Of op {bidder}. Vijftig-vijftig.",
+        "{bidder} betrapt. KEKW. Ik snap niet wat er gebeurde, maar KEKW.",
     ],
     "others_dudo_wrong": [
         "{bidder} had gelijk! Wie had dat kunnen weten? Niet ik. Ik weet nooit iets.",
@@ -91,6 +92,7 @@ QUOTES = {
     "last_die": [
         "Nog één steen! Eindelijk overzicht. Eén ding om niet naar te kijken.",
         "Eén steen. Ik ga er willekeurig mee om. Zoals altijd.",
+        "Eén steen over. Pepega tijd. Ik bedoel: strategie tijd.",
     ],
     "eliminated_other": [
         "{who} ligt eruit. Ik hoop dat ik dat niet per ongeluk deed.",

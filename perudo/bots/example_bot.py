@@ -96,6 +96,7 @@ QUOTES = {
     "others_bluff_caught": [
         "{bidder} betrapt. Les twee van de handleiding: niet te hoog bieden.",
         "Zie je, {bidder}? Zo werkt Dudo. Dat had je in mijn code kunnen lezen.",
+        "{bidder} betrapt. Skill issue. Staat letterlijk in de docs.",
     ],
     "others_dudo_wrong": [
         "{bidder} had ze echt. {challenger}, lees de tutorial nog even door.",

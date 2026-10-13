@@ -90,6 +90,7 @@ class WouluhBot(HundredIQBot):
         "others_bluff_caught": [
             "{bidder} betrapt op liegen. Schandalig. Gewoon eerlijk spelen, zoals ik.",
             "{challenger} pakt {bidder}. Goed zo, valsspelers horen hier niet. Ahem.",
+            "{bidder} betrapt. Valsspelen is nooit oké, chat. Kappa",
         ],
         "others_dudo_wrong": [
             "{bidder} had ze echt. Wat een geluk. Bijna net zoveel geluk als ik.",
@@ -104,6 +105,7 @@ class WouluhBot(HundredIQBot):
         "last_die": [
             "Nog één steen. Gelukkig is het altijd een Paco. Toevallig.",
             "Eén steen over. Tijd om heel, heel veel geluk te hebben.",
+            "Eén steen. Wat een geluk dat hij altijd een Paco is. Kappa",
         ],
         "eliminated_other": [
             "{who} ligt eruit. Had je maar betere stenen gegooid. Of gemaakt.",

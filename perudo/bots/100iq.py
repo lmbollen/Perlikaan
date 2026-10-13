@@ -81,6 +81,7 @@ class HundredIQBot:
         "others_bluff_caught": [
             "{bidder} bood {bid} met {actual}. Onder de vijftig procent. Had ik kunnen zeggen.",
             "{challenger} pakt {bidder}. Gemiddeld goed gedaan. Mijn hoogste compliment.",
+            "{bidder} betrapt. 5Head ik, Pepega {bidder}.",
         ],
         "others_dudo_wrong": [
             "{challenger} twijfelde aan een kloppend bod. Dat is een kans van... laat maar, te moeilijk voor jou.",
@@ -99,6 +100,7 @@ class HundredIQBot:
         "eliminated_other": [
             "{who} ligt eruit. Het gemiddelde IQ aan tafel gaat omhoog. Door mij.",
             "Dag {who}. Er moest iemand onder het gemiddelde zitten.",
+            "{who} ligt eruit. Skill issue. Gemiddeld skill issue.",
         ],
         "won": [
             "Gewonnen! Blijkt dat gemiddeld alles is wat je nodig hebt.",

@@ -519,12 +519,14 @@ QUOTES = {
         "{bid}. Ik ken je overgangsmatrix beter dan jij.",
         "{bid}. Geen cycli, geen spijt. Alleen omhoog.",
         "{bid}. Tranquilo. De keten weet waar dit eindigt.",
+        "{bid}. Galaxy brain Markov. Jullie zijn toestand drie, ik ben toestand absorberend.",
     ],
     "dudo": [
         "Dudo. {bidder}, de keten zegt nee.",
         "Dudo. Absorberende toestand bereikt, {bidder}.",
         "Dudo. {bidder}, jouw bluf-histogram is breed. Heel breed.",
         "Dudo. Lo siento, {bidder}. Het is maar wiskunde.",
+        "Dudo. {bidder}, jouw keten eindigt hier. KEKW",
     ],
     "calza": [
         "Calza. Precies wat de verdeling zei.",
@@ -534,16 +536,19 @@ QUOTES = {
         "Zoals berekend. Gracias, {bidder}.",
         "{bidder}, je speelde precies zoals je histogram voorspelde.",
         "Absorptie bereikt. {bidder} levert in.",
+        "EZ Clap. {bidder}, terug naar je begintoestand.",
     ],
     "dudo_wrong": [
         "{actual}. Een uitschieter in de staart. Gebeurt.",
         "{actual}? {bidder} speelde eerlijk. Ik pas de matrix aan.",
         "Ay, {actual}. Zelfs een goede keten loopt soms de verkeerde kant op.",
+        "{actual}. Sadge. Zelfs de keten heeft slechte dagen.",
     ],
     "bid_held": [
         "{challenger}, je reageerde precies zoals je model zei.",
         "{actual}, {challenger}. Jouw logistische curve is voorspelbaar, amigo.",
         "Klopt. {challenger}, de keten wist dat je zou bijten.",
+        "{actual}. {challenger}, OMEGALUL. Precies zoals de matrix zei.",
     ],
     "bid_caught": [
         "{actual}. Bien, {challenger}. Een zeldzame overgang.",
@@ -589,6 +594,7 @@ QUOTES = {
     "won": [
         "Carlos wint. De keten wist het al.",
         "Victoria. Alle paden leidden naar Carlos.",
+        "GG EZ. Carlos, de enige echte. Mi hermano kan nog wat leren.",
     ],
     "lost_game": [
         "{winner} wint. Felicidades. Die tak had ik onderschat.",

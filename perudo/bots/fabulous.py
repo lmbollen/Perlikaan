@@ -187,10 +187,12 @@ QUOTES: Dict[str, Sequence[str]] = {
         "Dudo, {who}? Op MIJ? Hoe durf je. Nee echt, hoe durf je.",
         "{who} roept Dudo op Fabulous. Wat een lef. Ik ben zelfs een beetje onder de indruk.",
         "{who}, twijfelen aan mij is twijfelen aan schoonheid zelf.",
+        "Dudo op Fabulous, {who}? Ratio. En blokkeren.",
     ],
     "last_die": [
         "Nog één steen. Minimalistisch. Elegant. Fabulous.",
         "Eén steen over. Een diva heeft maar één spotlight nodig.",
+        "Nog één steen. Clutch, schatjes. Clip it.",
     ],
     "won": [
         "IK HEB GEWONNEN! Niemand is verrast. Ik al helemaal niet.",
