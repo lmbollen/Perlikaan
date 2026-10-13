@@ -612,7 +612,7 @@ KV = """
         Collapsible:
             orientation: "vertical"
             shown: root.human_playing
-            full_height: dp(248)
+            full_height: dp(248) + (root.out_extra if root.out else 0)
             padding: dp(16), dp(12), dp(16), dp(16)
             spacing: dp(12)
             radius: dp(24)
@@ -636,7 +636,7 @@ KV = """
             Collapsible:
                 orientation: "vertical"
                 shown: root.out
-                full_height: dp(166)
+                full_height: dp(166) + root.out_extra
                 bg: T.CLEAR
                 radius: 0
                 spacing: dp(8)
@@ -652,6 +652,10 @@ KV = """
                     text_size: self.size
                 Body:
                     text: root.out_text
+                Body:
+                    text: root.out_bots
+                    color: T.TEXT
+                    opacity: 1 if root.out_bots else 0
                 Widget:
                 Btn:
                     kind: root.out_button_kind
@@ -1325,6 +1329,8 @@ class GameScreen(Screen):
     out_text = StringProperty("")
     out_button = StringProperty("Menu")
     out_button_kind = StringProperty("primary")
+    out_bots = StringProperty("")               # your bots, one per line, and how they are doing
+    out_extra = NumericProperty(0)              # the panel's extra height for that list
 
     def __init__(self, **kw):
         super().__init__(**kw)
@@ -1378,6 +1384,7 @@ class GameScreen(Screen):
         self._close_sheet()
         self._sheet_shown = False
         self.out = False
+        self.out_bots, self.out_extra = "", 0
         self.awaiting_next_round = False
         # Watching starts paused (Play or Step starts it); at the table the bots play by themselves.
         self.auto = human
@@ -1749,29 +1756,42 @@ class GameScreen(Screen):
             if hasattr(self.session, "hold_timeout"):
                 self.session.hold_timeout = 3.0  # nobody here to tap Next round: reveals go on by themselves
         back = "Back to the lobby" if self.multiplayer else "Back to the menu"
+        bots = App.get_running_app().my_bots() if self.multiplayer else []
+        players = {p.name: p for p in snap.players}
+        winner = snap.standings[0] if snap.finished and snap.standings else None
+        playing = [b for b in bots if b in players and players[b].alive and not snap.finished
+                   and not self._out_left]
+        lines = []
+        dot = T.icon("\u25cf")
+        for b in bots:
+            p = players.get(b)
+            if b == winner:
+                status = T.color("won the game", T.HEX["gold"])
+            elif p is not None and p.alive and not snap.finished and not self._out_left:
+                status = T.color(f"{p.dice_count} {'die' if p.dice_count == 1 else 'dice'}", T.HEX["muted"])
+            else:
+                status = T.color("out", T.HEX["faint"])
+            lines.append(f"{T.color(dot, self._hex(b))}  [b]{T.esc(b)}[/b]   {status}")
         if self._out_left:
             text = "You left this game." + (" It is over." if snap.finished else " It goes on above.")
             button, kind = back, "primary"
         else:
             text = f"You finished {_ordinal(self._out_place)}."
-            bots = ([n for n in App.get_running_app().my_seats_in_play() if n != me.name]
-                    if self.multiplayer and not snap.finished else [])
-            if bots:
-                self._out_bots.update(bots)
-                one = len(bots) == 1
-                text += (f" Your {'bot' if one else 'bots'} {', '.join(bots)} {'is' if one else 'are'} "
-                         f"still playing: stay and see how {'it does' if one else 'they do'}.")
+            if playing:
+                one = len(playing) == 1
+                text += (f" {'One of your bots is' if one and len(bots) > 1 else 'Your bot is' if one else 'Your bots are'}"
+                         f" still playing: stay and see how {'it does' if one else 'they do'}.")
                 button, kind = "Leave anyway", "outline"
             else:
-                winner = snap.standings[0] if snap.finished and snap.standings else None
-                if winner in self._out_bots:
-                    text += f" Your bot {winner} won the game!"
-                elif self._out_bots:
-                    text += f" Your {'bot is' if len(self._out_bots) == 1 else 'bots are'} out too."
+                if bots and winner not in bots:
+                    text += f" Your {'bot is' if len(bots) == 1 else 'bots are'} out too."
                 text += " The game is over." if snap.finished else " The game goes on above."
                 button, kind = back, "primary"
-        if (text, button, kind) != (self.out_text, self.out_button, self.out_button_kind):
+        listing = "\n".join(lines)
+        if (text, button, kind, listing) != (self.out_text, self.out_button, self.out_button_kind, self.out_bots):
             self.out_text, self.out_button, self.out_button_kind = text, button, kind
+            self.out_bots = listing
+            self.out_extra = dp(22) * len(lines) + (dp(8) if lines else 0)
 
     # -- the human's decision -----------------------------------------------
 
@@ -2278,6 +2298,16 @@ class PerudoApp(App):
         alive = {p.name for p in snap.players if p.alive}
         return [n for n in mine if n in alive]
 
+    def my_bots(self) -> list:
+        """While playing together: this phone's bots in the game, in or out."""
+        lobby = self.lobby
+        session = lobby.session if lobby is not None else None
+        if session is None:
+            return []
+        mine = lobby.seats_of(0) if self.lobby_host else session.mine
+        me = session.human.name if session.human is not None else None
+        return [n for n in mine if n != me]
+
     def leave_lobby_game(self):
         """Back from the game screen while playing together. A game that
         goes on goes on without you; while you or your bots are still in
@@ -2313,16 +2343,16 @@ class PerudoApp(App):
         if still:
             me = session.human.name if session.human is not None else None
             bots = [n for n in still if n != me]
-            names = ", ".join(bots)
+            listing = "".join(f"\n   \u2022  [b]{T.esc(b)}[/b]" for b in bots)
             if me in still and bots:
-                text = (f"You and your {'bot' if len(bots) == 1 else 'bots'} ({names}) are still in the game. "
+                text = (f"You and your {'bot' if len(bots) == 1 else 'bots'} are still in the game:{listing}\n\n"
                         "If you leave now, you all lose at once.")
             elif me in still:
                 text = "You are still in the game. If you leave now, you lose at once."
             elif len(bots) == 1:
-                text = f"Your bot {names} is still in the game. If you leave now, it loses at once."
+                text = f"Your bot is still in the game:{listing}\n\nIf you leave now, it loses at once."
             else:
-                text = f"Your bots ({names}) are still in the game. If you leave now, they lose at once."
+                text = f"Your bots are still in the game:{listing}\n\nIf you leave now, they lose at once."
             options = [("Leave and lose", "danger", walk_away)]
             if host:
                 options.append(("End the game for everyone", "outline", end))

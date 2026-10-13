@@ -658,7 +658,8 @@ def confirm(title, text, yes, then):
 def choose(title, text, options, cancel="Cancel"):
     """A sheet with a few choices, one under the other: options is a list of
     (label, button kind, then), then a button that only closes it."""
-    sheet = ModalView(size_hint=(0.88, None), height=dp(150 + 58 * (len(options) + 1)), background="",
+    sheet = ModalView(size_hint=(0.88, None), height=dp(150 + 58 * (len(options) + 1) + 20 * text.count("\n")),
+                      background="",
                       background_color=T.CLEAR, overlay_color=T.BG[:3] + [0.75])
     card = Surface(orientation="vertical", padding=dp(20), spacing=dp(10), radius=dp(22))
     card.add_widget(_label(f"[b]{title}[/b]", 19))
