@@ -33,8 +33,9 @@ What it does:
   reveal. Tap a die for the face, set the quantity (the lowest legal bid is
   preselected), and bid, or call Dudo or Calza when they are legal. When a
   round is decided the cups stay up until you tap *Next round*.
-- **Play together**: friends on the same Wi-Fi, or on one phone's hotspot,
-  play at one table, each on their own phone. One phone hosts a lobby and
+- **Play together**: friends anywhere (over the internet, when the build has
+  an Ably key) or on the same Wi-Fi or one phone's hotspot play at one table,
+  each on their own phone. One phone hosts a lobby and
   shows its four-character code; the others join with that code. The first
   time you host or join, the app asks your name; it remembers it, and you
   can change it in the lobby. The host decides whether guests may bring bots
@@ -112,6 +113,12 @@ python-for-android build between runs. The APK is attached to the run as the
 artifact **perudo-apk**: open the run on the Actions tab and download it
 from the Artifacts section at the bottom.
 
+For playing over the internet, add the repository secret **ABLY_KEY** (Settings ->
+Secrets and variables -> Actions) with an Ably API key; the workflow passes it
+to `./build.sh`, which bakes it into the APK. Without it the APK plays on the
+local network only. Locally, set `ABLY_KEY` in the environment before
+`./build.sh` (or before `uv run python main.py` on the desktop).
+
 ## Restricted networks
 
 The build fetches from four kinds of hosts: PyPI (Buildozer, Cython, the
@@ -171,5 +178,20 @@ last two parts of the host's IPv4 address and which of 16 ports
 front, so phones on one local network find each other without typing an
 address, a discovery broadcast or a server. Networks that keep their devices
 apart (some public and guest Wi-Fi) do not work; a phone's hotspot always
-does. Playing over the internet would need a relay server; the messages
-(JSON lines over TCP) are independent of how they travel.
+does.
+
+Over the internet, the same messages travel through Ably, a hosted message
+relay (`perudo_app/relay.py`), so nobody runs a server. An online lobby code
+is random; the host listens on the channel `lobby:<code>:host` and every
+guest on its own `lobby:<code>:<random token>`. Each side receives with a
+server-sent event stream (`realtime.ably.io`) and sends with an HTTPS POST
+(`rest.ably.io`), batching whatever is queued into one Ably message. Pings
+every 4 s show a side is still there; one that stays silent for 20 s has
+left. The host still runs the lobby and the game. Joining tries the internet
+and the local network at once, so a guest never has to say which.
+
+The key ships inside the APK, so give it only the *Publish* and *Subscribe*
+capabilities on the channel namespace `lobby:*` (Ably dashboard -> your app ->
+API Keys). Ably's free plan (6M messages a month, 200 connections at once)
+covers this comfortably: a game is a few thousand small messages, sent in
+far fewer batches.
