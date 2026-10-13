@@ -69,6 +69,32 @@ class MinRaiseBot:
             "Ik lig eruit. Sadge. F in de chat voor de enige vriendelijke bot aan tafel.",
             "Ik lig eruit. Ik heb nooit iemand kwaad gedaan. Vertel dat maar op mijn begrafenis.",
         ],
+        "dudo_wrong": [
+            "Ik daag één keer iemand uit en het klopte gewoon. Zie je? Geweld loont niet.",
+            "{actual}. Sorry {bidder}. Sorry sorry sorry. Ik doe het nooit meer.",
+        ],
+        "others_bluff_caught": [
+            "{bidder} heeft gelogen? Dat is zo naar. Maar {challenger}, moest het zo hard?",
+            "Arme {bidder}. Nog een knuffel, iemand?",
+        ],
+        "others_dudo_wrong": [
+            "Zie je, {challenger}? Gewoon geloven wat mensen zeggen. Zoals ik.",
+            "{bidder} sprak de waarheid. Vertrouwen wint, {challenger}.",
+        ],
+        "others_calza_right": [
+            "Calza raak, {challenger}. Gefeliciteerd! Zonder iemand pijn te doen. Mooi.",
+        ],
+        "others_calza_wrong": [
+            "{challenger} mist de Calza. Geeft niks, {challenger}. Echt niet. Thee?",
+        ],
+        "last_die": [
+            "Nog één steen. Wees lief voor hem, alsjeblieft.",
+            "Mijn laatste steentje. Niemand Dudo roepen, oké? Afgesproken?",
+        ],
+        "eliminated_other": [
+            "{who} ligt eruit. Dat verdiende niemand. Nou ja. Niemand.",
+            "Dag {who}. Ik zal je missen. Ik mis iedereen.",
+        ],
         "won": [
             "Gewonnen zonder één Dudo. widepeepoHappy. Liefde wint altijd.",
             "Gewonnen? Zonder één Dudo? Pacifisme werkt, mensen!",

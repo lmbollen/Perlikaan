@@ -120,6 +120,27 @@ QUOTES = {
     "eliminated_me": [
         "Oppa ligt eruit... onthoud mijn moves, onthoud mij.",
     ],
+    "dudo_on_me": [
+        "{who} roept Dudo! De muziek stopt. Iedereen kijkt naar Oppa.",
+        "Dudo, {who}? Je onderbreekt mijn dans. Dat doe je niet.",
+        "{who} zet de muziek uit. Oké. Spotlight op de stenen.",
+    ],
+    "others_bluff_caught": [
+        "{bidder} betrapt! Valse noot, {bidder}. Valse noot.",
+        "{challenger} pakt {bidder}. Wat een drop. Wat een moment.",
+    ],
+    "others_dudo_wrong": [
+        "{bidder} had ze gewoon! {challenger}, uit de maat gedanst.",
+        "{challenger} gokt verkeerd. Moonwalk maar terug, {challenger}.",
+    ],
+    "last_die": [
+        "Nog één steen. Solo-optreden. Spotlight op Oppa.",
+        "Eén steen over. Dat is geen einde, dat is een slow dance.",
+    ],
+    "lost_game": [
+        "{winner} wint. Oké, oké. Jij krijgt de encore.",
+        "{winner} pakt de hoofdprijs. Oppa gaat op wereldtournee. Om te huilen.",
+    ],
     "won_game": [
         "WINNAAR! PogChamp! Oppa Gangnam style, helemaal naar de top!",
         "WINNAAR! Oppa Gangnam style, helemaal naar de top!",
@@ -373,6 +394,7 @@ class OppaStyleBot:
         self._palifico_round = False
 
     def observe(self, event):
+        self.mouth.notice(event)      # Dudo op mijn bod, mijn laatste steen
         if isinstance(event, BidEvent):
             self.last_bidder = event.player
             if not self.round_bids:
@@ -388,6 +410,9 @@ class OppaStyleBot:
                     if i_won:
                         loser = event.bidder if event.challenger == self.name else event.challenger
                         self._say("won_challenge", who=loser)
+            elif event.challenge_type == "dudo":
+                self._say("others_dudo_wrong" if event.result == "bidder_correct" else "others_bluff_caught",
+                          bidder=event.bidder, challenger=event.challenger)
             self.round_bids = {}
             self.last_bidder = None
             return
@@ -401,7 +426,7 @@ class OppaStyleBot:
 
         if isinstance(event, DieLostEvent) and event.player == self.name:
             self.my_dice_count = event.dice_count
-            if event.dice_count > 0:
+            if event.dice_count > 1:      # bij de laatste steen zegt notice() iets
                 self._say("lost_challenge")
         elif isinstance(event, DieGainedEvent) and event.player == self.name:
             self.my_dice_count = event.dice_count
@@ -441,3 +466,5 @@ class OppaStyleBot:
     def on_game_end(self, result):
         if result.winner == self.name:
             self._say("won_game")
+        else:
+            self._say("lost_game", winner=result.winner)

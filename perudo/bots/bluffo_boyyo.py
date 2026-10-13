@@ -28,6 +28,8 @@ also learns how often the bids he faces were really true, per bucket of his
 own estimate, and corrects that estimate. Everything learned lives in memory
 at class level, so it survives a new instance per game; nothing is written
 to disk. The moving averages make recent games count more than old ones.
+
+Set TALK_TO_ME=true to hear him sell it.
 """
 
 import math
@@ -43,6 +45,7 @@ from perudo.models import (
     RevealEvent,
     RoundEndedEvent,
 )
+from perudo.talk import Mouth, fmt_bid, last_bidder
 
 
 def _count_matches(dice_values, face, palifico):
@@ -96,6 +99,118 @@ def _sigmoid(x):
 
 def _is(event, *names):
     return type(event).__name__ in names
+
+
+QUOTES = {
+    "open": [
+        "{bid}. Eerlijk bod. Ja, echt. Ook ik doe dat soms.",
+        "{bid}. Deze keer heb ik ze gewoon. Geloof je me niet? Mooi zo.",
+        "{bid}. Rustig begin. Boyyo houdt het netjes.",
+        "{bid}. Kijk maar goed naar mijn gezicht. Leer het uit je hoofd.",
+    ],
+    "open_bluff": [
+        "{bid}. Mijn favoriete getal. Altijd al geweest. Sinds net.",
+        "{bid}. Mijn beker zit er vol mee, boyyo. Propvol.",
+        "{bid}. Ik open waar het pijn doet. Bij jou, niet bij mij.",
+        "{bid}. Vertrouw me maar. Iedereen vertrouwt Bluffo. Eén keer.",
+        "{bid}. Schrijf het op: Bluffo heeft ze. Met potlood graag.",
+    ],
+    "raise": [
+        "{bid}. Gewoon de waarheid. Voelt raar, maar oké.",
+        "{bid}. Deze is echt. Juist daarom geloof je me niet.",
+        "{bid}. Eerlijk duurt het langst. Ik ben het aan het testen.",
+        "{bid}. Geen trucjes. Nou ja. Geen grote.",
+    ],
+    "raise_bluff": [
+        "{bid}. Smooth. Zo smooth dat ik het zelf bijna geloof.",
+        "{bid}. Ja boyyo. Ik heb ze. Allemaal. Vraag niet waar.",
+        "{bid}. Jij biedt op stenen, ik bied op verhalen.",
+        "{bid}. Mijn verhaal klopt. De stenen moeten nog even bijtrekken.",
+        "{bid}. Kijk me aan en zeg dat ik lieg. Durf je niet, hè?",
+        "{bid}. Ik verkoop dit bod. Wie koopt?",
+    ],
+    "dudo": [
+        "Dudo. {bidder}, ik ken een bluf als ik er een zie. Ik maak ze zelf.",
+        "Dudo! {bidder}, dat trucje is van mij. Copyright Bluffo.",
+        "Dudo. {bidder}, ik heb je de vorige keer gezien. Ik onthoud alles.",
+        "Dudo. Sorry {bidder}, maar liegen doen we hier niet. Behalve ik.",
+        "Dudo! {bidder}, nette poging. Ik geef je een zesje.",
+    ],
+    "calza": [
+        "Calza. Precies {bid}. Bluffers weten altijd precies hoeveel er liggen.",
+        "Calza! Op de kop af. Vraag niet hoe, boyyo.",
+    ],
+    "dudo_right": [
+        "Betrapt, {bidder}! Takes one to know one.",
+        "{bidder}, van een bluffer kun je niet stelen. Les één.",
+        "Zie je {bidder}, ik lees jou als een open boek. Een dun boek.",
+        "Zei ik toch. {bidder}, die bluf was amateurwerk.",
+    ],
+    "dudo_wrong": [
+        "{actual}? {bidder} sprak de waarheid? Wie doet dat nou?",
+        "Maar {actual}. Oké {bidder}, die had ik niet zien aankomen. Genoteerd.",
+        "{actual}. Ik dacht dat je loog, {bidder}. Ik projecteer, zegt mijn therapeut.",
+    ],
+    "bid_held": [
+        "{actual}! {challenger}, dit keer was het echt. Verwarrend, hè?",
+        "Klopt gewoon, {challenger}. Ik lieg alleen als het telt.",
+        "{challenger} dacht dat ik bluftte. Dat is precies wat ik wilde.",
+        "{actual}. {challenger}, de beste leugen is soms de waarheid.",
+    ],
+    "bid_caught": [
+        "Maar {actual}. Oké {challenger}, die is voor jou. De volgende niet.",
+        "Betrapt. Prima. Ik heb nog honderd verhalen, {challenger}.",
+        "{challenger} heeft me. Respect. Ik leer snel, boyyo. Héél snel.",
+        "Maar {actual}? Iemand heeft mijn stenen verwisseld. Niet ik, voor de verandering.",
+    ],
+    "calza_right": [
+        "PRECIES {actual}! Bluffo pakt een steen terug. Smooth.",
+    ],
+    "calza_wrong": [
+        "{actual}, geen {bid}. Zelfs mijn calza's bluffen.",
+    ],
+    "dudo_on_me": [
+        "{who} roept Dudo. Weet je het zeker? Echt zeker?",
+        "Dudo op mij, {who}? Spannend. Voor jou.",
+        "{who}, je denkt dat je me doorhebt. Iedereen denkt dat.",
+        "Dudo, {who}? Ik zeg niks. Ik glimlach alleen.",
+    ],
+    "others_bluff_caught": [
+        "{bidder} betrapt op {bid}. Pff, amateurs. Zo doe je dat niet.",
+        "{bidder} bluft en gaat onderuit. Kom maar eens bij mij op les.",
+    ],
+    "others_dudo_wrong": [
+        "{bidder} had ze gewoon. {challenger}, je moet beter leren lezen. Bij mij.",
+        "{challenger} dacht aan een bluf. Ik bluf hier, {challenger}, niet {bidder}.",
+    ],
+    "others_calza_right": [
+        "Calza raak van {challenger}. Netjes. Bijna net zo netjes als ik.",
+    ],
+    "others_calza_wrong": [
+        "{challenger} gaat voor Calza en mist. Te veel geloof in de waarheid.",
+    ],
+    "last_die": [
+        "Nog één steen. Nu moet ik écht goed liegen.",
+        "Eén steen over. Een goede bluffer heeft er maar één nodig.",
+    ],
+    "eliminated_other": [
+        "Dag {who}. Ik had je bijna door. Nu hoeft het niet meer.",
+        "{who} ligt eruit. Eén publiek minder voor mijn show.",
+    ],
+    "eliminated_me": [
+        "Eruit. Maar geef toe: het waren mooie verhalen.",
+        "Bluffo ligt eruit. Niemand geloofde me. Terecht, meestal.",
+    ],
+    "won": [
+        "Gewonnen, boyyo! Met eerlijke stenen. Grapje.",
+        "Winnaar! Ik heb tegen iedereen gelogen en iedereen tegen mij. Ik deed het beter.",
+        "Gewonnen. Ik heb jullie allemaal geleerd. Jullie mij niet.",
+    ],
+    "lost_game": [
+        "{winner} wint. Goed gespeeld. Volgende keer weet ik alles van je.",
+        "{winner} wint. Ik heb aantekeningen gemaakt. Veel aantekeningen.",
+    ],
+}
 
 
 class BluffoBoyyo:
@@ -175,6 +290,7 @@ class BluffoBoyyo:
         self._faced_pending = []       # (bid faced, our raw estimate, palifico)
         self._round_no = None
         self._bluff_face = None        # the face we bluffed on this round, if any
+        self.mouth = Mouth(self, QUOTES)
 
     # -- memory -------------------------------------------------------------
 
@@ -215,10 +331,23 @@ class BluffoBoyyo:
             t = self._table(state)
             if self._overstated(state, t, action, self._hints(state, self.HINT_PER_BID)) > 0:
                 self._bluff_face = action.face
+        self._comment(state, action)
         return action
+
+    def _comment(self, state, action):
+        if isinstance(action, Dudo):
+            self.mouth.say("dudo", announce="Dudo!", bidder=last_bidder(state))
+        elif isinstance(action, Calza):
+            self.mouth.say("calza", announce="Calza!", bid=fmt_bid(state.current_bid))
+        else:
+            t = self._table(state)
+            bluff = self._overstated(state, t, action, self._hints(state, self.HINT_PER_BID)) > 0
+            key = ("open" if state.current_bid is None else "raise") + ("_bluff" if bluff else "")
+            self.mouth.say(key, announce=fmt_bid(action), bid=fmt_bid(action))
 
     def observe(self, event):
         self._ensure_memory()
+        self.mouth.react(event)
         if isinstance(event, BidEvent):
             self._actions.append((event.player, event.bid, None))
         elif _is(event, "DudoEvent", "CalzaEvent"):

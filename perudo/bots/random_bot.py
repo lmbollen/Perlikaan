@@ -74,6 +74,28 @@ QUOTES = {
     "eliminated_me": [
         "Ik lig eruit! Volgend potje zelfde tijd, zelfde nul plan.",
     ],
+    "others_bluff_caught": [
+        "{bidder} bluft en wordt gepakt. Ik bluf nooit. Ik weet gewoon niks.",
+        "{challenger} wint. Ik had ook op {challenger} gegokt. Of op {bidder}. Vijftig-vijftig.",
+    ],
+    "others_dudo_wrong": [
+        "{bidder} had gelijk! Wie had dat kunnen weten? Niet ik. Ik weet nooit iets.",
+        "{challenger} gokte verkeerd. Welkom bij de club, {challenger}.",
+    ],
+    "others_calza_right": [
+        "Calza raak, {challenger}! Ik ben jaloers. Of hongerig. Iets in die richting.",
+    ],
+    "others_calza_wrong": [
+        "{challenger} mist de Calza. Had je een muntje opgegooid, net als ik.",
+    ],
+    "last_die": [
+        "Nog één steen! Eindelijk overzicht. Eén ding om niet naar te kijken.",
+        "Eén steen. Ik ga er willekeurig mee om. Zoals altijd.",
+    ],
+    "eliminated_other": [
+        "{who} ligt eruit. Ik hoop dat ik dat niet per ongeluk deed.",
+        "Dag {who}! Of hallo. Ik haal die twee altijd door elkaar.",
+    ],
     "won": [
         "Ik heb gewonnen. Chat, is dit echt? Chat, clip dat. Clip dat NU.",
         "IK HEB GEWONNEN?! Laat iemand de engine checken. Nee, toch maar niet.",

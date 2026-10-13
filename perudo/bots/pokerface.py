@@ -696,16 +696,22 @@ class _SniperCore:
 # ---------------------------------------------------------------------------
 
 QUOTES = {
-    **SNIPER_QUOTES,
     "open": [
         "{bid}. Zeg maar niks.",
         "{bid}. Kijk me aan. Zie je iets? Nee.",
         "{bid}.",
+        "{bid}. Kleine blind.",
     ],
     "raise": [
         "{bid}. Geen spier vertrokken.",
         "{bid}. Lees me maar. Succes ermee.",
         "{bid}.",
+        "{bid}. Call of fold.",
+    ],
+    "raise_risky": [
+        "{bid}. ...",
+        "{bid}. Mijn gezicht zegt niks. Mijn hand ook niet.",
+        "{bid}. Ik speel de speler, niet de stenen.",
     ],
     "bluff_open": [
         "{bid}. Mijn favoriete getal. Echt waar.",
@@ -717,20 +723,85 @@ QUOTES = {
         "{bid}. Daar zijn er veel van. Ik kan het weten.",
         "{bid}. Iedereen heeft ze vandaag, hè?",
     ],
+    "dudo_confident": [
+        "Dudo. {bidder}, je had een tell. Je hebt er altijd een.",
+        "Dudo. {bidder}, je ooglid trilde.",
+        "Dudo. Ik zie je bluf, {bidder}. En ik call.",
+        "Dudo.",
+    ],
+    "dudo_cornered": [
+        "Dudo. Geen goede hand, geen goede raise. Dan maar dit.",
+        "Dudo. Soms moet je de pot gewoon laten zien.",
+        "Dudo. {bidder}, laat je kaarten maar zien. Stenen, bedoel ik.",
+    ],
     "calza": [
         "Calza. Precies goed. Ik heb het je gezicht zien zeggen.",
         "Calza. Niet meer, niet minder.",
     ],
+    "dudo_right": [
+        "Ik zag het aan je handen, {bidder}.",
+        "{bidder}. Je tell is je mond. Die gaat open als je liegt.",
+        "Gepakt. Geen glimlach. Ik glimlach nooit.",
+    ],
+    "dudo_wrong": [
+        "{actual}. Prima.",
+        "{actual}. Netjes gespeeld, {bidder}. Mijn gezicht zegt verder niks.",
+        "{actual}. Je hebt geen tell, {bidder}. Interessant.",
+    ],
     "bid_held": [
         "{challenger}, je had moeten kijken naar mijn ogen. Daar stond niks in.",
         "{actual}. Pokerface, {challenger}. Pokerface.",
+        "{actual}. {challenger}, je callde de verkeerde hand.",
     ],
     "bid_caught": [
         "{actual}. Oké, die zag je. Volgende keer niet.",
         "Betrapt. Ik blijf er even heel neutraal bij kijken.",
+        "{challenger} leest me. Eén keer. Dat gebeurt niet nog eens.",
+    ],
+    "calza_right": [
+        "Precies {actual}. Geen reactie. Gewoon de steen graag.",
+    ],
+    "calza_wrong": [
+        "{actual}. Gemist. Volgende hand.",
+    ],
+    "dudo_on_me": [
+        "{who} roept Dudo. ...",
+        "Dudo, {who}? Kijk me aan. Weet je het zeker?",
+        "{who} callt. Mooi.",
+        "{who}, je kunt me niet lezen. Niemand kan dat.",
+    ],
+    "others_bluff_caught": [
+        "{bidder} had een tell. Ik zag hem ook.",
+        "{bidder} bluft te luid. Bluffen doe je stil.",
+    ],
+    "others_dudo_wrong": [
+        "{challenger} callt een echte hand. Kost geld. Stenen. Hetzelfde.",
+    ],
+    "others_calza_right": [
+        "{challenger} raakt Calza. Hm.",
+    ],
+    "others_calza_wrong": [
+        "{challenger} gokt op exact. Slechte odds.",
+    ],
+    "last_die": [
+        "Eén steen. All-in.",
+        "Short stack. Geen paniek op mijn gezicht.",
+    ],
+    "eliminated_other": [
+        "{who} is busted.",
+        "{who} verlaat de tafel. Bedankt voor de chips.",
+    ],
+    "eliminated_me": [
+        "Busted. Geen emotie. Volgende toernooi.",
+        "Ik ben eruit. Je ziet het niet aan me. Toch?",
     ],
     "won": [
         "Niemand heeft me kunnen lezen. Niemand.",
+        "Gewonnen. Ik trek geen gezicht. Ook nu niet.",
+    ],
+    "lost_game": [
+        "{winner} wint. Goed gespeeld. Mijn gezicht blijft hetzelfde.",
+        "{winner} pakt de pot. Ik schud de hand en ga.",
     ],
 }
 

@@ -87,6 +87,28 @@ class WouluhBot(HundredIQBot):
         "eliminated_me": [
             "Eruit?! Met al die Paco's? Dit spel is doorgestoken kaart!",
         ],
+        "others_bluff_caught": [
+            "{bidder} betrapt op liegen. Schandalig. Gewoon eerlijk spelen, zoals ik.",
+            "{challenger} pakt {bidder}. Goed zo, valsspelers horen hier niet. Ahem.",
+        ],
+        "others_dudo_wrong": [
+            "{bidder} had ze echt. Wat een geluk. Bijna net zoveel geluk als ik.",
+            "{challenger} beschuldigt {bidder}. Niet zomaar mensen beschuldigen, {challenger}. Dat doe je niet.",
+        ],
+        "others_calza_right": [
+            "Calza raak van {challenger}? Verdacht precies. Heeft iemand gecheckt of {challenger} eerlijk speelt?",
+        ],
+        "others_calza_wrong": [
+            "{challenger} mist de Calza. Had je maar wat meer Paco's gehad. Gegooid. Gegooid, bedoel ik.",
+        ],
+        "last_die": [
+            "Nog één steen. Gelukkig is het altijd een Paco. Toevallig.",
+            "Eén steen over. Tijd om heel, heel veel geluk te hebben.",
+        ],
+        "eliminated_other": [
+            "{who} ligt eruit. Had je maar betere stenen gegooid. Of gemaakt.",
+            "Dag {who}! Ik heb je stenen niet aangeraakt. Niemands stenen. Behalve de mijne.",
+        ],
         "won": [
             "Gewonnen! Chat, niemand hoeft de replay te bekijken. Kappa",
             "Gewonnen! Gewoon met talent. En Paco's. Vooral Paco's.",

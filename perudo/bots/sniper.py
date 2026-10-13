@@ -88,6 +88,24 @@ QUOTES = {
         "{who} hapt toe.",
         "Dudo van {who}. Precies waar ik je hebben wilde.",
     ],
+    "others_bluff_caught": [
+        "{challenger} raakt {bidder}. Niet slecht. Geen headshot, maar niet slecht.",
+        "{bidder} gaf zijn positie weg met {bid}. Beginnersfout.",
+    ],
+    "others_dudo_wrong": [
+        "{challenger} schiet mis op {bidder}. Hagel. Ik gebruik één kogel.",
+        "{bidder} stond gewoon in dekking. {challenger}, eerst richten.",
+    ],
+    "others_calza_right": [
+        "Precisieschot van {challenger}. Respect. Van vakman tot vakman.",
+    ],
+    "others_calza_wrong": [
+        "{challenger} mikt op exact en mist. Te veel wind.",
+    ],
+    "last_die": [
+        "Laatste kogel in de kamer. Moet raak zijn.",
+        "Eén steen. Ik heb er nooit meer dan één nodig gehad.",
+    ],
     "eliminated_other": [
         "{who} is neer. Eén doelwit minder.",
     ],

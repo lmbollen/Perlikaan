@@ -49,6 +49,8 @@ acted on a bid), and the players beyond the next one are valued with their
 own models too. Everything learned lives in class-level memory per bot
 name, survives a new instance per game, decays towards the priors by
 GAME_DECAY after every game, and never touches the disk.
+
+Set TALK_TO_ME=true to hear him.
 """
 
 
@@ -68,6 +70,7 @@ from perudo.models import (
     RevealEvent,
     RoundEndedEvent,
 )
+from perudo.talk import Mouth, fmt_bid, last_bidder
 
 _NORMAL_FACES = (2, 3, 4, 5, 6)
 
@@ -177,6 +180,114 @@ def _kind(bid: Bid, prev: Optional[Bid], pal: bool) -> str:
     if bid.face == PACO:
         return "paco-choice" if choice else "paco-follow"
     return "choice" if choice else "follow"
+
+
+# Carlos' younger brother: the same Spanish charm, now with Bayes.
+QUOTES = {
+    "open": [
+        "{bid}. Carlos Dos. Het vervolg is altijd beter, amigo.",
+        "{bid}. Mijn prior is sterk. Mijn stenen ook.",
+        "{bid}. Eerst het basismodel, dan de rest. Olé.",
+        "{bid}. Mi hermano rekende met ketens. Ik reken met jou.",
+    ],
+    "open_bluff": [
+        "{bid}. Een nieuw gezicht. Laten we kijken wat jullie posterior ervan maakt.",
+        "{bid}. Ik bied, jullie werken je model bij. Verkeerd, hopelijk.",
+        "{bid}. Ik geef jullie wat data. Of het klopt is een tweede vraag.",
+    ],
+    "raise": [
+        "{bid}. De verdeling staat aan mijn kant, amigo.",
+        "{bid}. Gecorrigeerd voor alles wat jullie bieden. Muy bien.",
+        "{bid}. De som van alle verdelingen zegt: dit kan.",
+        "{bid}. Rustig, rustig. Bayes heeft geen haast.",
+        "{bid}. Ik heb jullie biedingen gewogen. Sommige wogen niks.",
+    ],
+    "raise_bluff": [
+        "{bid}. Ik volg dit gezicht. Hoeveel ik er heb blijft onder ons.",
+        "{bid}. Wat zegt jouw model over mij? Precies, dat dacht ik al.",
+        "{bid}. Mijn vertrouwensscore is hoog genoeg om dit te dragen.",
+    ],
+    "dudo": [
+        "Dudo. {bidder}, mijn posterior geeft je bod {pct} procent.",
+        "Dudo. {bidder}, {pct} procent. Lo siento.",
+        "Dudo. {bidder}, ik heb je biedingen bijgehouden. Allemaal.",
+        "Dudo. {bidder}, de likelihood van dit bod is niet in je voordeel.",
+        "Dudo. {bidder}, mijn broer zou je nog geloofd hebben. Ik niet.",
+    ],
+    "calza": [
+        "Calza. {bid}, precies op de top van de verdeling.",
+        "Calza. {pct} procent op exact. Daar teken ik voor, amigo.",
+        "Calza. Het model piekt op {bid}. Ik ook.",
+    ],
+    "dudo_right": [
+        "Zoals de posterior voorspelde. Gracias, {bidder}.",
+        "{bidder}, je bluft vaker dan je denkt. Ik heb het bijgehouden.",
+        "Weer een datapunt, {bidder}. En een steen.",
+    ],
+    "dudo_wrong": [
+        "{actual}. Een uitschieter in de staart. Gebeurt, amigo.",
+        "{actual}? {bidder}, je was eerlijk. Ik pas je model aan.",
+        "Ay. {actual}. Bayes geeft, Bayes neemt.",
+    ],
+    "bid_held": [
+        "{actual}. {challenger}, je reageerde precies zoals je model voorspelde.",
+        "Klopt, {challenger}. Jouw Dudo-model staat nu een stukje scherper.",
+        "{actual}, {challenger}. Mijn biedingen zijn meestal waar. Dat staat in de data.",
+    ],
+    "bid_caught": [
+        "{actual}. Bien jugado, {challenger}. Mijn vertrouwensscore daalt. Tijdelijk.",
+        "Betrapt door {challenger}. Een bluf is ook een experiment.",
+        "{actual}. Oké. Volgende keer zit de bluf beter in de staart.",
+    ],
+    "calza_right": [
+        "PRECIES {actual}! De modus liegt nooit. Olé!",
+        "Exact {actual}. Mi hermano was trots geweest.",
+    ],
+    "calza_wrong": [
+        "{actual}, geen {bid}. De piek stond er naast. Een beetje.",
+        "Niet exact. Calza is een gok op één punt, amigo. Dat wist ik.",
+    ],
+    "dudo_on_me": [
+        "{who} roept Dudo. Interessant. Dat wordt een datapunt.",
+        "Dudo, {who}? Je drempel ligt lager dan ik dacht.",
+        "{who}, je Dudo-model zegt dat je dit zou doen. Bedankt voor de bevestiging.",
+    ],
+    "others_bluff_caught": [
+        "{bidder} bood {bid} met {actual}. Genoteerd in het model.",
+        "{challenger} vangt {bidder}. Ik werk {bidder} bij: minder vertrouwen.",
+    ],
+    "others_dudo_wrong": [
+        "Het bod van {bidder} klopte. {challenger}, meer data nodig, amigo.",
+        "{challenger} twijfelde aan {bidder}. Ik ook een beetje. Gelukkig zei ik niks.",
+    ],
+    "others_calza_right": [
+        "Calza raak van {challenger}. Mijn complimenten. Mijn model is verrast.",
+    ],
+    "others_calza_wrong": [
+        "{challenger} mist de Calza. De variantie is wreed.",
+    ],
+    "last_die": [
+        "Nog één steen. Een kleine steekproef, maar een goede.",
+        "Laatste steen. Nu telt alleen de posterior nog.",
+    ],
+    "eliminated_other": [
+        "Adiós, {who}. Je model bewaar ik. Voor de volgende keer.",
+        "{who} ligt eruit. Minder onbekenden, scherpere verdelingen.",
+    ],
+    "eliminated_me": [
+        "Eruit. Het model was goed, de steekproef was klein.",
+        "Carlos Dos ligt eruit. Er komt een Carlos Tres. Met meer data.",
+    ],
+    "won": [
+        "Carlos Dos wint. Het vervolg is beter dan het origineel.",
+        "Gewonnen. Ik heb van jullie allemaal geleerd. Gracias, amigos.",
+        "Victoria! De posterior wist het al na de eerste ronde.",
+    ],
+    "lost_game": [
+        "{winner} wint. Felicidades. Ik werk je model bij.",
+        "{winner} wint. Ik onthoud het. Ik onthoud alles.",
+    ],
+}
 
 
 class _Source:
@@ -400,6 +511,8 @@ class CarlosDosBot:
                       "source": _Source(), "step": self.STEP_START, "n": 0}
         self._round: List[Tuple[str, object]] = []
         self._palifico = False
+        self._said = (0.0, 0.0)          # P(true), P(exact) of the bid we last faced, for talk
+        self.mouth = Mouth(self, QUOTES)
 
     # ------------------------------------------------------------------
     # observing and learning
@@ -415,6 +528,7 @@ class CarlosDosBot:
 
     def observe(self, event):
         self._ensure_memory()
+        self.mouth.react(event)
         if _is(event, "BidEvent"):
             self._round.append((event.player, event.bid))
         elif _is(event, "DudoEvent"):
@@ -769,7 +883,20 @@ class CarlosDosBot:
             return state.legal_actions[0]
         best = max(v for _, v in options)
         ties = [a for a, v in options if v >= best - self.TIE_EPS]
-        return self._rng.choice(ties)
+        action = self._rng.choice(ties)
+        self._comment(state, action)
+        return action
+
+    def _comment(self, state, action):
+        p_true, p_exact = self._said
+        if isinstance(action, Dudo):
+            self.mouth.say("dudo", announce="Dudo!", bidder=last_bidder(state), pct=round(100 * p_true))
+        elif isinstance(action, Calza):
+            self.mouth.say("calza", announce="Calza!", bid=fmt_bid(state.current_bid), pct=round(100 * p_exact))
+        else:
+            bluff = _count_matches(state.my_dice, action.face, state.palifico) == 0
+            key = ("open" if state.current_bid is None else "raise") + ("_bluff" if bluff else "")
+            self.mouth.say(key, announce=fmt_bid(action), bid=fmt_bid(action))
 
     def _options(self, state):
         """Every move we consider with its expected value, in dice."""
@@ -802,6 +929,7 @@ class CarlosDosBot:
             full = model(bid.face)[0]
             p_true = _tail(full, bid.quantity)
             p_exact = _at(full, bid.quantity) * self.EXACT_SHRINK
+            self._said = (p_true, p_exact)
             if Dudo() in legal:
                 options.append((Dudo(), (1 - p_true) * w_other - p_true))
             if Calza() in legal:

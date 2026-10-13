@@ -21,6 +21,7 @@ Gebruik vanuit een bot::
 
         def observe(self, event):
             self.mouth.react(event)  # reveals, Dudo on you, eliminations, game end
+            # (or self.mouth.notice(event) when the bot comments on the rest itself)
 
 Only QUOTE_CHANCE of the situations get a quote, so the table doesn't drown
 in chatter. When a bot makes a move, pass `announce` (the bid, "Dudo!" or
@@ -37,6 +38,8 @@ about. The keys `react()` uses:
     calza_right        my Calza was exact                 (same)
     calza_wrong        my Calza missed                    (same)
     others_bluff_caught / others_dudo_wrong               (same; between two other players)
+    others_calza_right / others_calza_wrong               (same; someone else's Calza)
+    last_die           I am down to my last die           (no fields)
     eliminated_me / eliminated_other                      {who}
     won / lost_game                                       {winner}
 """
@@ -51,6 +54,7 @@ from perudo.models import (
     PACO,
     Bid,
     BidEvent,
+    DieLostEvent,
     DudoEvent,
     Event,
     GameEndedEvent,
@@ -113,13 +117,8 @@ class Mouth:
     def react(self, event: Event) -> None:
         """Comment on public events that involve this bot."""
         me = self.bot.name
-        if isinstance(event, BidEvent):
-            self._last_bidder = event.player
-        elif isinstance(event, DudoEvent):
-            if self._last_bidder == me and event.player != me:
-                self.say("dudo_on_me", who=event.player)
-        elif isinstance(event, RevealEvent):
-            self._last_bidder = None
+        self.notice(event)
+        if isinstance(event, RevealEvent):
             key = self._reveal_key(event, me)
             if key:
                 self.say(
@@ -134,12 +133,29 @@ class Mouth:
         elif isinstance(event, GameEndedEvent):
             self.say("won" if event.winner == me else "lost_game", winner=event.winner)
 
+    def notice(self, event: Event) -> None:
+        """Only the moments that happen to this bot itself: a Dudo on its bid
+        ("dudo_on_me") and its last die ("last_die"). For bots that comment
+        on reveals, eliminations and the end of the game themselves."""
+        me = self.bot.name
+        if isinstance(event, BidEvent):
+            self._last_bidder = event.player
+        elif isinstance(event, DudoEvent):
+            if self._last_bidder == me and event.player != me:
+                self.say("dudo_on_me", who=event.player)
+        elif isinstance(event, RevealEvent):
+            self._last_bidder = None
+        elif isinstance(event, DieLostEvent):
+            if event.player == me and event.dice_count == 1:
+                self.say("last_die")
+
     @staticmethod
     def _reveal_key(event: RevealEvent, me: str) -> str | None:
         if event.challenge_type == "calza":
+            exact = event.result == "correct"
             if event.challenger != me:
-                return None
-            return "calza_right" if event.result == "correct" else "calza_wrong"
+                return "others_calza_right" if exact else "others_calza_wrong"
+            return "calza_right" if exact else "calza_wrong"
         held = event.result == "bidder_correct"
         if event.challenger == me:
             return "dudo_wrong" if held else "dudo_right"

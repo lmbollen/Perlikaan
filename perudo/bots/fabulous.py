@@ -183,6 +183,15 @@ QUOTES: Dict[str, Sequence[str]] = {
         "Volgende ronde Palifico! Geen wilde Paco's. Alleen rauwe, eerlijke stenen. Ik haat het.",
         "Er komt een Palifico-ronde aan. Iedereen doet normaal.",
     ],
+    "dudo_on_me": [
+        "Dudo, {who}? Op MIJ? Hoe durf je. Nee echt, hoe durf je.",
+        "{who} roept Dudo op Fabulous. Wat een lef. Ik ben zelfs een beetje onder de indruk.",
+        "{who}, twijfelen aan mij is twijfelen aan schoonheid zelf.",
+    ],
+    "last_die": [
+        "Nog één steen. Minimalistisch. Elegant. Fabulous.",
+        "Eén steen over. Een diva heeft maar één spotlight nodig.",
+    ],
     "won": [
         "IK HEB GEWONNEN! Niemand is verrast. Ik al helemaal niet.",
         "Victorie! Stenen vrezen mij, tafels respecteren mij, bots leren van mij.",
@@ -423,6 +432,7 @@ class Fabulous(BaseBot):
 
     def observe(self, event: Event) -> None:
         me = self.name
+        self.mouth.notice(event)      # a Dudo on my bid, my last die
         if isinstance(event, BidEvent):
             self._round_bids.append((event.player, event.bid))
 

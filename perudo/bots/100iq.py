@@ -78,6 +78,28 @@ class HundredIQBot:
         "eliminated_me": [
             "Eruit. Verslagen door mensen die statistisch dommer zijn dan ik. De helft dan.",
         ],
+        "others_bluff_caught": [
+            "{bidder} bood {bid} met {actual}. Onder de vijftig procent. Had ik kunnen zeggen.",
+            "{challenger} pakt {bidder}. Gemiddeld goed gedaan. Mijn hoogste compliment.",
+        ],
+        "others_dudo_wrong": [
+            "{challenger} twijfelde aan een kloppend bod. Dat is een kans van... laat maar, te moeilijk voor jou.",
+            "Het bod van {bidder} klopte. {challenger}, de binomiaal had het je kunnen vertellen.",
+        ],
+        "others_calza_right": [
+            "Calza raak van {challenger}. Statistisch onwaarschijnlijk. Ik ben onder de indruk. Gemiddeld.",
+        ],
+        "others_calza_wrong": [
+            "{challenger} gaat voor exact en mist. Exact is een kleine kans. Ik weet dat soort dingen.",
+        ],
+        "last_die": [
+            "Nog één steen. Mijn steekproef is nu precies gemiddeld klein.",
+            "Eén steen. Ik heb het uitgerekend: dit is minder dan vijf.",
+        ],
+        "eliminated_other": [
+            "{who} ligt eruit. Het gemiddelde IQ aan tafel gaat omhoog. Door mij.",
+            "Dag {who}. Er moest iemand onder het gemiddelde zitten.",
+        ],
         "won": [
             "Gewonnen! Blijkt dat gemiddeld alles is wat je nodig hebt.",
             "Gewonnen. Slimmer dan de halve tafel, precies zoals de klokkromme beloofde.",

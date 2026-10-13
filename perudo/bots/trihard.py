@@ -183,6 +183,15 @@ QUOTES: Dict[str, Sequence[str]] = {
         "Palifico. Geen wilds. Pure skill-ronde. Eindelijk.",
         "Palifico komt eraan. Alle kansen herberekenen. Al gedaan.",
     ],
+    "dudo_on_me": [
+        "{who} roept Dudo. Gemodelleerd. Verwacht. Ingecalculeerd. Niet nerveus.",
+        "Dudo, {who}? Jouw drempel schuift. Ik log het.",
+        "{who} callt. TriHard. Kom maar op.",
+    ],
+    "last_die": [
+        "Laatste steen. Hoge druk. Ik ben gemaakt voor hoge druk. TriHard.",
+        "Eén steen. Elke beslissing telt. Elke beslissing telde altijd al.",
+    ],
     "won": [
         "GG EZ. TriHard 7. Zoals gesimuleerd.",
         "GG. Zoals gesimuleerd. Duizenden keren.",
@@ -507,6 +516,7 @@ class Trihard(BaseBot):
 
     def observe(self, event: Event) -> None:
         me = self.name
+        self.mouth.notice(event)      # a Dudo on my bid, my last die
         if isinstance(event, BidEvent):
             self._round_bids.append((event.player, event.bid))
 

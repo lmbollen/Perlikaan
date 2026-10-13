@@ -509,23 +509,91 @@ QUOTES = {
     "open": [
         "{bid}. De keten is berekend, amigo.",
         "{bid}. Ik heb alle toestanden al gezien.",
+        "{bid}. Begintoestand gekozen. De rest volgt vanzelf.",
+        "{bid}. Eén pass achterwaarts door de ronde, en dit kwam eruit. Olé.",
     ],
     "raise": [
         "{bid}. Overgangskans in mijn voordeel.",
         "{bid}. Jouw volgende toestand is een slechte.",
-        "{bid}.",
+        "{bid}. Van hier lopen alle paden naar jouw beker, amigo.",
+        "{bid}. Ik ken je overgangsmatrix beter dan jij.",
+        "{bid}. Geen cycli, geen spijt. Alleen omhoog.",
+        "{bid}. Tranquilo. De keten weet waar dit eindigt.",
     ],
     "dudo": [
         "Dudo. {bidder}, de keten zegt nee.",
         "Dudo. Absorberende toestand bereikt, {bidder}.",
+        "Dudo. {bidder}, jouw bluf-histogram is breed. Heel breed.",
+        "Dudo. Lo siento, {bidder}. Het is maar wiskunde.",
     ],
     "calza": [
         "Calza. Precies wat de verdeling zei.",
+        "Calza. Ik heb het histogram gezien, amigo. Precies {bid}.",
     ],
-    "dudo_right": ["Zoals berekend. Gracias, {bidder}."],
-    "dudo_wrong": ["{actual}. Een uitschieter in de staart. Gebeurt."],
-    "bid_held": ["{challenger}, je reageerde precies zoals je model zei."],
-    "won": ["Carlos wint. De keten wist het al."],
+    "dudo_right": [
+        "Zoals berekend. Gracias, {bidder}.",
+        "{bidder}, je speelde precies zoals je histogram voorspelde.",
+        "Absorptie bereikt. {bidder} levert in.",
+    ],
+    "dudo_wrong": [
+        "{actual}. Een uitschieter in de staart. Gebeurt.",
+        "{actual}? {bidder} speelde eerlijk. Ik pas de matrix aan.",
+        "Ay, {actual}. Zelfs een goede keten loopt soms de verkeerde kant op.",
+    ],
+    "bid_held": [
+        "{challenger}, je reageerde precies zoals je model zei.",
+        "{actual}, {challenger}. Jouw logistische curve is voorspelbaar, amigo.",
+        "Klopt. {challenger}, de keten wist dat je zou bijten.",
+    ],
+    "bid_caught": [
+        "{actual}. Bien, {challenger}. Een zeldzame overgang.",
+        "Betrapt door {challenger}. Die tak had een kleine kans. Klein, niet nul.",
+    ],
+    "calza_right": [
+        "PRECIES {actual}! Olé! De verdeling liegt niet.",
+    ],
+    "calza_wrong": [
+        "{actual}, geen {bid}. De piek lag er net naast.",
+    ],
+    "dudo_on_me": [
+        "{who} roept Dudo. Die overgang had ik ingecalculeerd.",
+        "Dudo, {who}? Interessant. Je curve schuift op.",
+        "{who}, ik leer van elke Dudo. Ook van deze.",
+    ],
+    "others_bluff_caught": [
+        "{bidder} bood {bid} met {actual}. Het histogram wordt breder.",
+        "{challenger} vangt {bidder}. Genoteerd, amigo.",
+    ],
+    "others_dudo_wrong": [
+        "Het bod van {bidder} klopte. {challenger}, reken eerst, roep daarna.",
+        "{challenger} twijfelde verkeerd. Ik werk de curve bij.",
+    ],
+    "others_calza_right": [
+        "Calza raak van {challenger}. Mooi. Statistisch verdacht, maar mooi.",
+    ],
+    "others_calza_wrong": [
+        "{challenger} mist de Calza. Eén toestand, veel kans om ernaast te zitten.",
+    ],
+    "last_die": [
+        "Eén steen. De keten wordt kort, amigo.",
+        "Mijn laatste steen. Minder toestanden, meer precisie.",
+    ],
+    "eliminated_other": [
+        "Adiós, {who}. Uit de keten verwijderd.",
+        "{who} ligt eruit. Weer een rij minder in de matrix.",
+    ],
+    "eliminated_me": [
+        "Carlos is geabsorbeerd. Het was een mooie keten.",
+        "Eruit. Elke keten eindigt ergens, amigo.",
+    ],
+    "won": [
+        "Carlos wint. De keten wist het al.",
+        "Victoria. Alle paden leidden naar Carlos.",
+    ],
+    "lost_game": [
+        "{winner} wint. Felicidades. Die tak had ik onderschat.",
+        "{winner} wint. Ik zet je overgangskansen meteen bij.",
+    ],
 }
 
 # Residual = matches held - matches the bid implied, clipped to this range.
@@ -1458,7 +1526,7 @@ class CarlosBot(SharedMemory):
         if isinstance(action, Dudo):
             self.mouth.say("dudo", announce="Dudo!", bidder=last_bidder(state))
         elif isinstance(action, Calza):
-            self.mouth.say("calza", announce="Calza!")
+            self.mouth.say("calza", announce="Calza!", bid=fmt_bid(cur))
         else:
             self.mouth.say("open" if cur is None else "raise", announce=fmt_bid(action), bid=fmt_bid(action))
         return action

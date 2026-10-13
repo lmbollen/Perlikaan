@@ -25,6 +25,7 @@ from perudo.models import (
     DieLostEvent,
     Dudo,
     DudoEvent,
+    GameEndedEvent,
     PlayerEliminatedEvent,
     RevealEvent,
 )
@@ -105,11 +106,12 @@ QUOTES = {
         "Calza mislukt. We doen alsof dit nooit gebeurd is.",
     ],
     "scared_opponent": [
-        "{who} biedt zo laag, volgens mij is {who} bang voor het eigen bekertje.",
+        "{who} doet er het kleinste stapje bij. Bang voor het eigen bekertje?",
         "{who} fluistert een bod. Bang voor de dobbelstenen?",
+        "{who} schuift een millimetertje op. Spannend, hoor.",
     ],
     "bold_opponent": [
-        "{who} biedt hoog. PogChamp of KEKW? We gaan het zien.",
+        "{who} springt omhoog. PogChamp of KEKW? We gaan het zien.",
         "{who} gaat hoog in. Dapper of dwaas? Ik ga voor dwaas.",
         "{who} biedt alsof er geen morgen is. Er is wel een morgen, namelijk met minder dobbelstenen.",
     ],
@@ -121,8 +123,34 @@ QUOTES = {
         "{who} is eruit. F in de chat.",
         "{who} is eruit. Dag {who}, schrijf nog eens!",
     ],
-    "opp_dudo_me": [
+    "dudo_on_me": [
         "{who} roept Dudo op mij. Brutaal!",
+        "{who} twijfelt aan Sonny Boy? Aan MIJ? Ik ben gekwetst.",
+        "Dudo, {who}? Oké, oké. Even mijn bekertje een knuffel geven.",
+    ],
+    "bid_held": [
+        "Het klopte! {who}, je moet Sonny Boy gewoon geloven. Altijd.",
+        "Ha, {who}! Eerlijk als een padvinder. Een padvinder met dobbelstenen.",
+    ],
+    "bid_caught": [
+        "Betrapt door {who}. Ik had mijn vingers wel gekruist, hoor.",
+        "{who} heeft me. Mijn bekertje en ik gaan even praten.",
+    ],
+    "last_die": [
+        "Nog één dobbelsteen. Mijn kleine kampioen. Jij en ik tegen de wereld.",
+        "Eén steen over. Niet in paniek raken. Ik raak in paniek.",
+    ],
+    "eliminated_me": [
+        "Ik lig eruit. Zeg tegen mijn bekertje dat ik van hem hield.",
+        "Sonny Boy is uitgeschakeld. Applaus graag. Ook voor de dobbelstenen.",
+    ],
+    "won": [
+        "IK HEB GEWONNEN! Mam, kijk! Ik ben op de dobbeltafel!",
+        "Gewonnen! Een grote mond en een klein bekertje, meer heb je niet nodig.",
+    ],
+    "lost_game": [
+        "{winner} wint. Goed gedaan. Ik ben niet jaloers. Een beetje.",
+        "{winner} wint. Volgende keer neem ik een groter bekertje mee.",
     ],
     "palifico": [
         "Palifico! Alle regels zijn anders. Ik ook. Ik ben ook anders.",
@@ -167,12 +195,18 @@ class SonnyBoy:
         self._rng = random.Random()
         self._round_bids = []  # (player, Bid) deze ronde -- via observe()
         self._last_event_quote_turn = 0
+        self._talk_prev = None  # het laatste bod deze ronde, om op te reageren
 
     # ------------------------------------------------------------------
     # praatjes
     # ------------------------------------------------------------------
     def _say(self, key, announce=None, **fmt):
         self.mouth.say(key, announce, **fmt)
+
+    @staticmethod
+    def _strength(bid):
+        """Hoe sterk een bod is: een Paco telt als twee gewone stenen."""
+        return bid.quantity * 2 if bid.face == PACO else bid.quantity
 
     # ------------------------------------------------------------------
     # kansberekening
@@ -341,7 +375,9 @@ class SonnyBoy:
     # leren / reageren
     # ------------------------------------------------------------------
     def observe(self, event):
+        self.mouth.notice(event)          # Dudo op mijn bod, mijn laatste steen
         if isinstance(event, RevealEvent):
+            self._talk_prev = None
             # Zegt iets over de bluf-frequentie van de bieder.
             correct = event.actual_count >= event.current_bid.quantity
             st = self.bluff_stats.setdefault(event.bidder, [0, 0])
@@ -352,16 +388,29 @@ class SonnyBoy:
                 self._say("won_dudo" if not correct and event.challenge_type == "dudo" else
                           "calza_win" if event.challenge_type == "calza" and event.result == "correct"
                           else "calza_lose" if event.challenge_type == "calza" else "lost_dudo")
-            elif event.bidder == self.name and event.challenge_type == "dudo" and correct:
-                self._say("won_dudo")
-        elif isinstance(event, DudoEvent) and event.player != self.name:
-            pass
-        elif isinstance(event, BidEvent) and event.player != self.name:
-            self._say("bold_opponent" if event.bid.quantity >= 6 else "scared_opponent",
-                      who=event.player)
+            elif event.bidder == self.name and event.challenge_type == "dudo":
+                self._say("bid_held" if correct else "bid_caught", who=event.challenger)
+        elif isinstance(event, BidEvent):
+            prev, self._talk_prev = self._talk_prev, event.bid
+            if event.player != self.name and prev is not None:
+                # Alleen commentaar als het bod opvalt: een sprong, of het kleinst mogelijke stapje.
+                jump = self._strength(event.bid) - self._strength(prev)
+                if jump >= 2:
+                    self._say("bold_opponent", who=event.player)
+                elif jump == 0:
+                    self._say("scared_opponent", who=event.player)
         elif isinstance(event, DieLostEvent) and event.player != self.name:
             self._say("opp_lost", who=event.player)
-        elif isinstance(event, PlayerEliminatedEvent) and event.player != self.name:
-            self._say("opp_out", who=event.player)
+        elif isinstance(event, PlayerEliminatedEvent):
+            if event.player == self.name:
+                self._say("eliminated_me")
+            else:
+                self._say("opp_out", who=event.player)
+        elif isinstance(event, GameEndedEvent):
+            self._talk_prev = None
+            if event.winner == self.name:
+                self._say("won")
+            else:
+                self._say("lost_game", winner=event.winner)
         elif isinstance(event, CalzaEvent) or isinstance(event, DudoEvent):
             pass

@@ -87,6 +87,32 @@ QUOTES = {
     "eliminated_me": [
         "Eruit. Geeft niks, ik ben gemaakt om verslagen te worden. Dat was het hele punt.",
     ],
+    "calza_right": [
+        "PRECIES {actual}! De voorbeeldbot raakt een Calza. Dat stond niet eens in de handleiding.",
+    ],
+    "calza_wrong": [
+        "{actual}, geen {bid}. Ja, Calza is een gok. Staat in de docs.",
+    ],
+    "others_bluff_caught": [
+        "{bidder} betrapt. Les twee van de handleiding: niet te hoog bieden.",
+        "Zie je, {bidder}? Zo werkt Dudo. Dat had je in mijn code kunnen lezen.",
+    ],
+    "others_dudo_wrong": [
+        "{bidder} had ze echt. {challenger}, lees de tutorial nog even door.",
+        "{challenger} twijfelde verkeerd. Gebeurt. Ook in de voorbeelden.",
+    ],
+    "others_calza_right": [
+        "Calza raak van {challenger}. Netjes. Zet dat maar in je eigen bot.",
+    ],
+    "others_calza_wrong": [
+        "{challenger} mist de Calza. Daarom doe ik het bijna nooit.",
+    ],
+    "last_die": [
+        "Nog één steen. Zie je, zo ziet een Palifico eruit. Leerzaam, toch?",
+    ],
+    "eliminated_other": [
+        "{who} ligt eruit. Kopieer mij dan, {who}, en probeer het opnieuw.",
+    ],
     "won": [
         "De voorbeeldbot wint. Chat, is dit echt? PogChamp",
         "Gewonnen?! Door de VOORBEELDBOT? Iedereen terug naar de tekentafel.",

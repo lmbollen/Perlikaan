@@ -79,6 +79,30 @@ class HakamanBot(MinRaiseBot):
         "eliminated_me": [
             "Eruit?! Er speelt hier iemand vals, en dat ben ik niet... oké, dat ben ik wel, maar TOCH.",
         ],
+        "dudo_wrong": [
+            "{actual}?! Iemand heeft aan de stenen gezeten. En dit keer was ik het niet.",
+        ],
+        "others_bluff_caught": [
+            "{bidder} liegt over {bid}. Amateur. Je moet de stenen aanpassen, niet het bod.",
+            "{challenger} vangt {bidder}. Had {bidder} maar beter... gegooid.",
+        ],
+        "others_dudo_wrong": [
+            "{bidder} had ze echt. Of iemand heeft geholpen. Ik zeg niks.",
+            "{challenger} twijfelt en verliest. Twijfel is voor mensen zonder controle.",
+        ],
+        "others_calza_right": [
+            "Exact {actual}, {challenger}? Mooi getal. Ik heb er misschien een handje bij geholpen.",
+        ],
+        "others_calza_wrong": [
+            "{challenger} mist de Calza. Had je het mij gevraagd, dan had het geklopt.",
+        ],
+        "last_die": [
+            "Nog één steen? Dat klopt niet. Ik heb de stenen toch zelf gezet.",
+        ],
+        "eliminated_other": [
+            "{who} ligt eruit. Ik heb er niks mee te maken. Officieel.",
+            "Dag {who}. Je stenen liggen nog op tafel. Mag ik ze hebben?",
+        ],
         "won": [
             "GG EZ. Kappa",
             "Winnaar! Schoon potje, iedereen. Brandschoon. Niet in de logs kijken.",

@@ -621,27 +621,105 @@ QUOTES = {
     "open": [
         "{bid}. Ik doe je een aanbod dat je niet kunt weigeren.",
         "{bid}. Rustig. Dit is zaken, niets persoonlijks.",
+        "{bid}. Ga zitten. Neem een cannoli. We beginnen.",
+        "{bid}. In deze familie open ik. Altijd.",
     ],
     "attack": [
         "{bid}. Jij zit naast me. Dat is jammer voor je.",
         "{bid}. De familie vergeet niets.",
         "{bid}. Ga je gang, roep maar Dudo.",
+        "{bid}. Ik leg dit bod voor je neer. Zoals een paardenhoofd in je bed.",
+        "{bid}. Mijn buurman wordt te sterk. Dat kunnen we niet hebben.",
     ],
     "protect": [
         "{bid}. Voor jou maak ik het makkelijk, vriend.",
         "{bid}. Jij hoort nu bij de familie.",
+        "{bid}. Een klein bod, als gunst. Ooit vraag ik iets terug.",
+        "{bid}. Niemand raakt jou aan zolang ik naast je zit.",
     ],
-    "bid": ["{bid}."],
     "dudo_attack": [
         "Dudo. {bidder}, je had beter moeten weten.",
         "Dudo. Een boodschap van de familie, {bidder}.",
+        "Dudo. {bidder}, je werd te groot voor deze buurt.",
     ],
-    "dudo": ["Dudo. Het spijt me, {bidder}. Echt."],
-    "calza": ["Calza. Precies wat ik verwachtte."],
-    "dudo_right": ["{bidder} betaalt. Zoals iedereen betaalt."],
-    "dudo_wrong": ["{actual}. Iemand heeft gepraat."],
-    "eliminated_other": ["{player} slaapt bij de vissen."],
-    "won": ["De familie wint. De familie wint altijd."],
+    "dudo": [
+        "Dudo. Het spijt me, {bidder}. Echt.",
+        "Dudo. {bidder}, ik hou niet van leugens aan mijn tafel.",
+        "Dudo. Zakelijk bekeken, {bidder}, kon dit niet anders.",
+    ],
+    "calza": [
+        "Calza. Precies wat ik verwachtte.",
+        "Calza. De familie weet altijd precies hoeveel er liggen.",
+    ],
+    "my_dudo_right": [
+        "{bidder} betaalt. Zoals iedereen betaalt.",
+        "{bidder}, je hebt tegen de Don gelogen. Dat doe je maar één keer.",
+        "Een steen voor de familie. Grazie, {bidder}.",
+    ],
+    "my_dudo_wrong": [
+        "{actual}. Iemand heeft gepraat.",
+        "{actual}? Ik wil weten wie mij verkeerd heeft geïnformeerd.",
+        "{actual}. Goed, {bidder}. Deze keer. Alleen deze keer.",
+    ],
+    "my_bid_held": [
+        "{actual}. {challenger}, je hebt de familie beledigd. Voor niets.",
+        "{challenger}, je twijfelde aan mijn woord. Mijn woord is wet.",
+        "Klopt. De Don liegt niet, {challenger}. Hij hoeft niet.",
+    ],
+    "my_bluff_caught": [
+        "{actual}. Goed gezien, {challenger}. Ik onthoud wie goed ziet.",
+        "Betrapt. {challenger}, je hebt lef. Lef is gevaarlijk.",
+    ],
+    "my_calza_right": [
+        "Precies {actual}. Respect wordt verdiend, en ik verdien het.",
+    ],
+    "my_calza_wrong": [
+        "{actual}, geen {bid}. Een kleine investering die niet uitpakte.",
+    ],
+    "others_bluff_caught": [
+        "{bidder} loog over {bid}. In mijn familie hadden we daar een woord voor.",
+        "{challenger} pakt {bidder}. Netjes. Ik hou van orde aan tafel.",
+    ],
+    "others_dudo_wrong": [
+        "{challenger} beschuldigt {bidder} zonder bewijs. Slechte manieren.",
+        "Het bod van {bidder} klopte. {challenger}, eerst denken, dan praten.",
+    ],
+    "others_calza_right": [
+        "Calza raak van {challenger}. Iemand met talent. Misschien heb ik werk voor je.",
+    ],
+    "others_calza_wrong": [
+        "{challenger} gokt en verliest. Dat is waarom het huis altijd wint.",
+    ],
+    "dudo_on_me": [
+        "{who} roept Dudo op de Don. Moedig. Dom, maar moedig.",
+        "{who}, je durft wel. Je moeder had je beter moeten opvoeden.",
+        "Dudo? Op mij? {who}, we gaan het hier nog over hebben.",
+    ],
+    "palifico": [
+        "Palifico. Iedereen kalm. Geen wilde dingen aan mijn tafel.",
+        "Palifico. Eén steen, één kans. Zo gaat het in de familie.",
+    ],
+    "last_die": [
+        "Nog één steen. Ook de Don kent moeilijke tijden.",
+        "Eén steen. Een Don heeft er maar één nodig.",
+    ],
+    "eliminated_other": [
+        "{player} slaapt bij de vissen.",
+        "{player} is weg. Stuur bloemen.",
+        "Dag {player}. Het was niets persoonlijks.",
+    ],
+    "eliminated_me": [
+        "De Don valt. Maar de familie leeft voort.",
+        "Eruit. Iemand aan deze tafel heeft mij verraden.",
+    ],
+    "won": [
+        "De familie wint. De familie wint altijd.",
+        "Gewonnen. Kus de ring.",
+    ],
+    "lost_game": [
+        "{winner} wint. Geniet ervan. Zolang het duurt.",
+        "{winner} wint. We spreken elkaar nog, {winner}.",
+    ],
 }
 
 
@@ -701,6 +779,7 @@ class TheDonBot(SharedMemory, _TrihardCore):
 
     def observe(self, event) -> None:
         self._ensure_memory()
+        self.mouth.notice(event)      # a Dudo on my bid, my last die
         super().observe(event)
         if isinstance(event, GameEndedEvent) and self.GAME_DECAY < 1:
             for ll in self._honesty_ll.values():
