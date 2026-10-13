@@ -138,13 +138,23 @@ def pinned_requirements() -> str:
     return ",".join(f"{r}=={pins[r]}" if r in pins else r for r in items)
 
 
+_SOURCE_EXTS = (".py", ".pyx", ".pxd", ".pxi", ".c", ".h", ".cfg", ".toml", ".txt", ".in")
+
+
 def rezip(data: bytes, top: str) -> bytes:
-    """A .zip of the tarball's files with the top-level directory renamed to `top`."""
+    """A .zip of the tarball's files with the top-level directory renamed to `top`.
+
+    Some sdists ship sources with Windows line endings (Kivy 2.3.1's setup.py),
+    where the GitHub archive python-for-android expects has Unix ones, and its
+    patches would not apply: those files get Unix line endings."""
     out = io.BytesIO()
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tf, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
         for m in tf.getmembers():
             if m.isfile():
-                zf.writestr(top + "/" + m.name.split("/", 1)[1], tf.extractfile(m).read())
+                content = tf.extractfile(m).read()
+                if m.name.endswith(_SOURCE_EXTS) and b"\r\n" in content:
+                    content = content.replace(b"\r\n", b"\n")
+                zf.writestr(top + "/" + m.name.split("/", 1)[1], content)
     return out.getvalue()
 
 
