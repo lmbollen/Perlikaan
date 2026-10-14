@@ -346,6 +346,9 @@ class SelfCheck:
         self.app.sm.get_screen("home").on_pre_enter()
         yield from self.look("home")
         from kivy.utils import platform
+        if platform == "ios":
+            from perudo_app import ui
+            self.log(f"  the safe area comes from: {ui.SAFE_AREA_SOURCE}")
         if platform == "ios" and Window.height > 2 * Window.width:
             # A phone with a notch or Dynamic Island: without the safe area
             # the layout check would measure against the whole screen.
@@ -399,6 +402,10 @@ class SelfCheck:
         game.set_auto(True)
         yield Until(lambda: len(game.session.snapshot().feed) >= 8, 60, "a few moves")
         yield from self.look("watch")
+        app.set_setting("step_delay", 0.0)
+        game.set_auto(True)                     # to the end: the standings sheet
+        yield Until(lambda: game._sheet is not None, 180, "the end of the game")
+        yield from self.look("game-over")
         game.leave()
 
     def scenario_together(self):

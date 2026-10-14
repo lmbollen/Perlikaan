@@ -1905,9 +1905,11 @@ class GameScreen(Screen):
                                  color=T.GOLD if i == 0 else T.FAINT))
             row.add_widget(Avatar(name=name, bg=T.seat_color(self._seat.get(name, i)), size=(dp(28), dp(28)),
                                   pos_hint={"center_y": 0.5}))
-            row.add_widget(Label(text=name + ("  (you)" if name == human else ""), font_size=sp(15),
-                                 color=T.TEXT if i == 0 else T.MUTED, bold=i == 0, halign="left",
-                                 valign="middle", text_size=(dp(220), None)))
+            label = Label(text=name + ("  (you)" if name == human else ""), font_size=sp(15),
+                          color=T.TEXT if i == 0 else T.MUTED, bold=i == 0, halign="left",
+                          valign="middle", shorten=True)
+            label.bind(size=lambda w, size: setattr(w, "text_size", size))   # as wide as the sheet allows
+            row.add_widget(label)
             card.add_widget(row)
         buttons = BoxLayout(size_hint_y=None, height=dp(50), spacing=dp(10), padding=(0, dp(8), 0, 0))
         home = Btn(text="Lobby" if self.multiplayer else "Home", kind="outline")
@@ -2505,19 +2507,38 @@ def system_bars():
         return None
 
 
+SAFE_AREA_SOURCE = "none"           # where the iPhone's safe area came from (the self-check reports it)
+
+
 def ios_safe_area():
     """An iPhone's safe area as system_bars() gives it: the app is drawn
-    under the notch (or Dynamic Island) and the home bar. Asked of UIKit;
-    when that fails, the usual margins of a phone with a notch."""
+    under the notch (or Dynamic Island) and the home bar. Asked of UIKit
+    (the window's safeAreaInsets, else its safe area's frame against its
+    bounds); when that fails, the margins of a phone with a Dynamic Island."""
+    global SAFE_AREA_SOURCE
+    sides, errors = None, []
     try:
         from pyobjus import autoclass    # type: ignore
-        window = autoclass("UIApplication").sharedApplication().keyWindow
-        insets = window.safeAreaInsets
-        sides = (insets.left, insets.top, insets.right, insets.bottom)
-    except Exception:
+        application = autoclass("UIApplication").sharedApplication()
+        window = application.keyWindow or application.windows.objectAtIndex_(0)
+        try:
+            insets = window.safeAreaInsets
+            sides = (insets.left, insets.top, insets.right, insets.bottom)
+            SAFE_AREA_SOURCE = "UIKit safeAreaInsets"
+        except Exception as exc:
+            errors.append(f"safeAreaInsets: {type(exc).__name__}: {exc}")
+            frame, bounds = window.safeAreaLayoutGuide.layoutFrame, window.bounds
+            left, top = frame.origin.x, frame.origin.y
+            sides = (left, top, bounds.size.width - left - frame.size.width,
+                     bounds.size.height - top - frame.size.height)
+            SAFE_AREA_SOURCE = "UIKit safe area frame"
+    except Exception as exc:
+        errors.append(f"{type(exc).__name__}: {exc}")
+    if sides is None:
         notch = Window.height > 2 * Window.width            # Face ID iPhones are taller than 2:1
-        sides = (0, 50, 0, 30) if notch else (0, 0, 0, 0)
-    return (Window.height,) + tuple(int(dp(v)) for v in sides)      # points to pixels
+        sides = (0, 59, 0, 34) if notch else (0, 0, 0, 0)   # an iPhone 14 Pro to 16's in portrait
+        SAFE_AREA_SOURCE = "fallback (" + "; ".join(errors)[:200] + ")"
+    return (Window.height,) + tuple(int(dp(float(v))) for v in sides)      # points to pixels
 
 
 def run():
