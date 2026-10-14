@@ -23,6 +23,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from perudo import hand_score
 from perudo.game import Forfeit, Interrupt, PerudoGame
 from perudo.models import (
     PACO,
@@ -392,6 +393,56 @@ class FeedItem:
     loser: Optional[str] = None        # result: who lost a die (None: an exact Calza)
 
 
+@dataclass(frozen=True)
+class HandResult:
+    """A hand once the cups are up: how good it was at the start of the
+    round (perudo.hand_score), and how the round went for it."""
+    round: int
+    name: str
+    score: int          # 0..100, 50 an average hand in its spot
+    keep: float         # the chance it had to keep every die
+    lost: bool          # it lost a die
+
+
+def revealed_hands(round_number: int, reveal: Optional[dict], starter: Optional[str]) -> List[HandResult]:
+    """Score the hands of a reveal, as they were dealt: the revealed dice,
+    the bidding order from the round's opener. Only from what everyone sees
+    once the cups are up, so nobody learns anything early."""
+    if not reveal or not starter:
+        return []
+    names = [name for name, _ in reveal["dice"]]
+    if starter not in names:
+        return []
+    dice = dict(reveal["dice"])
+    total = sum(len(d) for d in dice.values())
+    i = names.index(starter)
+    order = names[i:] + names[:i]
+    out = []
+    for name in names:
+        hs = hand_score.score(tuple(dice[name]), len(names), total, order.index(name), reveal["palifico"])
+        out.append(HandResult(round_number, name, hs.score, hs.keep, name == reveal.get("loser")))
+    return out
+
+
+@dataclass(frozen=True)
+class HandSummary:
+    """A player's hands over a game, against how the game went for them."""
+    name: str
+    rounds: int         # rounds played (and revealed)
+    average: int        # their average hand score
+    expected: float     # dice their hands would lose, by the chances the scores gave
+    lost: int           # dice they did lose
+
+
+def hand_summaries(hands: Sequence[HandResult]) -> Dict[str, HandSummary]:
+    per: Dict[str, List[HandResult]] = defaultdict(list)
+    for h in hands:
+        per[h.name].append(h)
+    return {name: HandSummary(name, len(hs), round(sum(h.score for h in hs) / len(hs)),
+                              sum(1 - h.keep for h in hs), sum(1 for h in hs if h.lost))
+            for name, hs in per.items()}
+
+
 @dataclass
 class Snapshot:
     round_number: int = 0
@@ -411,6 +462,7 @@ class Snapshot:
     bidder: Optional[str] = None                          # who made current_bid
     warmup: Optional[tuple] = None                        # (done, total) while warm-up games run
     awaiting_next_round: bool = False                     # a reveal is up; next_round() goes on
+    hands: List["HandResult"] = field(default_factory=list)  # every revealed hand, scored (see revealed_hands)
 
     def totals(self) -> Dict[int, int]:
         """Count per face over every alive player's dice (Pacos wild unless Palifico)."""
@@ -532,7 +584,7 @@ class GameSession:
         with self._lock:
             s = self._snap
             return replace(s, players=list(s.players), history=list(s.history), log=list(s.log),
-                           commentary=list(s.commentary), feed=list(s.feed))
+                           commentary=list(s.commentary), feed=list(s.feed), hands=list(s.hands))
 
     @property
     def running(self) -> bool:
@@ -615,6 +667,7 @@ class GameSession:
             s = self._snap
             if obs.round_number != s.round_number:
                 starter = obs.players[obs.my_id].name
+                self._starter = starter
                 self._feed(FeedItem("round", starter, f"Round {obs.round_number}" + (" \u00b7 Palifico" if obs.palifico else "")))
             s.round_number = obs.round_number
             s.palifico = obs.palifico
@@ -661,9 +714,12 @@ class GameSession:
                     "type": event.challenge_type, "challenger": event.challenger,
                     "bidder": event.bidder, "result": event.result,
                     "good": good, "loser": loser, "palifico": self._snap.palifico,
+                    "round": self._snap.round_number,     # it stays up into the next round
                 }
                 self._feed(FeedItem("result", event.challenger, text, bid=event.current_bid,
                                     other=str(event.actual_count), good=good, loser=loser))
+                self._snap.hands.extend(revealed_hands(self._snap.round_number, self._snap.reveal,
+                                                       getattr(self, "_starter", None)))
         elif isinstance(event, DieGainedEvent):
             self._log(f"{event.player} gains a die ({event.dice_count})")
             with self._lock:
@@ -884,7 +940,7 @@ DEFAULT_SETTINGS = {
     "tts_engine": "system",   # the phone's own voices, or "edge" (Microsoft's online voices)
     "tts_lang": "nl",
     "show_dice": True,
-    "hand_score": True,        # show how good a hand is at the start of a round
+    "hand_score": True,        # after each round and the game: how good the hands were
     "sim_games": 200,
     "step_delay": 1.0,
     "human_name": "You",

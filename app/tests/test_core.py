@@ -10,7 +10,7 @@ sys.path.insert(0, str(ROOT / "app"))
 
 from perudo.models import Bid, Calza, Dudo                     # noqa: E402
 from perudo_app.core import (                                   # noqa: E402
-    BotRegistry, GameSession, HumanSeat, Settings, Simulation, can, lowest_legal,
+    BotRegistry, GameSession, HumanSeat, Settings, Simulation, can, hand_summaries, lowest_legal,
 )
 
 
@@ -85,6 +85,40 @@ def test_session_steps_through_a_game_and_shows_all_dice():
     final = session.snapshot()
     assert final.error is None and len(final.standings) == 3
     assert any("wins" in line for line in final.log)
+
+
+def test_hands_are_scored_once_the_cups_are_up():
+    reg = BotRegistry()
+    reg.scan_bundled()
+    picks = [e for e in reg.entries if e.class_name in ("RandomBot", "MinRaiseBot", "ExampleBot")]
+    for e in picks:
+        e.copies = 1
+    session = GameSession(reg.make(picks), seed=21, step=True)
+    session.start()
+    first_reveal = None
+    turns = 0
+    while not session.snapshot().finished and turns < 5000:
+        snap = session.snapshot()
+        if snap.reveal is None and first_reveal is None:
+            assert snap.hands == []                       # nothing known before the first reveal
+        if snap.reveal is not None and first_reveal is None:
+            first_reveal = snap
+        session.next()
+        turns += 1
+        time.sleep(0.002)
+    assert wait(lambda: session.snapshot().finished)
+    final = session.snapshot()
+    assert first_reveal is not None
+    round_one = [h for h in first_reveal.hands if h.round == first_reveal.reveal["round"]]
+    assert sorted(h.name for h in round_one) == sorted(n for n, _ in first_reveal.reveal["dice"])
+    assert all(0 <= h.score <= 100 and 0 < h.keep < 1 for h in final.hands)
+    # every lost die shows as a lost hand, one per round at most
+    losers = [f.loser for f in final.feed if f.kind == "result" and f.loser]
+    assert sum(h.lost for h in final.hands) == len(losers)
+    summaries = hand_summaries(final.hands)
+    assert set(summaries) == {b.name for b in session.bots}
+    for name, hs in summaries.items():
+        assert hs.lost == losers.count(name) and hs.rounds >= hs.lost and 0 <= hs.average <= 100
 
 
 def test_feed_tells_the_story_and_a_reveal_stays_until_the_next_bid():

@@ -38,6 +38,7 @@ from perudo.models import PACO, Calza, Dudo, Observation
 from perudo_app import net, relay as online
 from perudo_app.core import (
     ROUTER, BotRegistry, FeedItem, GameSession, HumanSeat, PlayerView, SessionStopped, Snapshot, legal_bids,
+    revealed_hands,
 )
 
 NAME_MAX = 20
@@ -563,6 +564,7 @@ class RemoteSession:
         self._lock = threading.Lock()
         self._snap = Snapshot()
         self._feed: List[FeedItem] = []
+        self._hands: list = []                 # scored hands of every reveal seen (core.revealed_hands)
         self._pending = None
         self._req = None
         self.ended = False
@@ -612,12 +614,19 @@ class RemoteSession:
         with self._lock:
             self._feed.extend(new)
             del self._feed[:-400]
+            # A new reveal: score its hands here, from what it shows (the
+            # host sends nothing more).
+            revealed = reveal.get("round") if reveal is not None else None
+            if revealed is not None and not any(h.round == revealed for h in self._hands):
+                starter = next((f.player for f in reversed(self._feed)
+                                if f.kind == "round" and f.text.split(" ")[1] == str(revealed)), None)
+                self._hands.extend(revealed_hands(revealed, reveal, starter))
             self._snap = Snapshot(
                 round_number=msg.get("round", 0), palifico=msg.get("palifico", False), players=players,
                 current_bid=net.decode(msg.get("bid")), to_act=msg.get("to_act"), reveal=reveal,
                 finished=msg.get("finished", False), standings=tuple(msg.get("standings", ())),
                 error=msg.get("error"), bidder=msg.get("bidder"),
-                awaiting_next_round=msg.get("awaiting", False))
+                awaiting_next_round=msg.get("awaiting", False), hands=list(self._hands))
             if self._snap.finished:
                 self.ended = True
                 self._pending = self._req = None

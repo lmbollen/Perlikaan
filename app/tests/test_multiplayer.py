@@ -163,6 +163,10 @@ def test_a_game_with_guests_and_their_bots(host):
         moved = {f.player for f in final.feed if f.kind in ("bid", "dudo", "calza")}
         assert {"MinRaise Bot (Ben)", "Example Bot (Carla)"} <= moved    # the guests' bots really played
         assert type(ben._bots[next(iter(ben._bots))]).__name__ == "MinRaiseBot"   # ... on the guest's side
+        # a guest scores the reveals it saw itself, the same as the host did
+        host_hands = {(h.round, h.name): (h.score, h.lost) for h in final.hands}
+        guest_hands = ben.session.snapshot().hands
+        assert guest_hands and all(host_hands[(h.round, h.name)] == (h.score, h.lost) for h in guest_hands)
         guest_feed = ben.session.snapshot().feed
         assert "win" in [f.kind for f in guest_feed][-4:]      # a bot may still react after the win
         host.end_game()

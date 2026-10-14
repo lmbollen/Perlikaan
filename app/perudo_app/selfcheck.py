@@ -370,13 +370,21 @@ class SelfCheck:
         app.start_game(human=True)
         game = app.sm.get_screen("game")
 
+        hold = {"reveal": False}
+
         def next_round():                        # the bots may decide a round before your first turn
-            if game.session is not None and game.session.snapshot().awaiting_next_round:
+            if (game.session is not None and game.session.snapshot().awaiting_next_round
+                    and not hold["reveal"]):
                 game.session.next_round()
+
+        def scored_rows():
+            return [row.name for row in game._rows.values() if "hand " in row.sub]
 
         self.every(0.2, next_round)
         yield Until(lambda: game.session.snapshot().pending is not None, 60, "the first turn")
         yield from self.look("table")
+        # During a round nobody's hand is scored: that would tell more than the dice do.
+        check(not game.hand_caption and not scored_rows(), "a hand score is shown during the round")
         game.open_settings()
         yield from self.look("settings-window")
         app.set_setting("chat", False)
@@ -384,7 +392,20 @@ class SelfCheck:
         check(not any(line.bubble for line in game.ids.feed.children), "talk is shown with the chat off")
         app.set_setting("chat", True)
         self.press("Done")
-        self.every(0.1, lambda: self.play_turn(game.session))
+        hold["reveal"] = True                    # stop at the next reveal: the hands are scored there
+
+        def play():
+            if not (hold["reveal"] and game.session.snapshot().awaiting_next_round):
+                self.play_turn(game.session)
+
+        self.every(0.1, play)
+        yield Until(lambda: game.session.snapshot().awaiting_next_round, 120, "a reveal")
+        yield 0.5
+        yield from self.look("reveal")
+        revealed = [n for n, _ in game.session.snapshot().reveal["dice"]]
+        check(sorted(scored_rows()) == sorted(revealed), f"scored at the reveal: {scored_rows()}, revealed {revealed}")
+        check("HAND" in game.hand_caption, f"our hand's score at the reveal: {game.hand_caption!r}")
+        hold["reveal"] = False
         yield Until(lambda: game.out or game.session.snapshot().finished, 240, "being out")
         if game.out:
             yield from self.look("out")
