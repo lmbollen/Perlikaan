@@ -619,6 +619,18 @@ def convolve(a, b):
     return out
 
 
+class _Lazy(dict):
+    """A dict that works out a missing value on first use."""
+
+    def __init__(self, make):
+        super().__init__()
+        self._make = make
+
+    def __missing__(self, key):
+        value = self[key] = self._make(key)
+        return value
+
+
 def tail(pmf, need):
     """P(X >= need) for a pmf over 0..len-1."""
     if need <= 0:
@@ -632,19 +644,33 @@ def at(pmf, k):
     return pmf[k] if 0 <= k < len(pmf) else 0.0
 
 
+_binom_tails: Dict[tuple, float] = {}         # binom_tail and _binom_tail_at, by their arguments
+
+
+def _binom_tail_at(n, p, k):
+    """P(Binomial(n, p) >= k) for a whole k. Remembered: p is only ever 1/6
+    or 1/3 and n a count of dice, so the same few sums come back hundreds of
+    thousands of times in a game (it was most of this bot's thinking time)."""
+    if k <= 0:
+        return 1.0
+    if k > n:
+        return 0.0
+    key = (n, p, k, "at")
+    value = _binom_tails.get(key)
+    if value is None:
+        value = _binom_tails[key] = sum(math.comb(n, i) * p**i * (1 - p) ** (n - i) for i in range(k, n + 1))
+    return value
+
+
 def binom_tail(n, p, need):
     """P(Binomial(n, p) >= need), linearly interpolated for fractional need."""
-    lo = math.floor(need)
-    frac = need - lo
-
-    def t(k):
-        if k <= 0:
-            return 1.0
-        if k > n:
-            return 0.0
-        return sum(math.comb(n, i) * p**i * (1 - p) ** (n - i) for i in range(k, n + 1))
-
-    return (1 - frac) * t(lo) + frac * t(lo + 1)
+    key = (n, p, need)
+    value = _binom_tails.get(key)
+    if value is None:
+        lo = math.floor(need)
+        frac = need - lo
+        value = _binom_tails[key] = (1 - frac) * _binom_tail_at(n, p, lo) + frac * _binom_tail_at(n, p, lo + 1)
+    return value
 
 
 def p_face(face, palifico):
@@ -1052,16 +1078,23 @@ class CarlosBot(SharedMemory):
             ctx["memo"][key] = []
             return []
         weights = self._weights(who)
-        mean_k = {f: sum(k * w for k, w in enumerate(ctx["post"][who][f])) for f in range(1, 7)}
+        memo = ctx["memo"]
+        mean_k = memo.get(("mean", who))
+        if mean_k is None:
+            mean_k = memo[("mean", who)] = {f: sum(k * w for k, w in enumerate(ctx["post"][who][f]))
+                                             for f in range(1, 7)}
         heur = self._heuristic_raise(bid, total, n, pal, ctx["pal_face"], mean_k, self._raise_p(who))
         if heur is not None and heur not in [b for b, _ in options]:
             options.append((heur, heur.quantity - (min_quantity(bid, heur.face, pal) or heur.quantity)))
         scored = []
         for b, jump in options:
-            p = p_face(b.face, pal)
-            post = ctx["post"][who][b.face]
             # How likely the raise looks to them, averaged over their hand.
-            view = sum(w * binom_tail(total - n, p, b.quantity - k) for k, w in enumerate(post) if w)
+            view = memo.get(("view", who, b.face, b.quantity))
+            if view is None:
+                p = p_face(b.face, pal)
+                post = ctx["post"][who][b.face]
+                view = memo[("view", who, b.face, b.quantity)] = sum(
+                    w * binom_tail(total - n, p, b.quantity - k) for k, w in enumerate(post) if w)
             scored.append((sum(w * x for w, x in zip(weights, self._raise_features(view, b, bid, jump, heur))), b))
         top = max(sc for sc, _ in scored)
         exps = [(math.exp(sc - top), b) for sc, b in scored]
@@ -1245,11 +1278,19 @@ class CarlosBot(SharedMemory):
                 post[p.name][face] = pmf
         return post
 
-    def _sums(self, post, face, exclude=None):
-        pmf = [1.0]
-        for name, faces in post.items():
+    def _sums(self, post, face, exclude=None, prefixes=None):
+        """The others' matches of face added up (but for exclude's).
+        prefixes holds the running sums over the first players, from the
+        sum over everyone: a sum without one player starts from the sum
+        up to them, the same steps in the same order."""
+        names = list(post)
+        start = names.index(exclude) if exclude in post and prefixes else 0
+        pmf = prefixes[start] if start else [1.0]
+        for name in names[start:]:
             if name != exclude:
-                pmf = convolve(pmf, faces[face])
+                pmf = convolve(pmf, post[name][face])
+                if prefixes is not None and exclude is None:
+                    prefixes.append(pmf)
         return pmf
 
     # ------------------------------------------------------------------
@@ -1280,9 +1321,11 @@ class CarlosBot(SharedMemory):
         if state.palifico and state.history:
             first = next((r.action for r in state.history if isinstance(r.action, Bid)), None)
             ctx["pal_face"] = first.face if first else None
-        ctx["all"] = {f: self._sums(ctx["post"], f) for f in range(1, 7)}
-        ctx["loo"] = {(n, f): self._sums(ctx["post"], f, exclude=n)
-                      for n in ctx["post"] for f in range(1, 7)}
+        prefixes = {f: [[1.0]] for f in range(1, 7)}
+        ctx["all"] = {f: self._sums(ctx["post"], f, prefixes=prefixes[f]) for f in range(1, 7)}
+        # Without one player: worked out when the chain first needs it.
+        ctx["loo"] = _Lazy(lambda key: self._sums(ctx["post"], key[1], exclude=key[0],
+                                                  prefixes=prefixes[key[1]]))
         ctx["mine"] = {f: count_matches(state.my_dice, f, state.palifico) for f in range(1, 7)}
         if self.W_SHARE:
             mine = state.my_dice_count
