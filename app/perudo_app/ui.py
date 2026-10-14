@@ -29,6 +29,7 @@ from kivy.uix.modalview import ModalView
 from kivy.uix.screenmanager import Screen, ScreenManager, SlideTransition
 from kivy.uix.widget import Widget
 
+from perudo import hand_score
 from perudo.models import Bid, Calza, Dudo
 from perudo_app import theme as T
 from perudo_app.core import (
@@ -985,6 +986,15 @@ KV = """
                             on_active: app.set_setting("show_dice", self.active)
                     Divider:
                     SettingRow:
+                        title: "Hand score"
+                        sub: "How good a hand is at the start of a round (50 is average)"
+                        Toggle:
+                            id: hand_score_toggle
+                            active: app.settings["hand_score"]
+                            pos_hint: {"center_y": 0.5}
+                            on_active: app.set_setting("hand_score", self.active)
+                    Divider:
+                    SettingRow:
                         title: "Auto-play speed"
                         sub: root.speed_text
                     Segmented:
@@ -1294,6 +1304,28 @@ class FeedLine(Label):
     bubble = BooleanProperty(False)
 
 
+def _hand_scores(snap):
+    """perudo.hand_score for every hand on the table with its dice known
+    here, from the round's start: who opened it (the feed's round line),
+    the dice counts and the bidding order from the opener."""
+    starter = next((item.player for item in reversed(snap.feed) if item.kind == "round"), None)
+    alive = [p for p in snap.players if p.alive]
+    names = [p.name for p in alive]
+    if starter not in names:
+        return {}
+    i = names.index(starter)
+    order = names[i:] + names[:i]
+    total = sum(p.dice_count for p in alive)
+    return {p.name: hand_score.score(p.dice, len(alive), total, order.index(p.name), snap.palifico)
+            for p in alive if p.dice and len(p.dice) == p.dice_count}
+
+
+def _score_text(hs):
+    """\"hand 72\", coloured: gold for a strong hand, red for a weak one."""
+    color = T.HEX["gold"] if hs.score >= 60 else T.HEX["red"] if hs.score < 40 else T.HEX["muted"]
+    return T.color(f"hand {hs.score}", color)
+
+
 def _counts(face, wild):
     """Does a die count towards a bid on `face`?"""
     return lambda d: d == face or (wild and face != 1 and d == 1)
@@ -1385,6 +1417,7 @@ class GameScreen(Screen):
         self._seat = {b.name: i for i, b in enumerate(session.bots)}
         self._human = session.human.name if session.human is not None else None
         self._rows = {}
+        self._scored = (None, {})     # (round key, hand scores) for _sync_players
         self.ids.players.clear_widgets()
         self._feed_pool.extend(self.ids.feed.children)
         self.ids.feed.clear_widgets()
@@ -1515,9 +1548,18 @@ class GameScreen(Screen):
         else:
             counts = None
         table = []
+        # How good each hand we can see is, for this round (worked out once).
+        scores = {}
+        if App.get_running_app().settings["hand_score"] and not reveal and not snap.finished:
+            key = (snap.round_number, snap.palifico, tuple((p.name, p.dice) for p in snap.players))
+            if self._scored[0] != key:
+                self._scored = (key, _hand_scores(snap))
+            visible = {p.name for p in snap.players if show_all or p.is_human}
+            scores = {n: hs for n, hs in self._scored[1].items() if n in visible}
         for p in snap.players:
             row = self._rows[p.name]
             row.alive = p.alive
+            hand = f"  ·  {_score_text(scores[p.name])}" if p.name in scores else ""
             row.active = p.name == snap.to_act and not snap.finished
             if reveal and p.name in revealed:
                 dice = tuple(revealed[p.name])
@@ -1534,15 +1576,15 @@ class GameScreen(Screen):
             if not p.alive:
                 row.sub = "out of the game"
             elif row.active and p.is_human:
-                row.sub = T.color("your turn", T.HEX["gold"])
+                row.sub = T.color("your turn", T.HEX["gold"]) + hand
             elif row.active and reveal is None:
                 row.sub = T.color("thinking…" if (self.auto or self.human_playing) else "to play",
-                                  T.HEX["gold"])
+                                  T.HEX["gold"]) + hand
             elif reveal and p.name == reveal.get("loser"):
                 row.sub = T.color("lost a die", T.HEX["red"])
             else:
                 row.sub = (f"{p.dice_count} {'die' if p.dice_count == 1 else 'dice'}"
-                           + ("  ·  you" if p.is_human else "  ·  player" if p.person else ""))
+                           + ("  ·  you" if p.is_human else "  ·  player" if p.person else "") + hand)
         # totals per face, for watchers with the dice shown (and during a reveal)
         self.totals_visible = bool(show_all or (reveal and not self.human_playing and self.show_dice))
         if self.totals_visible:
@@ -1700,7 +1742,7 @@ class GameScreen(Screen):
     def open_settings(self):
         app = App.get_running_app()
         guest = self.multiplayer and not self.can_continue      # a guest's game runs at the host's pace
-        sheet = ModalView(size_hint=(0.9, None), height=dp(310 if guest else 420), background="",
+        sheet = ModalView(size_hint=(0.9, None), height=dp(380 if guest else 490), background="",
                           background_color=T.CLEAR, overlay_color=T.BG[:3] + [0.75])
         card = Surface(orientation="vertical", padding=(dp(20), dp(14), dp(20), dp(18)), spacing=dp(4),
                        radius=dp(24))
@@ -1718,6 +1760,8 @@ class GameScreen(Screen):
             card.add_widget(row)
 
         toggle_row("Show the table talk", "What the bots say, in the feed", "chat")
+        card.add_widget(Factory.Divider())
+        toggle_row("Hand score", "How good a hand is (50 is average), next to its dice", "hand_score")
         card.add_widget(Factory.Divider())
         toggle_row("Read the table talk aloud", "Every bot with its own voice", "tts")
         if not guest:

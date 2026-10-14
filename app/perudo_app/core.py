@@ -884,6 +884,7 @@ DEFAULT_SETTINGS = {
     "tts_engine": "system",   # the phone's own voices, or "edge" (Microsoft's online voices)
     "tts_lang": "nl",
     "show_dice": True,
+    "hand_score": True,        # show how good a hand is at the start of a round
     "sim_games": 200,
     "step_delay": 1.0,
     "human_name": "You",
