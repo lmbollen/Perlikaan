@@ -44,7 +44,9 @@ cd "$WORK"
 # Python, Kivy and pyobjus (for the iPhone's voices and safe area) for the
 # phone (arm64), and for the simulator on an Apple Silicon Mac when asked,
 # plus certifi for the TLS certificates (Ably). Both platforms in one go:
-# kivy-ios packs what it built into one framework per library.
+# kivy-ios packs what it built into one framework per library. Its record
+# of what is built does not say for which platforms: a build folder from a
+# phone-only build skips the simulator (so CI caches the two apart).
 PLATFORMS=(--platform iphoneos-arm64)
 if [ "${IOS_SIMULATOR:-}" = 1 ]; then
   PLATFORMS+=(--platform iphonesimulator-arm64)
@@ -73,6 +75,7 @@ pb "Delete :UISupportedInterfaceOrientations"
 pb "Add :UISupportedInterfaceOrientations array"
 pb "Add :UISupportedInterfaceOrientations:0 string UIInterfaceOrientationPortrait"
 pb "Delete :UISupportedInterfaceOrientations~ipad" 2>/dev/null || true
+pb "Add :UIRequiresFullScreen bool true"      # portrait only is fine for a full-screen app
 # Playing together on the same Wi-Fi: iOS asks before an app talks to the
 # local network, with this reason.
 pb "Add :NSLocalNetworkUsageDescription string Perudo finds and joins lobbies on your Wi-Fi to play together."
@@ -81,13 +84,27 @@ pb "Add :NSLocalNetworkUsageDescription string Perudo finds and joins lobbies on
 pb "Add :UIFileSharingEnabled bool true"
 pb "Add :LSSupportsOpeningDocumentsInPlace bool true"
 
+# Xcode's output goes to a log; when a build fails its end is shown (the
+# summary alone does not say what went wrong).
+xcode() {
+  local log="$1"; shift
+  if ! xcodebuild "$@" > "$log" 2>&1; then
+    grep -E "error:|fatal|Undefined symbol|ld: " "$log" | head -40
+    echo "---- the end of $log"
+    tail -60 "$log"
+    return 1
+  fi
+  grep -E "warning: .*(deprecated|ld:)" "$log" | head -5 || true
+  echo "$(basename "$log" .log): build succeeded"
+}
+
 # An unsigned build for a phone; Sideloadly or AltStore sign it on install.
 rm -rf build-ios Payload Perudo.ipa
-xcodebuild -project perudo-ios/perudo.xcodeproj -scheme perudo -configuration Release \
+xcode xcode-phone.log -project perudo-ios/perudo.xcodeproj -scheme perudo -configuration Release \
   -destination generic/platform=iOS -derivedDataPath build-ios \
   PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-  build | { command -v xcpretty >/dev/null && xcpretty || cat; }
+  build
 APP_BUNDLE="$(find build-ios/Build/Products -maxdepth 2 -name 'perudo.app' -type d | head -1)"
 [ -n "$APP_BUNDLE" ] || { echo "no perudo.app was built" >&2; exit 1; }
 mkdir Payload
@@ -97,10 +114,10 @@ echo "Built $WORK/Perudo.ipa ($(du -h Perudo.ipa | cut -f1))"
 
 if [ "${IOS_SIMULATOR:-}" = 1 ]; then
   rm -rf build-sim Perudo-simulator.app
-  xcodebuild -project perudo-ios/perudo.xcodeproj -scheme perudo -configuration Release \
+  xcode xcode-simulator.log -project perudo-ios/perudo.xcodeproj -scheme perudo -configuration Release \
     -destination "generic/platform=iOS Simulator" -derivedDataPath build-sim ARCHS=arm64 \
     PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" CODE_SIGNING_ALLOWED=NO \
-    build | { command -v xcpretty >/dev/null && xcpretty || cat; }
+    build
   SIM_BUNDLE="$(find build-sim/Build/Products -maxdepth 2 -name 'perudo.app' -type d | head -1)"
   [ -n "$SIM_BUNDLE" ] || { echo "no perudo.app was built for the simulator" >&2; exit 1; }
   cp -R "$SIM_BUNDLE" Perudo-simulator.app
