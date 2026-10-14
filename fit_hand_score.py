@@ -15,6 +15,7 @@ not see (log loss, AUC, calibration). Prints the weights for hand_score.py.
 from __future__ import annotations
 
 import argparse
+import json
 import random
 from multiprocessing import Pool
 
@@ -43,7 +44,7 @@ class _Recorder:
                 order.append(game.players[i])
             i = (i + 1) % len(game.players)
         total = sum(p.dice_count for p in order)
-        self.open = {p.name: features(tuple(p.dice), len(order), total, turn, palifico)
+        self.open = {p.name: (tuple(p.dice), len(order), total, turn, palifico)
                      for turn, p in enumerate(order)}
         self.lost = set()
 
@@ -52,8 +53,8 @@ class _Recorder:
             self.lost.add(event.player)
 
     def end(self):
-        for name, x in self.open.items():
-            self.rows.append(([x[f] for f in FEATURES], name in self.lost))
+        for name, hand in self.open.items():
+            self.rows.append((hand, name in self.lost))
         self.open = {}
 
 
@@ -141,20 +142,35 @@ def main():
     ap.add_argument("--games", type=int, default=6, help="games per table")
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--save", help="also write the recorded hands to this file (JSON)")
+    ap.add_argument("--load", help="fit on hands recorded earlier with --save, without playing")
     args = ap.parse_args()
-    seed = fresh_seed(args.seed)
 
-    with Pool(args.workers) as pool:
-        results = pool.map(run_table, [(seed, t, args.games) for t in range(args.tables)], chunksize=1)
-    games = [g for _, gs in sorted(results) for g in gs]
+    if args.load:
+        with open(args.load) as f:
+            saved = json.load(f)
+        seed, games = saved["seed"], saved["games"]
+        print(f"hands from {args.load} (seed {seed})")
+    else:
+        seed = fresh_seed(args.seed)
+        with Pool(args.workers) as pool:
+            results = pool.map(run_table, [(seed, t, args.games) for t in range(args.tables)], chunksize=1)
+        games = [g for _, gs in sorted(results) for g in gs]
+        if args.save:
+            with open(args.save, "w") as f:
+                json.dump({"seed": seed, "games": games}, f)
     rng = random.Random(seed)
     rng.shuffle(games)
     cut = len(games) // 5                          # a fifth of the games to judge on
-    test = [r for g in games[:cut] for r in g]
-    train = [r for g in games[cut:] for r in g]
-    Xtr = np.array([r[0] for r in train]); ytr = np.array([r[1] for r in train], float)
-    Xte = np.array([r[0] for r in test]); yte = np.array([r[1] for r in test], float)
-    print(f"{len(games)} games: {len(train)} hands to fit on, {len(test)} to judge on; "
+
+    def rows(gs):
+        X = np.array([[x[f] for f in FEATURES] for g in gs for (hand, _lost) in g
+                      for x in [features(tuple(hand[0]), *hand[1:])]])
+        y = np.array([lost for g in gs for (_hand, lost) in g], float)
+        return X, y
+    Xte, yte = rows(games[:cut])
+    Xtr, ytr = rows(games[cut:])
+    print(f"{len(games)} games: {len(ytr)} hands to fit on, {len(yte)} to judge on; "
           f"{ytr.mean():.1%} of hands lose a die")
 
     cols = [FEATURES.index(f) for f in TABLE_ONLY]
