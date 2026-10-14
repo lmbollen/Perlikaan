@@ -631,8 +631,17 @@ KV = """
             BoxLayout:
                 size_hint_y: None
                 height: dp(18)
-                Caption:
-                    text: "Out of the game" if root.out else "Your move"
+                Label:
+                    # like a Caption, but with our hand's score in colour
+                    markup: True
+                    text: "OUT OF THE GAME" if root.out else (root.hand_caption or "YOUR MOVE")
+                    font_size: sp(12)
+                    bold: True
+                    color: T.MUTED
+                    halign: "left"
+                    valign: "middle"
+                    text_size: self.size
+                    shorten: True
                 Label:
                     markup: True
                     text: root.turn_hint
@@ -1320,10 +1329,11 @@ def _hand_scores(snap):
             for p in alive if p.dice and len(p.dice) == p.dice_count}
 
 
-def _score_text(hs):
-    """\"hand 72\", coloured: gold for a strong hand, red for a weak one."""
+def _score_text(hs, full=False):
+    """\"hand 72\" (with full: \"Hand 72 · 82% safe\", the chance to keep every
+    die this round), coloured: gold for a strong hand, red for a weak one."""
     color = T.HEX["gold"] if hs.score >= 60 else T.HEX["red"] if hs.score < 40 else T.HEX["muted"]
-    return T.color(f"hand {hs.score}", color)
+    return T.color(f"HAND {hs.score}  ·  {hs.keep:.0%} SAFE" if full else f"hand {hs.score}", color)
 
 
 def _counts(face, wild):
@@ -1364,6 +1374,7 @@ class GameScreen(Screen):
     qty_text = StringProperty("")
     bid_button = StringProperty("Bid")
     turn_hint = StringProperty("")
+    hand_caption = StringProperty("")    # the bidding panel's caption: our hand's score this round
     # out of the game: the panel says so and offers the way out
     out = BooleanProperty(False)
     out_text = StringProperty("")
@@ -1556,11 +1567,15 @@ class GameScreen(Screen):
                 self._scored = (key, _hand_scores(snap))
             visible = {p.name for p in snap.players if show_all or p.is_human}
             scores = {n: hs for n, hs in self._scored[1].items() if n in visible}
+        mine = next((scores[p.name] for p in snap.players if p.is_human and p.name in scores), None)
+        self.hand_caption = _score_text(mine, full=True) if mine is not None else ""
         for p in snap.players:
             row = self._rows[p.name]
             row.alive = p.alive
-            hand = f"  ·  {_score_text(scores[p.name])}" if p.name in scores else ""
             row.active = p.name == snap.to_act and not snap.finished
+            # Ours is in the bidding panel; a row that is thinking has no room.
+            hand = (f"  ·  {_score_text(scores[p.name])}"
+                    if p.name in scores and not p.is_human and not row.active else "")
             if reveal and p.name in revealed:
                 dice = tuple(revealed[p.name])
                 table.extend(dice)

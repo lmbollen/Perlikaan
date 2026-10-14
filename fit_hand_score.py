@@ -24,10 +24,9 @@ import numpy as np
 from benchmark_adaptive import fresh_seed
 from perudo.bot_loader import discover_bot_classes_by_name
 from perudo.game import PerudoGame
-from perudo.hand_score import FEATURES, features
+from perudo.hand_score import FEATURES, TABLE, features
 from perudo.models import DieLostEvent, RevealEvent
 
-TABLE_ONLY = ("bias", "players", "share", "opens", "turn", "palifico", "one_die")
 MAX_ROUNDS = 400
 
 
@@ -173,7 +172,7 @@ def main():
     print(f"{len(games)} games: {len(ytr)} hands to fit on, {len(yte)} to judge on; "
           f"{ytr.mean():.1%} of hands lose a die")
 
-    cols = [FEATURES.index(f) for f in TABLE_ONLY]
+    cols = [FEATURES.index(f) for f in TABLE]
     w_hand = fit(Xtr, ytr)
     w_base = np.zeros(len(FEATURES))
     w_base[cols] = fit(Xtr[:, cols], ytr)
@@ -192,22 +191,20 @@ def main():
         m = (p >= lo) & (p <= hi)
         print(f"     {1 - p[m].mean():6.1%}        {1 - yte[m].mean():6.1%}     {m.sum():6}")
 
-    # How much the hand moves the chance, against the average hand in its spot.
+    # How the scores come out on the held-out games, and what they predict.
     from perudo import hand_score
-    hand_score.WEIGHTS.update({f: float(v) for f, v in zip(FEATURES, w_hand)})
-    hand_score.BASE_WEIGHTS.update({f: float(v) for f, v in zip(FEATURES, w_base)})
-    scores = []
-    for x in Xte:
-        x = dict(zip(FEATURES, x))
-        keep = 1 - hand_score._p_lose(hand_score.WEIGHTS, x)
-        avg = 1 - hand_score._p_lose(hand_score.BASE_WEIGHTS, x)
-        scores.append(int(round(max(0, min(100, 50 + 25 * (hand_score._logit(keep) - hand_score._logit(avg)))))))
-    scores = np.array(scores)
-    print("\n  score     hands   actual keep")
+    edge = (Xte @ w_base) - (Xte @ w_hand)        # log-odds of keeping: hand minus average
+    hand_score.EDGE_SD = float(edge.std())
+    scores = np.array([100 * hand_score.rank(e) for e in edge])
+    print(f"\n  EDGE_SD = {edge.std():.4f}")
+    print("  score     hands   average hand there   predicted keep   actual keep")
+    keep = 1 - 1 / (1 + np.exp(-Xte @ w_hand))
+    avg = 1 - 1 / (1 + np.exp(-Xte @ w_base))
     for lo, hi in ((0, 20), (20, 40), (40, 60), (60, 80), (80, 101)):
         m = (scores >= lo) & (scores < hi)
         if m.any():
-            print(f"  {lo:3}-{min(hi, 100):<3}  {m.sum():7}   {1 - yte[m].mean():6.1%}")
+            print(f"  {lo:3}-{min(hi, 100):<3}  {m.sum():7}        {avg[m].mean():6.1%}             "
+                  f"{keep[m].mean():6.1%}         {1 - yte[m].mean():6.1%}")
 
     def fmt(w):
         return "{\n" + "".join(f'    "{f}": {v:+.4f},\n' for f, v in zip(FEATURES, w)) + "}"
