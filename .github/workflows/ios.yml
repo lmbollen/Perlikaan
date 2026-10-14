@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   ipa:
-    name: Build the iPhone app (unsigned .ipa)
+    name: Build the iPhone app and check it in the simulator
     runs-on: macos-15
     timeout-minutes: 150
     steps:
@@ -31,23 +31,26 @@ jobs:
           brew link libtool || true
           pip install "kivy-ios==2025.5.17" "Cython==0.29.36" wheel
 
-      # Compiling Python and Kivy for the iPhone takes most of an hour: keep
-      # kivy-ios's build and dist folders between runs.
+      # Compiling Python and Kivy for the iPhone takes a while: keep
+      # kivy-ios's build and dist folders between runs (an older cache is a
+      # good start too: kivy-ios builds only what is missing).
       - name: Cache the kivy-ios build
         uses: actions/cache@v4
         with:
           path: |
             app/ios/work/build
             app/ios/work/dist
-          key: kivy-ios-${{ runner.os }}-2025.5.17-${{ hashFiles('.github/workflows/ios.yml') }}
+          key: kivy-ios-${{ runner.os }}-2025.5.17-${{ hashFiles('app/ios/build.sh') }}
+          restore-keys: kivy-ios-${{ runner.os }}-2025.5.17-
 
-      - name: Build
+      - name: Build for the phone and the simulator
         working-directory: app/ios
-        # The Ably key for playing over the internet (a repository secret, or a
-        # repository variable);
-        # without it the app plays on the local network only.
+        # The Ably key for playing over the internet (a repository secret, or
+        # a repository variable); without it the app plays on the local
+        # network only.
         env:
           ABLY_KEY: ${{ secrets.ABLY_KEY || vars.ABLY_KEY }}
+          IOS_SIMULATOR: "1"
         run: ./build.sh
 
       - name: Upload the .ipa
@@ -56,3 +59,18 @@ jobs:
           name: perudo-ipa
           path: app/ios/work/Perudo.ipa
           if-no-files-found: error
+
+      # The app checks itself in an iPhone simulator: its screens and their
+      # layout (clear of the notch and the home bar), a game, leaving a game
+      # played together, the iPhone's voices and playing over the internet.
+      - name: Self-check in the iPhone simulator
+        working-directory: app/ios
+        run: ./simulator_check.sh
+
+      - name: Upload the simulator's screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iphone-simulator-check
+          path: app/ios/work/simulator-check
+          if-no-files-found: ignore

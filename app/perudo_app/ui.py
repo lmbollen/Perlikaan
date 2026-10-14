@@ -7,6 +7,7 @@ decisions. The widgets and colours are in perudo_app.widgets and .theme.
 
 from __future__ import annotations
 
+import os
 import random
 import sys
 from pathlib import Path
@@ -475,6 +476,7 @@ KV = """
                 width: dp(44)
                 on_release: root.open_settings()
         BoxLayout:
+            id: middle
             orientation: "vertical"
             padding: dp(14), dp(0), dp(14), dp(10)
             spacing: dp(10)
@@ -488,13 +490,16 @@ KV = """
                 border_width: dp(1.6)
                 BoxLayout:
                     orientation: "vertical"
-                    size_hint_x: 0.55
+                    # wide enough for the bid ("12 x" and its die); the right side shortens its text
+                    size_hint_x: None
+                    width: max(dp(150), bid_qty.width + bid_times.width + dp(46) + dp(20))
                     Caption:
                         text: root.bid_caption
                         color: root.caption_color
                     BoxLayout:
                         spacing: dp(10)
                         Label:
+                            id: bid_qty
                             text: root.bid_qty
                             font_size: sp(44)
                             bold: True
@@ -502,6 +507,7 @@ KV = """
                             size_hint_x: None
                             width: self.texture_size[0]
                         Label:
+                            id: bid_times
                             text: "\\u00d7" if root.bid_face else ""
                             font_size: sp(24)
                             color: T.FAINT
@@ -563,7 +569,9 @@ KV = """
                 radius: dp(18)
             ScrollView:
                 size_hint_y: None
-                height: min(players.minimum_height, root.height * (0.3 if root.human_playing else 0.4))
+                # at most what is left in the middle once the bid card and two
+                # lines of feed are in (on a short phone that is one player)
+                height: max(dp(56), min(players.minimum_height, root.height * (0.3 if root.human_playing else 0.4), middle.height - dp(112) - totals.height - dp(40) - dp(72)))
                 do_scroll_x: False
                 bar_width: dp(3)
                 GridLayout:
@@ -2145,6 +2153,8 @@ class PerudoApp(App):
     def on_start(self):
         for delay in (0, 0.4, 1.5):          # the insets are known once the view is attached
             Clock.schedule_once(self.fit_system_bars, delay)
+        from perudo_app import selfcheck
+        selfcheck.start(self)                # only with PERUDO_SELFCHECK set
 
     def on_resume(self):
         Clock.schedule_once(self.fit_system_bars, 0.3)
@@ -2466,6 +2476,10 @@ def system_bars():
     """(window height, left, top, right, bottom) of the system bars in
     pixels on Android (on an iPhone: of the notch and the home bar), or None
     elsewhere or when not known yet."""
+    fake = os.environ.get("PERUDO_SAFE_AREA")         # "left,top,right,bottom" in points: a phone's
+    if fake:                                         # notch and bars, on the desktop (layout checks)
+        sides = [float(v) for v in fake.split(",")]
+        return (Window.height,) + tuple(int(dp(v)) for v in sides)
     from kivy.utils import platform
     if platform == "ios":
         return ios_safe_area()
@@ -2507,4 +2521,8 @@ def ios_safe_area():
 
 
 def run():
-    PerudoApp().run()
+    app = PerudoApp()
+    app.selfcheck_exit = None
+    app.run()
+    if app.selfcheck_exit is not None:       # the self-check ran: say how it went
+        sys.exit(app.selfcheck_exit)

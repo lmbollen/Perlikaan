@@ -4,6 +4,8 @@
 # .github/workflows/ios.yml runs it on GitHub's macOS machines.
 #
 #   cd app/ios && ./build.sh            # -> app/ios/work/Perudo.ipa
+#   IOS_SIMULATOR=1 ./build.sh          # ... and work/Perudo-simulator.app
+#                                         (for simulator_check.sh)
 #
 # It needs Python 3 with kivy-ios (pip install kivy-ios "Cython==0.29.36"),
 # and from Homebrew: autoconf automake libtool pkg-config. kivy-ios compiles
@@ -40,9 +42,15 @@ fi
 
 cd "$WORK"
 # Python, Kivy and pyobjus (for the iPhone's voices and safe area) for the
-# phone only (arm64), plus certifi for the TLS certificates (Ably).
+# phone (arm64), and for the simulator on an Apple Silicon Mac when asked,
+# plus certifi for the TLS certificates (Ably). Both platforms in one go:
+# kivy-ios packs what it built into one framework per library.
+PLATFORMS=(--platform iphoneos-arm64)
+if [ "${IOS_SIMULATOR:-}" = 1 ]; then
+  PLATFORMS+=(--platform iphonesimulator-arm64)
+fi
 toolchain build hostpython3
-toolchain build python3 kivy pyobjus --platform iphoneos-arm64
+toolchain build python3 kivy pyobjus "${PLATFORMS[@]}"
 toolchain pip install certifi
 
 # The Xcode project. It points at $SRC and copies it in on every build.
@@ -86,3 +94,15 @@ mkdir Payload
 cp -R "$APP_BUNDLE" Payload/
 zip -qry Perudo.ipa Payload
 echo "Built $WORK/Perudo.ipa ($(du -h Perudo.ipa | cut -f1))"
+
+if [ "${IOS_SIMULATOR:-}" = 1 ]; then
+  rm -rf build-sim Perudo-simulator.app
+  xcodebuild -project perudo-ios/perudo.xcodeproj -scheme perudo -configuration Release \
+    -destination "generic/platform=iOS Simulator" -derivedDataPath build-sim ARCHS=arm64 \
+    PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" CODE_SIGNING_ALLOWED=NO \
+    build | { command -v xcpretty >/dev/null && xcpretty || cat; }
+  SIM_BUNDLE="$(find build-sim/Build/Products -maxdepth 2 -name 'perudo.app' -type d | head -1)"
+  [ -n "$SIM_BUNDLE" ] || { echo "no perudo.app was built for the simulator" >&2; exit 1; }
+  cp -R "$SIM_BUNDLE" Perudo-simulator.app
+  echo "Built $WORK/Perudo-simulator.app"
+fi

@@ -1,0 +1,47 @@
+name: Tests
+
+on:
+  push:
+    paths:
+      - "app/**"
+      - "perudo/**"
+      - "contestants/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - ".github/workflows/tests.yml"
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: Engine, app and layout tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Engine and bots
+        run: uv run pytest tests -q
+
+      - name: The app's model, playing together and speech
+        working-directory: app
+        run: uv run pytest tests -q
+
+      # The app runs its self-check (perudo_app/selfcheck.py) at the screen
+      # sizes of several iPhones and Android phones, with their notches and
+      # bars, in a virtual display: every screen must fit in the safe area.
+      - name: Layout on phone screens
+        working-directory: app
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1 libgl1-mesa-dri libegl1 >/dev/null
+          xvfb-run -a -s "-screen 0 1000x2000x24" uv run python tools/layout_check.py --out layout-check
+
+      - name: Upload the screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: layout-check
+          path: app/layout-check
+          if-no-files-found: ignore
