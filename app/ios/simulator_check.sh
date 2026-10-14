@@ -12,7 +12,6 @@ cd "$(dirname "$0")"
 WORK="${IOS_WORK:-$PWD/work}"
 OUT="${1:-$WORK/simulator-check}"
 APP_BUNDLE="$WORK/simulator/perudo.app"
-BUNDLE_ID="${IOS_BUNDLE_ID:-org.perlikaan.perudo}"
 DEVICE_NAME="${IOS_DEVICE:-iPhone 16}"
 SCENARIOS="${PERUDO_SELFCHECK:-all}"
 TIMEOUT="${IOS_CHECK_TIMEOUT:-900}"
@@ -37,7 +36,8 @@ for runtime in reversed(ios):
 echo "Simulator: $(xcrun simctl list devices | grep "$UDID" | sed 's/^ *//')"
 step() { echo "== $*"; }
 fail() { echo "FAILED: $*" >&2; exit 1; }
-step "the app: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_BUNDLE/Info.plist")," \
+BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_BUNDLE/Info.plist")"
+step "the app: $BUNDLE_ID," \
      "runs $(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_BUNDLE/Info.plist")," \
      "$(du -sh "$APP_BUNDLE" | cut -f1)"
 step "booting"

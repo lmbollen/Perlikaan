@@ -35,8 +35,11 @@ jobs:
       # kivy-ios's build and dist folders between runs. Only for the same
       # platforms: kivy-ios's record of what it built does not say for
       # which, so a phone-only cache would leave the simulator unbuilt.
-      - name: Cache the kivy-ios build
-        uses: actions/cache@v4
+      # Restored here, saved right after the build (even when a later step
+      # fails), so a failing self-check does not cost the next run a rebuild.
+      - name: Restore the kivy-ios build
+        id: kivy-ios-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             app/ios/work/build
@@ -52,6 +55,15 @@ jobs:
           ABLY_KEY: ${{ secrets.ABLY_KEY || vars.ABLY_KEY }}
           IOS_SIMULATOR: "1"
         run: ./build.sh
+
+      - name: Save the kivy-ios build
+        if: always() && steps.kivy-ios-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            app/ios/work/build
+            app/ios/work/dist
+          key: kivy-ios-${{ runner.os }}-2025.5.17-phone-and-simulator
 
       - name: Upload the .ipa
         uses: actions/upload-artifact@v4

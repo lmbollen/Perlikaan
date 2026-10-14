@@ -68,6 +68,7 @@ toolchain icon perudo-ios icon1024.png
 PLIST="perudo-ios/perudo-Info.plist"
 pb() { /usr/libexec/PlistBuddy -c "$1" "$PLIST"; }
 pb "Set :CFBundleDisplayName Perudo" 2>/dev/null || pb "Add :CFBundleDisplayName string Perudo"
+pb "Set :CFBundleIdentifier $BUNDLE_ID"       # the template writes org.kivy.<name> here
 pb "Set :CFBundleShortVersionString $VERSION"
 pb "Set :CFBundleVersion $VERSION"
 # Portrait only, like the APK.
