@@ -23,6 +23,7 @@ Each turn the bot:
 Set TALK_TO_ME=true to hear it over the radio.
 """
 
+import functools
 import math
 
 from perudo.models import PACO, Bid, Dudo
@@ -123,6 +124,16 @@ QUOTES = {
     ],
 }
 
+@functools.lru_cache(maxsize=None)   # pure: remembered by its arguments
+def _tail_int(n, p, k):
+    """P(Binomial(n, p) >= k) for a whole k."""
+    if k <= 0:
+        return 1.0
+    if k > n:
+        return 0.0
+    return sum(math.comb(n, i) * p**i * (1 - p) ** (n - i) for i in range(k, n + 1))
+
+
 
 class SniperBot:
     name = "Sniper"
@@ -172,11 +183,7 @@ class SniperBot:
             return self._tail_cache[key]
 
         def tail_int(k):
-            if k <= 0:
-                return 1.0
-            if k > n:
-                return 0.0
-            return sum(math.comb(n, i) * p**i * (1 - p) ** (n - i) for i in range(k, n + 1))
+            return _tail_int(n, p, k)
 
         lo = math.floor(need)
         frac = need - lo

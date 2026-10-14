@@ -32,6 +32,7 @@ to disk. The moving averages make recent games count more than old ones.
 Set TALK_TO_ME=true to hear him sell it.
 """
 
+import functools
 import math
 import random
 
@@ -61,12 +62,14 @@ def _p_face(face, palifico):
     return 1 / 6 if (palifico or face == PACO) else 1 / 3
 
 
+@functools.lru_cache(maxsize=None)   # pure: remembered by its arguments
 def _binom_pmf(n, p, k):
     if k < 0 or k > n:
         return 0.0
     return math.comb(n, k) * p ** k * (1 - p) ** (n - k)
 
 
+@functools.lru_cache(maxsize=None)   # pure: remembered by its arguments
 def _binom_tail(n, p, k):
     """P(X >= k) for X ~ Binomial(n, p)."""
     if k <= 0:

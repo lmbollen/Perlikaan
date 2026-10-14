@@ -14,6 +14,7 @@ Palifico counting logic is never duplicated here.
 Set TALK_TO_ME=true to hear exactly average trash talk.
 """
 
+import functools
 import math
 
 from perudo.models import PACO, Bid, Dudo
@@ -186,6 +187,7 @@ class HundredIQBot:
         return HundredIQBot._probability_at_least(opponent_dice, still_needed, p_match)
 
     @staticmethod
+    @functools.lru_cache(maxsize=None)   # pure: remembered by its arguments
     def _probability_at_least(dice_count, needed, p):
         if needed <= 0:
             return 1.0

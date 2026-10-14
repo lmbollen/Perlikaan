@@ -15,6 +15,7 @@ Zet TALK_TO_ME=true in je environment om Oppa Style te horen praten, en
 TTS=true om het ook hardop te horen (Piper).
 """
 
+import functools
 import math
 import random
 from pathlib import Path
@@ -150,6 +151,16 @@ QUOTES = {
     ],
 }
 
+@functools.lru_cache(maxsize=None)   # pure: remembered by its arguments
+def _tail_int(n, p, k):
+    """P(Binomial(n, p) >= k) for a whole k."""
+    if k <= 0:
+        return 1.0
+    if k > n:
+        return 0.0
+    return sum(math.comb(n, i) * p**i * (1 - p) ** (n - i) for i in range(k, n + 1))
+
+
 
 class OppaStyleBot:
     name = BOT_NAME
@@ -214,11 +225,7 @@ class OppaStyleBot:
             return 0.0
 
         def tail_int(k):
-            if k <= 0:
-                return 1.0
-            if k > n:
-                return 0.0
-            return sum(math.comb(n, i) * p**i * (1 - p) ** (n - i) for i in range(k, n + 1))
+            return _tail_int(n, p, k)
 
         lo = math.floor(need)
         frac = need - lo

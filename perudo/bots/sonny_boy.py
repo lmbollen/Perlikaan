@@ -14,6 +14,7 @@ Zet de omgevingsvariabele TALK_TO_ME=true om Sonny Boy te laten praten, en
 TTS=true om hem dat ook echt hardop te laten zeggen (Piper).
 """
 
+import functools
 import random
 from math import comb
 
@@ -34,6 +35,7 @@ from perudo.talk import Mouth
 PACO = 1
 
 
+@functools.lru_cache(maxsize=None)   # pure: remembered by its arguments
 def _p_at_least(n: int, p: float, k: int) -> float:
     """P(X >= k) voor X ~ Binomial(n, p)."""
     if k <= 0:
@@ -43,6 +45,7 @@ def _p_at_least(n: int, p: float, k: int) -> float:
     return sum(comb(n, i) * p**i * (1 - p) ** (n - i) for i in range(k, n + 1))
 
 
+@functools.lru_cache(maxsize=None)   # pure: remembered by its arguments
 def _p_exact(n: int, p: float, k: int) -> float:
     if k < 0 or k > n:
         return 0.0

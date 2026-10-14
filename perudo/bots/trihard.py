@@ -24,6 +24,7 @@ Set TALK_TO_ME=true for commentary. It is a tryhard, so expect sweat.
 
 from __future__ import annotations
 
+import functools
 import math
 import random
 from collections import defaultdict
@@ -431,6 +432,7 @@ class Trihard(BaseBot):
             return base
         return [x / total for x in tilted]
 
+    @functools.lru_cache(maxsize=None)   # pure: remembered by its arguments (callers only read it)
     def _bid_likelihood(self, n: int, quantity: int, p_match: float, total_dice: int) -> List[float]:
         """For k = 0..n: floor + P(bid of `quantity` is true | bidder holds k), from the bidder's view."""
         unknown = max(total_dice - n, 0)
@@ -460,6 +462,7 @@ class Trihard(BaseBot):
         return pmf
 
     @staticmethod
+    @functools.lru_cache(maxsize=None)   # pure: remembered by its arguments (callers only read it)
     def _binomial_pmf(n: int, p: float) -> List[float]:
         pmf = [0.0] * (n + 1)
         q = 1.0 - p

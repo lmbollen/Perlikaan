@@ -13,6 +13,7 @@ inner life on the terminal.
 
 from __future__ import annotations
 
+import functools
 import random
 from collections import defaultdict
 from pathlib import Path
@@ -218,6 +219,7 @@ class Fabulous(BaseBot):
         # simulations), one for quips (does not affect gameplay).
         self._rng = random.Random(0xFAB)
         self.mouth = Mouth(self, QUOTES)
+        self._pmf_memo = None   # (state, hints, pmfs): see _unknown_pmf
 
         # Learned across games: how often each opponent actually held the
         # face they bid on.  name -> [hits, tries]
@@ -346,7 +348,19 @@ class Fabulous(BaseBot):
         return hints
 
     def _unknown_pmf(self, state, others, hints, face: int) -> List[float]:
-        """Probability mass function of how many unknown dice count for `face`."""
+        """Probability mass function of how many unknown dice count for `face`.
+        Remembered for the decision (the same state and hints): it is the
+        same for every bid on the face."""
+        memo = self._pmf_memo
+        if memo is None or memo[0] is not state or memo[1] is not hints:
+            memo = self._pmf_memo = (state, hints, {})
+        key = (face, tuple((p.name, p.dice_count) for p in others))
+        pmf = memo[2].get(key)
+        if pmf is None:
+            pmf = memo[2][key] = self._work_out_unknown_pmf(state, others, hints, face)
+        return pmf
+
+    def _work_out_unknown_pmf(self, state, others, hints, face: int) -> List[float]:
         palifico = state.palifico
         p_match = 1.0 / 6.0 if (palifico or face == PACO) else 1.0 / 3.0
 
@@ -370,6 +384,7 @@ class Fabulous(BaseBot):
         return pmf
 
     @staticmethod
+    @functools.lru_cache(maxsize=None)   # pure: remembered by its arguments (callers only read it)
     def _binomial_pmf(n: int, p: float) -> List[float]:
         pmf = [0.0] * (n + 1)
         q = 1.0 - p

@@ -126,7 +126,23 @@ def _most_held(n: int, pal: bool) -> List[float]:
     return out
 
 
+_CONVOLVED: Dict[tuple, List[float]] = {}   # _conv, by the two distributions it adds up
+_CONVOLVED_MAX = 4096                          # kept small for phones: forgotten when full
+
+
 def _conv(a: Sequence[float], b: Sequence[float]) -> List[float]:
+    """The distribution of the sum of two counts. Remembered by its inputs:
+    the same distributions are added up over and over within a move."""
+    key = (tuple(a), tuple(b))
+    out = _CONVOLVED.get(key)
+    if out is None:
+        if len(_CONVOLVED) >= _CONVOLVED_MAX:
+            _CONVOLVED.clear()
+        out = _CONVOLVED[key] = _conv_uncached(a, b)
+    return list(out)
+
+
+def _conv_uncached(a: Sequence[float], b: Sequence[float]) -> List[float]:
     out = [0.0] * (len(a) + len(b) - 1)
     for i, x in enumerate(a):
         if x:
