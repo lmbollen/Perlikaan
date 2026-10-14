@@ -177,6 +177,7 @@ class SelfCheck:
         """Wait for the screen to settle, take a screenshot and check its layout."""
         yield 0.7
         self.shot(name)
+        self.log(f"  {name}: safe area padding {[round(float(v)) for v in self.app.frame.padding]}")
         problems = layout_problems(self.app)
         for p in problems:
             self.log(f"  layout {name}: {p}")
@@ -344,6 +345,12 @@ class SelfCheck:
         self.go("home")
         self.app.sm.get_screen("home").on_pre_enter()
         yield from self.look("home")
+        from kivy.utils import platform
+        if platform == "ios" and Window.height > 2 * Window.width:
+            # A phone with a notch or Dynamic Island: without the safe area
+            # the layout check would measure against the whole screen.
+            left, top, right, bottom = (float(v) for v in self.app.frame.padding)
+            check(top > 0 and bottom > 0, f"no safe area on a phone with a notch: padding {self.app.frame.padding}")
 
     def scenario_settings(self):
         self.go("settings")
