@@ -124,8 +124,9 @@ python-for-android build between runs. The APK is attached to the run as the
 artifact **perudo-apk**: open the run on the Actions tab and download it
 from the Artifacts section at the bottom.
 
-For playing over the internet, add the repository secret **ABLY_KEY** (Settings ->
-Secrets and variables -> Actions) with an Ably API key; the workflow passes it
+For playing over the internet, add **ABLY_KEY** (Settings -> Secrets and
+variables -> Actions) with an Ably API key, as a repository secret or a
+repository variable; the workflow passes it
 to `./build.sh`, which bakes it into the APK. Without it the APK plays on the
 local network only. Locally, set `ABLY_KEY` in the environment before
 `./build.sh` (or before `uv run python main.py` on the desktop).

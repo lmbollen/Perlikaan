@@ -8,6 +8,11 @@ on:
       - ".github/workflows/ios.yml"
   workflow_dispatch:
 
+# A newer push replaces a build still running for the same branch.
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ipa:
     name: Build the iPhone app (unsigned .ipa)
@@ -38,10 +43,11 @@ jobs:
 
       - name: Build
         working-directory: app/ios
-        # The Ably key for playing over the internet (a repository secret);
+        # The Ably key for playing over the internet (a repository secret, or a
+        # repository variable);
         # without it the app plays on the local network only.
         env:
-          ABLY_KEY: ${{ secrets.ABLY_KEY }}
+          ABLY_KEY: ${{ secrets.ABLY_KEY || vars.ABLY_KEY }}
         run: ./build.sh
 
       - name: Upload the .ipa
