@@ -42,7 +42,7 @@ cd "$WORK"
 # Python, Kivy and pyobjus (for the iPhone's voices and safe area) for the
 # phone only (arm64), plus certifi for the TLS certificates (Ably).
 toolchain build hostpython3
-toolchain build python3 kivy pyobjus --arch=arm64
+toolchain build python3 kivy pyobjus --platform iphoneos-arm64
 toolchain pip install certifi
 
 # The Xcode project. It points at $SRC and copies it in on every build.
