@@ -535,6 +535,7 @@ class LobbyHost:
                "players": players, "bid": net.encode(snap.current_bid), "bidder": snap.bidder,
                "to_act": snap.to_act, "reveal": net.encode(snap.reveal), "finished": snap.finished,
                "standings": list(snap.standings), "error": snap.error, "awaiting": snap.awaiting_next_round,
+               "places": dict(snap.places),
                "feed": [encode_feed(item) for item in new]}
         return msg, (feed[-1] if feed else last_item)
 
@@ -626,7 +627,8 @@ class RemoteSession:
                 current_bid=net.decode(msg.get("bid")), to_act=msg.get("to_act"), reveal=reveal,
                 finished=msg.get("finished", False), standings=tuple(msg.get("standings", ())),
                 error=msg.get("error"), bidder=msg.get("bidder"),
-                awaiting_next_round=msg.get("awaiting", False), hands=list(self._hands))
+                awaiting_next_round=msg.get("awaiting", False), hands=list(self._hands),
+                places=dict(msg.get("places", {})))
             if self._snap.finished:
                 self.ended = True
                 self._pending = self._req = None

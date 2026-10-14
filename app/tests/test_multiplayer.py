@@ -160,6 +160,7 @@ def test_a_game_with_guests_and_their_bots(host):
         assert final.finished and final.error is None
         assert wait(lambda: ben.session.snapshot().finished and carla.session.snapshot().finished)
         assert ben.session.snapshot().standings == final.standings == carla.session.snapshot().standings
+        assert ben.session.snapshot().places == final.places                # who went out where, on every phone
         moved = {f.player for f in final.feed if f.kind in ("bid", "dudo", "calza")}
         assert {"MinRaise Bot (Ben)", "Example Bot (Carla)"} <= moved    # the guests' bots really played
         assert type(ben._bots[next(iter(ben._bots))]).__name__ == "MinRaiseBot"   # ... on the guest's side

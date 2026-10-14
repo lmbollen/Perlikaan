@@ -121,6 +121,26 @@ def test_hands_are_scored_once_the_cups_are_up():
         assert hs.lost == losers.count(name) and hs.rounds >= hs.lost and 0 <= hs.average <= 100
 
 
+def test_players_who_are_out_get_a_place_and_no_more_say():
+    reg = BotRegistry()
+    reg.scan_bundled()
+    picks = [e for e in reg.entries if e.class_name in ("RandomBot", "MinRaiseBot", "ExampleBot")]
+    for e in picks:
+        e.copies = 1
+    session = GameSession(reg.make(picks), seed=5, step=False, delay=0.0)
+    session.TALK_CHANCE = 1.0                         # every line gets through, but for the players out
+    session.start()
+    assert wait(lambda: session.snapshot().finished, 60)
+    final = session.snapshot()
+    winner, *rest = final.standings
+    assert final.places == {name: place for place, name in enumerate(final.standings, start=1) if name != winner}
+    out_talk = [f for f in final.feed if f.kind == "talk" and f.player in final.places
+                and final.feed.index(f) > max(i for i, g in enumerate(final.feed)
+                                              if g.kind == "out" and g.player == f.player)]
+    assert out_talk == []                             # nothing said after going out
+    assert all(session.inject_talk(name, "Ik ben er nog!") is False for name in rest)
+
+
 def test_feed_tells_the_story_and_a_reveal_stays_until_the_next_bid():
     reg = BotRegistry()
     reg.scan_bundled()

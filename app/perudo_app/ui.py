@@ -29,6 +29,7 @@ from kivy.uix.modalview import ModalView
 from kivy.uix.screenmanager import Screen, ScreenManager, SlideTransition
 from kivy.uix.widget import Widget
 
+from perudo import hand_score
 from perudo.models import Bid, Calza, Dudo
 from perudo_app import theme as T
 from perudo_app.core import (
@@ -1315,39 +1316,45 @@ class FeedLine(Label):
     bubble = BooleanProperty(False)
 
 
-def _score_text(score, value=None, bare=False):
-    """\"hand 72\" (with value: \"HAND 72 · +1.7 MATCHES\", the matches beyond
-    what the table assumed), coloured: gold for a strong hand, red for a weak
-    one. Only shown once the cups are up: during the round it would tell
-    more than the dice do."""
+def _hand_word(score):
+    """strong, good, average, weak or poor (perudo.hand_score.LABELS)."""
+    return next(word for floor, word in hand_score.LABELS if score >= floor).lower()
+
+
+def _score_text(score, full=False, bare=False):
+    """How good a hand was, coloured: gold for a good hand, red for a weak
+    one. \"strong hand\"; full: \"STRONG HAND · BEATS 95%\" (the score is the
+    share of all possible hands it beats); bare: \"95%\".
+    Only shown once the cups are up: during the round it would tell more
+    than the dice do."""
     color = T.HEX["gold"] if score >= 60 else T.HEX["red"] if score < 40 else T.HEX["muted"]
     if bare:
-        return T.color(str(score), color)
-    if value is not None:
-        return T.color(f"HAND {score}  ·  {value:+.1f} MATCHES", color)
-    return T.color(f"hand {score}", color)
+        return T.color(f"{score}%", color)
+    if full:
+        return T.color(f"{_hand_word(score).upper()} HAND  ·  BEATS {score}%", color)
+    return T.color(f"{_hand_word(score)} hand", color)
 
 
 def _hand_conclusion(summaries, name, you, standings):
     """What a player's hands said about their game: how good their hands
     were next to the others' at the table, and where they finished."""
     hs = summaries[name]
-    who, their = ("You", "your") if you else (T.esc(name), "their")
+    who, their = ("you", "your") if you else (T.esc(name), "their")
     whose = "Your" if you else f"{T.esc(name)}'s"
     hand_place = 1 + sum(1 for other in summaries.values() if other.average > hs.average)
     place = standings.index(name) + 1 if name in standings else None
-    text = (f"{T.color('Hands', T.HEX['text'])}  {whose} hands averaged {_score_text(hs.average, bare=True)} "
-            f"over {hs.rounds} round{'s' if hs.rounds != 1 else ''} ({hs.value / hs.rounds:+.1f} matches a "
-            f"round): the {_ordinal(hand_place)} best of {len(summaries)} at the table.")
+    text = (f"{T.color('Hands', T.HEX['text'])}  {whose} hands beat {_score_text(hs.average, bare=True)} "
+            f"of hands on average over {hs.rounds} round{'s' if hs.rounds != 1 else ''}: the "
+            f"{_ordinal(hand_place)} best of {len(summaries)} at the table.")
     if place is None:
         return text
     if place < hand_place:
-        verdict = f"Finishing {_ordinal(place)}, {who.lower() if you else who} played better than {their} dice."
+        verdict = f"played better than {their} dice"
     elif place > hand_place:
-        verdict = f"Finishing {_ordinal(place)}, {who.lower() if you else who} deserved more with {their} dice."
+        verdict = f"deserved more with {their} dice"
     else:
-        verdict = f"Finishing {_ordinal(place)}, {who.lower() if you else who} got what {their} dice were worth."
-    return f"{text} {verdict}"
+        verdict = f"got what {their} dice were worth"
+    return f"{text} Finishing {_ordinal(place)}, {who} {verdict}."
 
 
 def _counts(face, wild):
@@ -1555,13 +1562,22 @@ class GameScreen(Screen):
 
     def _sync_players(self, snap):
         grid = self.ids.players
-        if [p.name for p in snap.players] != list(self._rows):
-            grid.clear_widgets()
+        # Who still plays at the top, in their seats' order; who is out below,
+        # by where they finished.
+        places = dict(snap.places)
+        for place, name in enumerate(snap.standings, start=1):
+            places.setdefault(name, place)
+        playing = [p.name for p in snap.players if p.alive and p.name not in places]
+        out = sorted((p.name for p in snap.players if p.name not in playing), key=lambda n: places.get(n, 99))
+        order = playing + out
+        if set(order) != set(self._rows):
             self._rows = {}
             for p in snap.players:
-                row = PlayerRow(name=p.name, seat=T.seat_color(self._seat.get(p.name, len(self._rows))))
-                self._rows[p.name] = row
-                grid.add_widget(row)
+                self._rows[p.name] = PlayerRow(name=p.name, seat=T.seat_color(self._seat.get(p.name, len(self._rows))))
+        if [row.name for row in reversed(grid.children)] != order:
+            grid.clear_widgets()
+            for name in order:
+                grid.add_widget(self._rows[name])
         reveal = snap.reveal
         revealed = dict(reveal["dice"]) if reveal else {}
         show_all = self.show_dice and not self.human_playing
@@ -1577,13 +1593,13 @@ class GameScreen(Screen):
         if App.get_running_app().settings["hand_score"] and reveal:
             scores = {h.name: h for h in snap.hands if h.round == reveal.get("round")}
         mine = next((scores[p.name] for p in snap.players if p.is_human and p.name in scores), None)
-        self.hand_caption = _score_text(mine.score, mine.value) if mine is not None else ""
+        self.hand_caption = _score_text(mine.score, full=True) if mine is not None else ""
         for p in snap.players:
             row = self._rows[p.name]
             row.alive = p.alive
             row.active = p.name == snap.to_act and not snap.finished
             # ours is in the bidding panel (our row has no room for it)
-            hand = f"  ·  {_score_text(scores[p.name].score)}" if p.name in scores and not p.is_human else ""
+            hand = _score_text(scores[p.name].score) if p.name in scores and not p.is_human else ""
             if reveal and p.name in revealed:
                 dice = tuple(revealed[p.name])
                 table.extend(dice)
@@ -1597,17 +1613,20 @@ class GameScreen(Screen):
             else:
                 row.set_dice((0,) * (p.dice_count if p.alive else 0), [False] * p.dice_count, [False] * p.dice_count)
             if not p.alive:
-                row.sub = "out of the game"
+                place = places.get(p.name)
+                row.sub = f"out  ·  {_ordinal(place)} place" if place else "out of the game"
             elif row.active and p.is_human:
                 row.sub = T.color("your turn", T.HEX["gold"])
             elif row.active and reveal is None:
                 row.sub = T.color("thinking…" if (self.auto or self.human_playing) else "to play",
                                   T.HEX["gold"])
             elif reveal and p.name == reveal.get("loser"):
-                row.sub = T.color("lost a die", T.HEX["red"]) + hand
+                row.sub = T.color("lost a die", T.HEX["red"]) + (f"  ·  {hand}" if hand else "")
             else:
                 row.sub = (f"{p.dice_count} {'die' if p.dice_count == 1 else 'dice'}"
-                           + ("  ·  you" if p.is_human else "  ·  player" if p.person else "") + hand)
+                           + ("  ·  you" if p.is_human else "  ·  player" if p.person else ""))
+                if hand:                         # at a reveal: the dice are in view, the hand's worth instead
+                    row.sub = hand
         # totals per face, for watchers with the dice shown (and during a reveal)
         self.totals_visible = bool(show_all or (reveal and not self.human_playing and self.show_dice))
         if self.totals_visible:
@@ -1987,9 +2006,9 @@ class GameScreen(Screen):
             row.add_widget(label)
             if name in summaries:                          # their average hand over the game
                 hs = summaries[name]
-                row.add_widget(Label(text=_score_text(hs.average), markup=True, font_size=sp(13),
-                                     size_hint_x=None, width=dp(72), halign="right", valign="middle",
-                                     text_size=(dp(72), dp(38))))
+                row.add_widget(Label(text="hands " + _score_text(hs.average, bare=True), markup=True,
+                                     font_size=sp(13), color=T.MUTED, size_hint_x=None, width=dp(84),
+                                     halign="right", valign="middle", text_size=(dp(84), dp(38))))
             card.add_widget(row)
         if conclusion:
             text = Label(text=conclusion, markup=True, font_size=sp(13), color=T.MUTED, size_hint_y=None,

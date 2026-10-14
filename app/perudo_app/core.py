@@ -456,6 +456,7 @@ class Snapshot:
     warmup: Optional[tuple] = None                        # (done, total) while warm-up games run
     awaiting_next_round: bool = False                     # a reveal is up; next_round() goes on
     hands: List["HandResult"] = field(default_factory=list)  # every revealed hand, scored (see revealed_hands)
+    places: Dict[str, int] = field(default_factory=dict)  # the players who are out: where they finished
 
     def totals(self) -> Dict[int, int]:
         """Count per face over every alive player's dice (Pacos wild unless Palifico)."""
@@ -577,7 +578,8 @@ class GameSession:
         with self._lock:
             s = self._snap
             return replace(s, players=list(s.players), history=list(s.history), log=list(s.log),
-                           commentary=list(s.commentary), feed=list(s.feed), hands=list(s.hands))
+                           commentary=list(s.commentary), feed=list(s.feed), hands=list(s.hands),
+                           places=dict(s.places))
 
     @property
     def running(self) -> bool:
@@ -722,6 +724,8 @@ class GameSession:
             self._log(f"{event.player} {text}")
             with self._lock:
                 self._feed(FeedItem("out", event.player, text))
+                seats = len(self._game.players) if self._game is not None else len(self._snap.players)
+                self._snap.places[event.player] = seats - len(self._snap.places)
         elif isinstance(event, RoundEndedEvent):
             if event.palifico_next:
                 self._log(f"Palifico next, {event.next_starting_player} starts")
@@ -736,14 +740,24 @@ class GameSession:
 
     def _on_talk(self, speaker: str, text: str, lang: str):
         """A bot wants to say a line: shown and spoken with TALK_CHANCE, at
-        most one line per bot per turn, never during warm-up games."""
-        if self._warming or speaker in self._spoke or self._talk_rng.random() >= self.TALK_CHANCE:
+        most one line per bot per turn, never during warm-up games, and never
+        once it is out of the game."""
+        if self._warming or speaker in self._spoke or self._is_out(speaker):
+            return False
+        if self._talk_rng.random() >= self.TALK_CHANCE:
             return False
         self._spoke.add(speaker)
         with self._lock:
             self._snap.commentary.append(f"{speaker}: {text}")
             del self._snap.commentary[:-self.log_limit]
             self._feed(FeedItem("talk", speaker, text))
+
+    def _is_out(self, name: str) -> bool:
+        """Out of the game (or left it): no more say at the table."""
+        game = self._game
+        if game is None:
+            return False
+        return name in self._left or any(p.name == name and not p.alive for p in game.players)
 
     def inject_talk(self, speaker: str, text: str, lang: str = "nl") -> bool:
         """A line from a bot playing on another phone: the same rules as a

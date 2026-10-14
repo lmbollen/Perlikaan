@@ -378,7 +378,7 @@ class SelfCheck:
                 game.session.next_round()
 
         def scored_rows():
-            return [row.name for row in game._rows.values() if "hand " in row.sub]
+            return [row.name for row in game._rows.values() if "hand" in row.sub]
 
         self.every(0.2, next_round)
         yield Until(lambda: game.session.snapshot().pending is not None, 60, "the first turn")
