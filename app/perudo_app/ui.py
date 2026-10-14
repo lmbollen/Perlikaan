@@ -2464,7 +2464,11 @@ class PerudoApp(App):
 
 def system_bars():
     """(window height, left, top, right, bottom) of the system bars in
-    pixels on Android, or None elsewhere or when not known yet."""
+    pixels on Android (on an iPhone: of the notch and the home bar), or None
+    elsewhere or when not known yet."""
+    from kivy.utils import platform
+    if platform == "ios":
+        return ios_safe_area()
     try:
         from android import mActivity    # type: ignore
         from jnius import autoclass       # type: ignore
@@ -2485,6 +2489,21 @@ def system_bars():
         return (decor.getHeight(),) + tuple(int(v) for v in sides)
     except Exception:
         return None
+
+
+def ios_safe_area():
+    """An iPhone's safe area as system_bars() gives it: the app is drawn
+    under the notch (or Dynamic Island) and the home bar. Asked of UIKit;
+    when that fails, the usual margins of a phone with a notch."""
+    try:
+        from pyobjus import autoclass    # type: ignore
+        window = autoclass("UIApplication").sharedApplication().keyWindow
+        insets = window.safeAreaInsets
+        sides = (insets.left, insets.top, insets.right, insets.bottom)
+    except Exception:
+        notch = Window.height > 2 * Window.width            # Face ID iPhones are taller than 2:1
+        sides = (0, 50, 0, 30) if notch else (0, 0, 0, 0)
+    return (Window.height,) + tuple(int(dp(v)) for v in sides)      # points to pixels
 
 
 def run():

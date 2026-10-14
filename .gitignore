@@ -27,3 +27,4 @@ app/.p4a-src/
 app/.venv/
 # the online (Ably) key, written by app/build.sh from ABLY_KEY
 app/perudo_app/online_key.py
+app/ios/work/

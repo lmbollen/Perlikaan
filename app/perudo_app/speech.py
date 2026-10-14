@@ -4,8 +4,9 @@ worker thread, so the game never waits for speech.
 
 Two engines:
 
-- "system": the phone's own text-to-speech (Android's TextToSpeech, the
-  voices installed on the device). Works offline. Every bot gets its own
+- "system": the phone's own text-to-speech (Android's TextToSpeech, or
+  AVSpeechSynthesizer on an iPhone: the voices installed on the device).
+  Works offline. Every bot gets its own
   voice (when several are installed), pitch and speed, seeded by its name.
 - "edge": Microsoft's online neural voices through edge-tts, rendered to an
   mp3 in the cache and played by Kivy, like perudo.tts on the desktop.
@@ -144,6 +145,86 @@ class AndroidVoice:
                 pass
 
 
+class IOSVoice:
+    """An iPhone's AVSpeechSynthesizer, through pyobjus (as plyer does it).
+    `classes` (AVSpeechSynthesizer, AVSpeechUtterance, AVSpeechSynthesisVoice)
+    and `objc_str` can be stand-ins in tests."""
+
+    def __init__(self, classes: tuple, objc_str: Callable[[str], Any]):
+        self.Synthesizer, self.Utterance, self.Voice = classes
+        self.objc_str = objc_str
+        self._synth = None
+        self._voices: dict = {}
+
+    @classmethod
+    def create(cls) -> Optional["IOSVoice"]:
+        try:
+            from kivy.utils import platform
+            if platform != "ios":
+                return None
+            from pyobjus import autoclass, objc_str   # type: ignore
+            from pyobjus.dylib_manager import load_framework   # type: ignore
+            load_framework("/System/Library/Frameworks/AVFoundation.framework")
+            classes = (autoclass("AVSpeechSynthesizer"), autoclass("AVSpeechUtterance"),
+                       autoclass("AVSpeechSynthesisVoice"))
+        except Exception:
+            return None
+        return cls(classes, objc_str)
+
+    def _voices_for(self, lang: str) -> List[Any]:
+        """The installed voices for a language, in a fixed order."""
+        if lang in self._voices:
+            return self._voices[lang]
+        found = []
+        try:
+            voices = self.Voice.speechVoices()
+            for i in range(voices.count()):
+                v = voices.objectAtIndex_(i)
+                code = str(v.language.UTF8String())
+                if code.lower().startswith(lang):
+                    found.append((str(v.identifier.UTF8String()), v))
+            found = [v for _id, v in sorted(found, key=lambda pair: pair[0])]
+        except Exception:
+            found = []
+        if not found:
+            voice = self.Voice.voiceWithLanguage_(self.objc_str(_LOCALES.get(lang, "en-US")))
+            found = [voice] if voice is not None else []
+        self._voices[lang] = found
+        return found
+
+    def say(self, text: str, lang: str, seed: int) -> None:
+        if self._synth is None:
+            self._synth = self.Synthesizer.alloc().init()
+        key = lang.lower().split("-", 1)[0]
+        voices = self._voices_for(key)
+        if not voices:
+            raise RuntimeError(f"no {key.upper()} voice on this iPhone "
+                               "(Settings: Accessibility, Spoken Content, Voices)")
+        index, pitch, rate = voice_params(seed)
+        utterance = self.Utterance.speechUtteranceWithString_(self.objc_str(text))
+        utterance.voice = voices[index % len(voices)]
+        utterance.pitchMultiplier = pitch
+        utterance.rate = 0.5 * rate          # AVSpeechUtteranceDefaultSpeechRate is 0.5
+        self._synth.speakUtterance_(utterance)
+        # wait for this line, so the game waits for the bots to finish speaking
+        time.sleep(0.2)
+        end = time.monotonic() + 30
+        while self._synth.isSpeaking() and time.monotonic() < end:
+            time.sleep(0.05)
+
+    def stop(self) -> None:
+        if self._synth is not None:
+            try:
+                self._synth.stopSpeakingAtBoundary_(0)     # AVSpeechBoundaryImmediate
+            except Exception:
+                pass
+
+
+def system_voice() -> Any:
+    """The phone's own voices: Android's or an iPhone's (None elsewhere)."""
+    return AndroidVoice.create() or IOSVoice.create()
+
+
 class Speaker:
     def __init__(self, cache_dir: str, play: Callable[[str], None], enabled: bool = False,
                  engine: str = "system", system: Any = "auto"):
@@ -151,7 +232,7 @@ class Speaker:
         self.play = play                 # called with the mp3 path, from the worker thread
         self.enabled = enabled
         self.engine = engine if engine in ENGINES else "system"
-        self.system = AndroidVoice.create() if system == "auto" else system
+        self.system = system_voice() if system == "auto" else system
         self.error: Optional[str] = None     # the last problem, for the settings screen
         self.note: Optional[str] = None      # e.g. that the system voices stood in
         self._queue: "queue.Queue[tuple[str, str, str]]" = queue.Queue()
@@ -221,7 +302,7 @@ class Speaker:
                     return
                 self.note = "Microsoft's voices failed; the phone's own voices are speaking instead."
         if self.system is None:
-            self.error = "The built-in voices are only available on Android."
+            self.error = "The built-in voices are only available on a phone."
             return
         try:
             self.system.say(line, lang, seed)

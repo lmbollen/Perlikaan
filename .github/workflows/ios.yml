@@ -1,0 +1,52 @@
+name: iPhone app
+
+on:
+  push:
+    paths:
+      - "app/**"
+      - "perudo/**"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+
+jobs:
+  ipa:
+    name: Build the iPhone app (unsigned .ipa)
+    runs-on: macos-15
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install kivy-ios
+        run: |
+          brew install autoconf automake libtool pkg-config libjpeg || true
+          brew link libtool || true
+          pip install "kivy-ios==2025.5.17" "Cython==0.29.36" wheel
+
+      # Compiling Python and Kivy for the iPhone takes most of an hour: keep
+      # kivy-ios's build and dist folders between runs.
+      - name: Cache the kivy-ios build
+        uses: actions/cache@v4
+        with:
+          path: |
+            app/ios/work/build
+            app/ios/work/dist
+          key: kivy-ios-${{ runner.os }}-2025.5.17-${{ hashFiles('.github/workflows/ios.yml') }}
+
+      - name: Build
+        working-directory: app/ios
+        # The Ably key for playing over the internet (a repository secret);
+        # without it the app plays on the local network only.
+        env:
+          ABLY_KEY: ${{ secrets.ABLY_KEY }}
+        run: ./build.sh
+
+      - name: Upload the .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: perudo-ipa
+          path: app/ios/work/Perudo.ipa
+          if-no-files-found: error

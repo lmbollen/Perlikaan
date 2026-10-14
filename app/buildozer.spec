@@ -4,7 +4,7 @@ package.name = perudo
 package.domain = org.perlikaan
 source.dir = .
 source.include_exts = py,kv,json,txt,md,png
-source.exclude_dirs = tests, bin, tools, docs, manifest, p4a-recipes, .buildozer, .p4a-src, __pycache__, .venv
+source.exclude_dirs = tests, bin, tools, docs, manifest, ios, p4a-recipes, .buildozer, .p4a-src, __pycache__, .venv
 source.exclude_patterns = flake.nix, flake.lock, build.sh, README.md
 version = 0.2.0
 
