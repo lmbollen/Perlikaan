@@ -11,7 +11,7 @@ set -uo pipefail
 cd "$(dirname "$0")"
 WORK="${IOS_WORK:-$PWD/work}"
 OUT="${1:-$WORK/simulator-check}"
-APP_BUNDLE="$WORK/Perudo-simulator.app"
+APP_BUNDLE="$WORK/simulator/perudo.app"
 BUNDLE_ID="${IOS_BUNDLE_ID:-org.perlikaan.perudo}"
 DEVICE_NAME="${IOS_DEVICE:-iPhone 16}"
 SCENARIOS="${PERUDO_SELFCHECK:-all}"
@@ -35,16 +35,25 @@ for runtime in reversed(ios):
 ' "$DEVICE_NAME")"
 [ -n "$UDID" ] || { echo "no iPhone simulator available" >&2; xcrun simctl list devices available; exit 1; }
 echo "Simulator: $(xcrun simctl list devices | grep "$UDID" | sed 's/^ *//')"
+step() { echo "== $*"; }
+fail() { echo "FAILED: $*" >&2; exit 1; }
+step "the app: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_BUNDLE/Info.plist")," \
+     "runs $(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_BUNDLE/Info.plist")," \
+     "$(du -sh "$APP_BUNDLE" | cut -f1)"
+step "booting"
 xcrun simctl boot "$UDID" 2>/dev/null || true
-xcrun simctl bootstatus "$UDID" -b >/dev/null
-xcrun simctl install "$UDID" "$APP_BUNDLE"
+xcrun simctl bootstatus "$UDID" -b > "$OUT/boot.txt" 2>&1 || { tail -20 "$OUT/boot.txt"; fail "the simulator did not boot"; }
+step "installing"
+xcrun simctl install "$UDID" "$APP_BUNDLE" || fail "installing the app"
+step "starting the self-check ($SCENARIOS)"
 
 # The self-check's settings reach the app as environment variables.
 export SIMCTL_CHILD_PERUDO_SELFCHECK="$SCENARIOS"
 xcrun simctl launch --console-pty --terminate-running-process "$UDID" "$BUNDLE_ID" > "$OUT/console.txt" 2>&1 &
 LAUNCH=$!
 
-DATA="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data)"
+DATA="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data)" || fail "finding the app's data folder"
+echo "   data folder: $DATA"
 RESULTS=""
 for _ in $(seq 1 "$TIMEOUT"); do
   RESULTS="$(find "$DATA" -name results.txt -path '*selfcheck*' 2>/dev/null | head -1)"

@@ -4,7 +4,7 @@
 # .github/workflows/ios.yml runs it on GitHub's macOS machines.
 #
 #   cd app/ios && ./build.sh            # -> app/ios/work/Perudo.ipa
-#   IOS_SIMULATOR=1 ./build.sh          # ... and work/Perudo-simulator.app
+#   IOS_SIMULATOR=1 ./build.sh          # ... and work/simulator/perudo.app
 #                                         (for simulator_check.sh)
 #
 # It needs Python 3 with kivy-ios (pip install kivy-ios "Cython==0.29.36"),
@@ -113,13 +113,14 @@ zip -qry Perudo.ipa Payload
 echo "Built $WORK/Perudo.ipa ($(du -h Perudo.ipa | cut -f1))"
 
 if [ "${IOS_SIMULATOR:-}" = 1 ]; then
-  rm -rf build-sim Perudo-simulator.app
+  rm -rf build-sim simulator
   xcode xcode-simulator.log -project perudo-ios/perudo.xcodeproj -scheme perudo -configuration Release \
     -destination "generic/platform=iOS Simulator" -derivedDataPath build-sim ARCHS=arm64 \
     PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" CODE_SIGNING_ALLOWED=NO \
     build
   SIM_BUNDLE="$(find build-sim/Build/Products -maxdepth 2 -name 'perudo.app' -type d | head -1)"
   [ -n "$SIM_BUNDLE" ] || { echo "no perudo.app was built for the simulator" >&2; exit 1; }
-  cp -R "$SIM_BUNDLE" Perudo-simulator.app
-  echo "Built $WORK/Perudo-simulator.app"
+  mkdir simulator
+  cp -R "$SIM_BUNDLE" simulator/                # keeps its name: perudo.app
+  echo "Built $WORK/simulator/perudo.app"
 fi
