@@ -1981,6 +1981,7 @@ class SimScreen(Screen):
         super().__init__(**kw)
         self._poll = None
         self._rows = {}
+        self._shown = None             # (played, running) on screen
 
     def on_pre_enter(self, *_):
         app = App.get_running_app()
@@ -2008,8 +2009,9 @@ class SimScreen(Screen):
         self.run_text = "Stop"
         self.ids.progress.set(0, animate=False)
         self._build_board(bots)
+        self._shown = None
         if self._poll is None:
-            self._poll = Clock.schedule_interval(self.refresh, 0.25)
+            self._poll = Clock.schedule_interval(self.refresh, 0.5)
 
     def leave(self):
         if self.sim is not None:
@@ -2035,8 +2037,14 @@ class SimScreen(Screen):
     def refresh(self, _dt=0):
         if self.sim is None:
             return
+        played, games, running = self.sim.played, self.sim.games, self.sim.running
+        # Nothing new: leave the screen alone. The games run on another
+        # thread, but Python runs one thread at a time: every redraw (and
+        # every animation frame) here is time the games do not get.
+        if (played, running) == self._shown:
+            return
+        self._shown = (played, running)
         rows = self.sim.standings()
-        played, games = self.sim.played, self.sim.games
         top = max((st.win_pct for st in rows), default=0) or 100
         board = self.ids.board
         for rank, st in enumerate(rows):
@@ -2047,17 +2055,17 @@ class SimScreen(Screen):
             row.sub = (f"{st.wins} win{'s' if st.wins != 1 else ''}  ·  average place {st.avg_position:.2f}"
                        if played else "no games yet")
             # bars are scaled to the leader so differences stay visible
-            row.ids.meter.set(st.win_pct / top if played else 0)
+            row.ids.meter.set(st.win_pct / top if played else 0, animate=not running)
             index = len(rows) - 1 - rank
             if board.children[index] is not row:
                 board.remove_widget(row)
                 board.add_widget(row, index=index)
-        self.ids.progress.set(played / games if games else 0)
+        self.ids.progress.set(played / games if games else 0, animate=not running)
         rate = self.sim.rate
         self.progress = f"[b]{played}[/b] of {games} games" + (f"  ·  {rate:.0f} games/s" if rate >= 1 else "")
         if self.sim.error:
             self.progress += "\n" + T.color(T.esc(self.sim.error), T.HEX["red"])
-        if not self.sim.running:
+        if not running:
             self.running = False
             self.run_text = "Run again" if played else "Start"
             if played < games and not self.sim.error:

@@ -737,7 +737,6 @@ class GameSession:
                         rounds["n"] += 1
                         if rounds["n"] > 2000:
                             raise _RoundLimit()
-                    time.sleep(0)               # keep the UI responsive
 
                 try:
                     PerudoGame(bots=players, seed=rng.randrange(2**63), listeners=[limit]).play()
@@ -857,7 +856,6 @@ class Simulation:
                         rounds["n"] += 1
                         if rounds["n"] > self.round_limit:
                             raise RuntimeError("round limit")
-                    time.sleep(0)               # let the UI thread in: keeps the app responsive
 
                 try:
                     result = PerudoGame(bots=self.bots, seed=rng.randrange(2**63), listeners=[limit]).play()
