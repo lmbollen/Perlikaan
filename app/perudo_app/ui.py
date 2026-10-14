@@ -525,6 +525,7 @@ KV = """
                     Label:
                         markup: True
                         text: root.round_text
+                        shorten: True
                         font_size: sp(12.5)
                         color: T.MUTED
                         halign: "right"
@@ -1621,8 +1622,12 @@ class GameScreen(Screen):
         mine = snap.pending is not None
         gold = T.HEX["gold"]
         round_text = f"Round {snap.round_number}" if snap.round_number else ""
+        in_play = sum(p.dice_count for p in snap.players if p.alive)
+        sep = " \u00b7 " if snap.palifico else "  \u00b7  "      # three parts: closer together
+        if round_text and in_play and not snap.finished:         # public: everyone can count the cups
+            round_text += f"{sep}{in_play} dice"
         if snap.palifico:
-            round_text += "  \u00b7  " + T.color("[b]PALIFICO[/b]", gold)
+            round_text += sep + T.color("[b]PALIFICO[/b]", gold)
         card = dict(caption="", caption_color=T.MUTED, qty="", face=0, by="", next="", border=T.CLEAR,
                     warming=False)
         if snap.warmup is not None and not snap.finished:
