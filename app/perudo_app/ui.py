@@ -2519,16 +2519,22 @@ def ios_safe_area():
     sides, errors = None, []
     try:
         from pyobjus import autoclass    # type: ignore
-        # pyobjus hands out an Objective-C property as a method: call it
+        def prop(obj, name):
+            """An Objective-C property: pyobjus gives some as values, some as
+            methods (keyWindow came as the window, safeAreaInsets as a method)."""
+            value = getattr(obj, name)
+            return value() if type(value).__name__ == "ObjcMethod" else value
+
         application = autoclass("UIApplication").sharedApplication()
-        window = application.keyWindow() or application.windows().objectAtIndex_(0)
+        window = prop(application, "keyWindow") or prop(application, "windows").objectAtIndex_(0)
         try:
-            insets = window.safeAreaInsets()
+            insets = prop(window, "safeAreaInsets")
             sides = (insets.left, insets.top, insets.right, insets.bottom)
             SAFE_AREA_SOURCE = "UIKit safeAreaInsets"
         except Exception as exc:
             errors.append(f"safeAreaInsets: {type(exc).__name__}: {exc}")
-            frame, bounds = window.safeAreaLayoutGuide().layoutFrame(), window.bounds()
+            frame = prop(prop(window, "safeAreaLayoutGuide"), "layoutFrame")
+            bounds = prop(window, "bounds")
             left, top = frame.origin.x, frame.origin.y
             sides = (left, top, bounds.size.width - left - frame.size.width,
                      bounds.size.height - top - frame.size.height)
