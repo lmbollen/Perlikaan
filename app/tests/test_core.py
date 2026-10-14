@@ -111,7 +111,7 @@ def test_hands_are_scored_once_the_cups_are_up():
     assert first_reveal is not None
     round_one = [h for h in first_reveal.hands if h.round == first_reveal.reveal["round"]]
     assert sorted(h.name for h in round_one) == sorted(n for n, _ in first_reveal.reveal["dice"])
-    assert all(0 <= h.score <= 100 and 0 < h.keep < 1 for h in final.hands)
+    assert all(0 <= h.score <= 100 and -2 < h.value < 4 for h in final.hands)
     # every lost die shows as a lost hand, one per round at most
     losers = [f.loser for f in final.feed if f.kind == "result" and f.loser]
     assert sum(h.lost for h in final.hands) == len(losers)

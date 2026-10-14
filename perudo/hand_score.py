@@ -1,152 +1,103 @@
 """
-How good is a hand? A score for one player's dice at the start of a round,
-from what they know at that moment (their dice, everyone's dice counts,
-who opens, Palifico):
+How good is a hand? Reasoned, not measured: a hand is worth the matches it
+holds beyond what the table assumes it holds.
 
-  keep     the chance they get through the round without losing a die
-  average  the same for an average hand in their spot (the table alone)
-  score    0..100, how the hand ranks among hands in that spot (50 average)
+Nobody sees our dice, so the others count on the average: n/3 matches for
+any face (a third of the dice are that face or a Paco). What we really hold
+for a face is its dice plus our Pacos; the difference is an advantage only
+we know about. Which face counts? Half the time we pick it (we open, or
+switch to our best face on our turn), half the time someone else does, and
+then it is any face. So the value is half the advantage on our best face
+plus half the average advantage over the faces:
 
-A logistic model fitted on simulated rounds of the bundled bots: see
-fit_hand_score.py, which fits the weights below and judges them on games
-it did not see.
+    value = 1/2 (P + M - n/3) + 1/2 (P + (n - P)/5 - n/3)
+          = 0.9 P + 0.5 M - 7n/30
 
-    >>> s = score((1, 4, 4, 4, 6), players=4, total_dice=20, turn=1)
-    >>> s.score, s.label, round(s.keep, 2), round(s.average, 2)
-    (94, 'Strong', 0.82, 0.76)
+P our Pacos, M our most common other face, n our dice. A Paco is worth
+almost a whole match (it counts whatever is bid), a die of the best face
+half of one (it counts when that face is bid).
+
+In a Palifico round Pacos are not wild and the opener fixes the face: the
+opener's hand is worth its best face, everyone else's the average over the
+faces (nothing: they do not know which face it will be).
+
+The score ranks the value among all 6^n hands of n dice, counted exactly:
+50 is an average hand, five Pacos 100. check_hand_score.py deals every
+hand type in simulated games to check the ranking against what happens.
+
+    >>> s = score((1, 1, 1, 1, 1))
+    >>> round(s.value, 2), s.score, s.label
+    (3.33, 100, 'Strong')
+    >>> score((2, 3, 4, 5, 6)).score
+    1
 """
 
 from __future__ import annotations
 
 import math
+from collections import Counter
 from dataclasses import dataclass
-from typing import Dict, Sequence
+from functools import lru_cache
+from itertools import combinations_with_replacement
+from typing import Sequence, Tuple
 
 from perudo.models import PACO
 
-FEATURES = (
-    # the table: how many play, how many dice we hold of them, where we bid
-    "bias", "players", "log_total", "share", "opens", "turn", "last", "duel",
-    "palifico", "one_die", "two_dice", "three_dice",
-    # the hand
-    "best", "surplus", "pacos", "spread",
-)
-# The features of the table alone (the same model for an average hand).
-TABLE = FEATURES[:12]
-
-# Fitted by fit_hand_score.py: log-odds of losing a die this round.
-WEIGHTS: Dict[str, float] = {
-    "bias": -0.5322,
-    "players": -0.4526,
-    "log_total": +0.9095,
-    "share": -0.5691,
-    "opens": +0.3356,
-    "turn": +0.2235,
-    "last": -0.0311,
-    "duel": +0.5191,
-    "palifico": -0.4069,
-    "one_die": -0.2040,
-    "two_dice": +0.0498,
-    "three_dice": +0.0919,
-    "best": -0.8519,
-    "surplus": +0.7280,
-    "pacos": -0.1397,
-    "spread": +0.0754,
-}
-
-# The same model without the dice (only the table): the chance an average
-# hand keeps its dice here. score() compares the hand with it.
-BASE_WEIGHTS: Dict[str, float] = {
-    "bias": -0.9390,
-    "players": -0.4056,
-    "log_total": +0.5450,
-    "share": -1.1417,
-    "opens": +0.3324,
-    "turn": +0.1691,
-    "last": -0.0067,
-    "duel": +0.4579,
-    "palifico": -0.0507,
-    "one_die": +0.4640,
-    "two_dice": +0.6132,
-    "three_dice": +0.4399,
-    "best": +0.0000,
-    "surplus": +0.0000,
-    "pacos": +0.0000,
-    "spread": +0.0000,
-}
-
-# How far hands differ from the average one (the spread of the log-odds
-# difference over the fitted rounds): one spread better scores 84.
-EDGE_SD = 0.2142
+FACES = (2, 3, 4, 5, 6)          # the faces besides Pacos
+BEST_FACE_SHARE = 0.5            # how often we pick the face (else: any face)
 
 
-def features(dice: Sequence[int], players: int, total_dice: int, turn: int,
-             palifico: bool = False) -> Dict[str, float]:
-    """What the model looks at. `turn` is the player's place in the bidding
-    order of the round: 0 opens, players - 1 bids last."""
+def value(dice: Sequence[int], palifico: bool = False, opens: bool = False) -> float:
+    """Matches beyond what the table assumes we hold (see the module)."""
     n = len(dice)
-    pacos = sum(1 for d in dice if d == PACO)
+    if not n:
+        return 0.0
+    counts = Counter(dice)
     if palifico:
-        # No wild Pacos: the best face is just the most common one.
-        best = max(sum(1 for d in dice if d == f) for f in range(1, 7)) if n else 0
-        expected = n / 6
-    else:
-        best = max(sum(1 for d in dice if d == f) for f in range(2, 7)) + pacos if n else 0
-        expected = n / 3
-    return {
-        "bias": 1.0,
-        "players": float(players),
-        "log_total": math.log(max(total_dice, 1)),
-        "share": n / total_dice if total_dice else 0.0,
-        "opens": 1.0 if turn == 0 else 0.0,
-        "turn": turn / max(players - 1, 1),
-        "last": 1.0 if turn == players - 1 else 0.0,
-        "duel": 1.0 if players == 2 else 0.0,
-        "palifico": 1.0 if palifico else 0.0,
-        "one_die": 1.0 if n == 1 else 0.0,
-        "two_dice": 1.0 if n == 2 else 0.0,
-        "three_dice": 1.0 if n == 3 else 0.0,
-        "best": float(best),                         # matches on our best face
-        "surplus": best - expected,                  # ... beyond what chance gives
-        "pacos": float(pacos),
-        "spread": len(set(dice)) / n if n else 0.0,  # many different faces: little to bid on
-    }
+        expected = n / 6                          # one face, no wild Pacos
+        if not opens:
+            return 0.0                            # the average over the faces: no advantage
+        return max(counts.values()) - expected
+    pacos = counts.get(PACO, 0)
+    expected = n / 3
+    best = pacos + max((counts.get(f, 0) for f in FACES), default=0)
+    average = pacos + (n - pacos) / len(FACES)
+    return BEST_FACE_SHARE * (best - expected) + (1 - BEST_FACE_SHARE) * (average - expected)
 
 
-def _p_lose(weights: Dict[str, float], x: Dict[str, float]) -> float:
-    z = sum(weights.get(name, 0.0) * value for name, value in x.items())
-    return 1.0 / (1.0 + math.exp(-max(-30.0, min(30.0, z))))
+@lru_cache(maxsize=None)
+def _values(n: int, palifico: bool, opens: bool) -> Tuple[Tuple[float, float], ...]:
+    """(value, chance) of every hand of n dice, from the lowest value up."""
+    out = Counter()
+    total = 6 ** n
+    for hand in combinations_with_replacement(range(1, 7), n):
+        ways = math.factorial(n)
+        for c in Counter(hand).values():
+            ways //= math.factorial(c)
+        out[round(value(hand, palifico, opens), 9)] += ways / total
+    return tuple(sorted(out.items()))
+
+
+def rank(dice: Sequence[int], palifico: bool = False, opens: bool = False) -> float:
+    """How many hands of the same size are worse (ties count half): 0..1."""
+    v = round(value(dice, palifico, opens), 9)
+    below = sum(p for w, p in _values(len(dice), palifico, opens) if w < v)
+    same = sum(p for w, p in _values(len(dice), palifico, opens) if w == v)
+    return below + same / 2
 
 
 @dataclass(frozen=True)
 class HandScore:
-    keep: float          # chance of getting through the round without losing a die
-    average: float       # the same for an average hand in this spot
-    score: int           # 0..100: how this hand ranks among hands in its spot (50 = average)
-    label: str           # a word for it
+    value: float         # matches beyond what the table assumes we hold
+    score: int           # 0..100: how the hand ranks among all hands of its size (50 = average)
+    label: str
 
 
 LABELS = ((80, "Strong"), (60, "Good"), (40, "Average"), (20, "Weak"), (0, "Poor"))
 
 
-def score(dice: Sequence[int], players: int, total_dice: int, turn: int,
-          palifico: bool = False) -> HandScore:
-    x = features(dice, players, total_dice, turn, palifico)
-    keep = 1.0 - _p_lose(WEIGHTS, x)
-    average = 1.0 - _p_lose(BASE_WEIGHTS, x)
-    # Compare in log-odds, so the score means the same at a big table and
-    # in a duel: +1 log-odds (e.g. 50% -> 73%) is 25 points above average.
-    points = int(round(100 * rank(_logit(keep) - _logit(average))))
+def score(dice: Sequence[int], palifico: bool = False, opens: bool = False) -> HandScore:
+    v = value(dice, palifico, opens)
+    points = int(round(100 * rank(dice, palifico, opens))) if dice else 50
     label = next(word for floor, word in LABELS if points >= floor)
-    return HandScore(keep, average, points, label)
-
-
-def rank(edge: float) -> float:
-    """Where a hand this much better than average (in log-odds of keeping
-    its dice) ranks among hands: 0.5 is average, 0.84 one spread better."""
-    return 0.5 * (1.0 + math.erf(edge / (EDGE_SD * math.sqrt(2.0))))
-
-
-def _logit(p: float) -> float:
-    p = min(max(p, 1e-6), 1 - 1e-6)
-    return math.log(p / (1 - p))
+    return HandScore(v, points, label)

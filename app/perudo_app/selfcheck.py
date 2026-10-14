@@ -402,7 +402,7 @@ class SelfCheck:
         yield Until(lambda: game.session.snapshot().awaiting_next_round, 120, "a reveal")
         yield 0.5
         yield from self.look("reveal")
-        revealed = [n for n, _ in game.session.snapshot().reveal["dice"]]
+        revealed = [n for n, _ in game.session.snapshot().reveal["dice"] if n != game._human]   # ours: the panel
         check(sorted(scored_rows()) == sorted(revealed), f"scored at the reveal: {scored_rows()}, revealed {revealed}")
         check("HAND" in game.hand_caption, f"our hand's score at the reveal: {game.hand_caption!r}")
         hold["reveal"] = False

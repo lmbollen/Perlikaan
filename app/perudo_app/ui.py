@@ -1315,31 +1315,39 @@ class FeedLine(Label):
     bubble = BooleanProperty(False)
 
 
-def _score_text(score, keep=None, bare=False):
-    """\"hand 72\" (with keep: \"HAND 72 · 82% SAFE\", the chance it had to keep
-    every die), coloured: gold for a strong hand, red for a weak one. Only
-    shown once the cups are up: a hand's score is no help during the round."""
+def _score_text(score, value=None, bare=False):
+    """\"hand 72\" (with value: \"HAND 72 · +1.7 MATCHES\", the matches beyond
+    what the table assumed), coloured: gold for a strong hand, red for a weak
+    one. Only shown once the cups are up: during the round it would tell
+    more than the dice do."""
     color = T.HEX["gold"] if score >= 60 else T.HEX["red"] if score < 40 else T.HEX["muted"]
     if bare:
         return T.color(str(score), color)
-    return T.color(f"HAND {score}  ·  {keep:.0%} SAFE" if keep is not None else f"hand {score}", color)
+    if value is not None:
+        return T.color(f"HAND {score}  ·  {value:+.1f} MATCHES", color)
+    return T.color(f"hand {score}", color)
 
 
-def _hand_conclusion(hs, you):
-    """What a player's hands said about their game: their average hand, the
-    dice those hands would lose and the dice they did lose."""
-    who, their = ("You", "your") if you else (T.esc(hs.name), "their")
-    whose = "Your" if you else f"{T.esc(hs.name)}'s"
-    diff = hs.expected - hs.lost
-    if diff >= 0.75:
-        verdict = f"{who} played better than {their} dice."
-    elif diff <= -0.75:
-        verdict = f"{who} deserved more with {their} dice."
+def _hand_conclusion(summaries, name, you, standings):
+    """What a player's hands said about their game: how good their hands
+    were next to the others' at the table, and where they finished."""
+    hs = summaries[name]
+    who, their = ("You", "your") if you else (T.esc(name), "their")
+    whose = "Your" if you else f"{T.esc(name)}'s"
+    hand_place = 1 + sum(1 for other in summaries.values() if other.average > hs.average)
+    place = standings.index(name) + 1 if name in standings else None
+    text = (f"{T.color('Hands', T.HEX['text'])}  {whose} hands averaged {_score_text(hs.average, bare=True)} "
+            f"over {hs.rounds} round{'s' if hs.rounds != 1 else ''} ({hs.value / hs.rounds:+.1f} matches a "
+            f"round): the {_ordinal(hand_place)} best of {len(summaries)} at the table.")
+    if place is None:
+        return text
+    if place < hand_place:
+        verdict = f"Finishing {_ordinal(place)}, {who.lower() if you else who} played better than {their} dice."
+    elif place > hand_place:
+        verdict = f"Finishing {_ordinal(place)}, {who.lower() if you else who} deserved more with {their} dice."
     else:
-        verdict = f"{who} got what {their} dice were worth."
-    return (f"{T.color('Hands', T.HEX['text'])}  {whose} hands averaged {_score_text(hs.average, bare=True)} "
-            f"over {hs.rounds} round{'s' if hs.rounds != 1 else ''}. They would lose "
-            f"{hs.expected:.1f} dice; {'you' if you else 'they'} lost {hs.lost}. {verdict}")
+        verdict = f"Finishing {_ordinal(place)}, {who.lower() if you else who} got what {their} dice were worth."
+    return f"{text} {verdict}"
 
 
 def _counts(face, wild):
@@ -1569,12 +1577,13 @@ class GameScreen(Screen):
         if App.get_running_app().settings["hand_score"] and reveal:
             scores = {h.name: h for h in snap.hands if h.round == reveal.get("round")}
         mine = next((scores[p.name] for p in snap.players if p.is_human and p.name in scores), None)
-        self.hand_caption = _score_text(mine.score, mine.keep) if mine is not None else ""
+        self.hand_caption = _score_text(mine.score, mine.value) if mine is not None else ""
         for p in snap.players:
             row = self._rows[p.name]
             row.alive = p.alive
             row.active = p.name == snap.to_act and not snap.finished
-            hand = f"  ·  {_score_text(scores[p.name].score)}" if p.name in scores else ""
+            # ours is in the bidding panel (our row has no room for it)
+            hand = f"  ·  {_score_text(scores[p.name].score)}" if p.name in scores and not p.is_human else ""
             if reveal and p.name in revealed:
                 dice = tuple(revealed[p.name])
                 table.extend(dice)
@@ -1956,7 +1965,7 @@ class GameScreen(Screen):
             title = f"{standings[0]} wins"
         summaries = hand_summaries(snap.hands) if App.get_running_app().settings["hand_score"] else {}
         about = human if human in summaries else (standings[0] if standings and standings[0] in summaries else None)
-        conclusion = _hand_conclusion(summaries[about], about == human) if about else ""
+        conclusion = _hand_conclusion(summaries, about, about == human, standings) if about else ""
         sheet = ModalView(size_hint=(0.88, None),
                           height=dp(150 + 46 * min(len(standings), 7) + (78 if conclusion else 0)),
                           background="", background_color=T.CLEAR, overlay_color=T.BG[:3] + [0.75],

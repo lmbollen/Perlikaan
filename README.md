@@ -149,11 +149,13 @@ perudo/
   talk.py         optional bot chatter
   tts.py          optional text-to-speech
   profiler.py     per-opponent learning (tooling; bots embed their own copy)
+  hand_score.py   how good a hand is: a reasoned formula, ranked over all hands
   bots/           all participating bots
 contestants/      bots that are not at the table (Hakaman, Wouluh)
 run_simulation.py
 run_interactive.py
 analyze_losses.py, analyze_endgame.py, diagnose_bluff.py   loss and bluff analysis
 benchmark_adaptive.py, sweep_players.py, verify_profiler.py, zoo.py   benchmarks
+check_hand_score.py   deals every hand type to check the hand score against play
 tests/
 ```

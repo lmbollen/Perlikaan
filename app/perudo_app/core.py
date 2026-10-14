@@ -395,43 +395,36 @@ class FeedItem:
 
 @dataclass(frozen=True)
 class HandResult:
-    """A hand once the cups are up: how good it was at the start of the
-    round (perudo.hand_score), and how the round went for it."""
+    """A hand once the cups are up: how good it was (perudo.hand_score),
+    and how the round went for it."""
     round: int
     name: str
-    score: int          # 0..100, 50 an average hand in its spot
-    keep: float         # the chance it had to keep every die
+    score: int          # 0..100, 50 an average hand of its size
+    value: float        # matches beyond what the table assumed it held
     lost: bool          # it lost a die
 
 
 def revealed_hands(round_number: int, reveal: Optional[dict], starter: Optional[str]) -> List[HandResult]:
-    """Score the hands of a reveal, as they were dealt: the revealed dice,
-    the bidding order from the round's opener. Only from what everyone sees
+    """Score the hands of a reveal: the revealed dice, and who opened (in a
+    Palifico round the opener picks the face). Only from what everyone sees
     once the cups are up, so nobody learns anything early."""
     if not reveal or not starter:
         return []
-    names = [name for name, _ in reveal["dice"]]
-    if starter not in names:
-        return []
-    dice = dict(reveal["dice"])
-    total = sum(len(d) for d in dice.values())
-    i = names.index(starter)
-    order = names[i:] + names[:i]
     out = []
-    for name in names:
-        hs = hand_score.score(tuple(dice[name]), len(names), total, order.index(name), reveal["palifico"])
-        out.append(HandResult(round_number, name, hs.score, hs.keep, name == reveal.get("loser")))
+    for name, dice in reveal["dice"]:
+        hs = hand_score.score(tuple(dice), reveal["palifico"], opens=name == starter)
+        out.append(HandResult(round_number, name, hs.score, hs.value, name == reveal.get("loser")))
     return out
 
 
 @dataclass(frozen=True)
 class HandSummary:
-    """A player's hands over a game, against how the game went for them."""
+    """A player's hands over a game."""
     name: str
     rounds: int         # rounds played (and revealed)
     average: int        # their average hand score
-    expected: float     # dice their hands would lose, by the chances the scores gave
-    lost: int           # dice they did lose
+    value: float        # matches beyond the table's guess, added up over their hands
+    lost: int           # dice they lost
 
 
 def hand_summaries(hands: Sequence[HandResult]) -> Dict[str, HandSummary]:
@@ -439,7 +432,7 @@ def hand_summaries(hands: Sequence[HandResult]) -> Dict[str, HandSummary]:
     for h in hands:
         per[h.name].append(h)
     return {name: HandSummary(name, len(hs), round(sum(h.score for h in hs) / len(hs)),
-                              sum(1 - h.keep for h in hs), sum(1 for h in hs if h.lost))
+                              sum(h.value for h in hs), sum(1 for h in hs if h.lost))
             for name, hs in per.items()}
 
 
