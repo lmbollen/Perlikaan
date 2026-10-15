@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from kivy.animation import Animation
+from kivy.graphics import Color, RoundedRectangle
 from kivy.app import App
 from kivy.clock import Clock
 from kivy.core.audio import SoundLoader
@@ -587,7 +588,9 @@ KV = """
                 size_hint_y: None
                 # at most what is left in the middle once the bid card and two
                 # lines of feed are in (on a short phone that is one player)
-                height: max(dp(56), min(players.minimum_height, root.height * (0.3 if root.human_playing else 0.4), middle.height - dp(112) - totals.height - dp(40) - dp(72)))
+                # what the feed leaves (its share of the room under the bid card is
+                # yours to set: drag its handle, or tap it); at least one player
+                height: max(dp(56), min(players.minimum_height, root.feed_room - max(dp(66), root.feed_room * root.feed_share)))
                 do_scroll_x: False
                 bar_width: dp(3)
                 GridLayout:
@@ -597,9 +600,16 @@ KV = """
                     height: self.minimum_height
                     spacing: dp(6)
             Surface:
+                id: feed_card
                 orientation: "vertical"
-                padding: dp(14), dp(10), dp(10), dp(10)
+                padding: dp(14), dp(2), dp(10), dp(10)
                 radius: dp(18)
+                FeedHandle:
+                    size_hint_y: None
+                    height: dp(18)
+                    on_tap: root.cycle_feed()
+                    on_drag: root.drag_feed(args[1])
+                    on_release: root.save_feed()
                 ScrollView:
                     id: feed_scroll
                     do_scroll_x: False
@@ -1479,6 +1489,61 @@ class PlayerRow(Surface):
             die.value, die.highlight, die.dim = v, h, d
 
 
+class FeedHandle(Widget):
+    """The grip on top of the feed: drag it to make the feed bigger or
+    smaller, tap it to step through closed, normal and big."""
+    __events__ = ("on_tap", "on_drag", "on_release")
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        with self.canvas:
+            self._color = Color(*T.FAINT)
+            self._pill = RoundedRectangle(radius=[dp(3)])
+        self.bind(pos=self._draw, size=self._draw)
+
+    def _draw(self, *_):
+        w, h = dp(44), dp(5)
+        self._pill.pos = (self.center_x - w / 2, self.center_y - h / 2)
+        self._pill.size = (w, h)
+
+    def _hit(self, touch):
+        # a finger is bigger than the grip: catch it a little above and below
+        return self.x <= touch.x <= self.right and self.y - dp(12) <= touch.y <= self.top + dp(10)
+
+    def on_touch_down(self, touch):
+        if not self._hit(touch):
+            return super().on_touch_down(touch)
+        touch.grab(self)
+        self._start, self._moved = touch.y, False
+        self._color.rgba = T.MUTED
+        return True
+
+    def on_touch_move(self, touch):
+        if touch.grab_current is not self:
+            return super().on_touch_move(touch)
+        if self._moved or abs(touch.y - self._start) > dp(8):
+            self._moved = True
+            self.dispatch("on_drag", touch.y)
+        return True
+
+    def on_touch_up(self, touch):
+        if touch.grab_current is not self:
+            return super().on_touch_up(touch)
+        touch.ungrab(self)
+        self._color.rgba = T.FAINT
+        self.dispatch("on_release" if self._moved else "on_tap")
+        return True
+
+    def on_tap(self):
+        pass
+
+    def on_drag(self, y):
+        pass
+
+    def on_release(self):
+        pass
+
+
 class FeedLine(Label):
     bubble = BooleanProperty(False)
 
@@ -1563,6 +1628,8 @@ class GameScreen(Screen):
     bid_button = StringProperty("Bid")
     turn_hint = StringProperty("")
     hand_caption = StringProperty("")    # the bidding panel's caption: our hand's score this round
+    feed_share = NumericProperty(0.3)    # the feed's share of the room under the bid card (0: one line)
+    feed_room = NumericProperty(0)       # that room: the middle, less the bid card, totals and spacing
     # out of the game: the panel says so and offers the way out
     out = BooleanProperty(False)
     out_text = StringProperty("")
@@ -1579,6 +1646,7 @@ class GameScreen(Screen):
         self.replay = None
 
     def on_kv_post(self, *_):
+        self.on_kv_post_feed()
         self._feed_pool = [FeedLine() for _ in range(self.FEED_KEEP)]
         self._faces = []
         for f in FACES:
@@ -1605,6 +1673,7 @@ class GameScreen(Screen):
         app = App.get_running_app()
         self.session = session
         self.replay = replay                    # the recording being watched again, if this is one
+        self.feed_share = float(app.settings["feed_share"])
         self.human_playing = human
         self.multiplayer = multiplayer
         self.can_continue = getattr(session, "can_continue", True)
@@ -1659,6 +1728,37 @@ class GameScreen(Screen):
         app = App.get_running_app()
         app.speaker.clear()
         app.go("profile" if self.replay is not None else "home", back=True)
+
+    # -- the feed: as big as you want it --------------------------------------
+
+    FEED_SIZES = (0.0, 0.3, 0.8)          # closed (the last line), as it starts (the players first), most
+
+    def on_kv_post_feed(self):
+        self.ids.middle.bind(height=self._feed_room)
+        self.ids.totals.bind(height=self._feed_room)
+        self._feed_room()
+
+    def _feed_room(self, *_):
+        self.feed_room = max(0, self.ids.middle.height - dp(10) - dp(112) - self.ids.totals.height - dp(30))
+
+    def cycle_feed(self):
+        """Tap the handle: closed -> as it starts -> big -> closed."""
+        sizes = self.FEED_SIZES
+        nxt = next((x for x in sizes if x > self.feed_share + 0.05), sizes[0])
+        Animation.cancel_all(self, "feed_share")
+        Animation(feed_share=nxt, d=0.2, t="out_quad").start(self)
+        App.get_running_app().set_setting("feed_share", nxt)
+
+    def drag_feed(self, y):
+        """The handle follows the finger: the feed's top edge is where it is."""
+        if self.feed_room <= 0:
+            return
+        Animation.cancel_all(self, "feed_share")
+        top = y + dp(9)                                  # the handle's middle under the finger
+        self.feed_share = max(0.0, min(1.0, (top - self.ids.feed_card.y) / self.feed_room))
+
+    def save_feed(self):
+        App.get_running_app().set_setting("feed_share", round(self.feed_share, 3))
 
     def restart(self):
         if self.multiplayer:

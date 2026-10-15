@@ -1123,6 +1123,7 @@ DEFAULT_SETTINGS = {
     "tts_engine": "system",   # the phone's own voices, or "edge" (Microsoft's online voices)
     "tts_lang": "nl",
     "show_dice": True,
+    "feed_share": 0.3,         # the game's feed: its share of the room under the bid card
     "hand_score": True,        # after each round and the game: how good the hands were
     "sim_games": 200,
     "step_delay": 1.0,

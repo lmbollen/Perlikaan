@@ -373,6 +373,7 @@ class SelfCheck:
         app = self.app
         self.seat("RandomBot", "MinRaiseBot", "ExampleBot")
         app.set_setting("step_delay", 0.05)
+        app.set_setting("feed_share", 0.3)               # the feed as it starts
         app.start_game(human=True)
         game = app.sm.get_screen("game")
 
@@ -389,6 +390,7 @@ class SelfCheck:
         self.every(0.2, next_round)
         yield Until(lambda: game.session.snapshot().pending is not None, 60, "the first turn")
         yield from self.look("table")
+        yield from self.feed_sizes(game)
         # During a round nobody's hand is scored: that would tell more than the dice do.
         check(not game.hand_caption and not scored_rows(), "a hand score is shown during the round")
         game.open_settings()
@@ -419,6 +421,58 @@ class SelfCheck:
             game.leave()
             yield 0.5
             check(App.get_running_app().sm.current == "home", "leaving did not go back to the menu")
+
+    def _touch(self, x, y, to=None):
+        """A tap at (x, y), or a drag from there to `to`: real touches when
+        Kivy's test touch is there (on the desktop), else None."""
+        try:
+            from kivy.tests.common import UnitTestTouch
+        except Exception:
+            return None
+        touch = UnitTestTouch(x, y)
+        touch.touch_down()
+        if to is not None:
+            for k in range(1, 9):
+                touch.touch_move(x + (to[0] - x) * k / 8, y + (to[1] - y) * k / 8)
+        touch.touch_up()
+        return True
+
+    def feed_sizes(self, game):
+        """The feed's handle: a tap makes it big, another closes it to its
+        last line (the players get the room), a drag sets it anywhere."""
+        from perudo_app.ui import FeedHandle
+        handle = next(w for w in game.walk() if isinstance(w, FeedHandle))
+        card, view = game.ids.feed_card, game.ids.players.parent
+        start_card, start_view = card.height, view.height
+        self.log(f"  feed: room {game.feed_room / dp(1):.0f}dp, middle {game.ids.middle.height / dp(1):.0f}dp, "
+                 f"players {view.height / dp(1):.0f}dp, feed {card.height / dp(1):.0f}dp")
+
+        def tap():
+            if self._touch(handle.center_x, handle.center_y) is None:
+                handle.dispatch("on_tap")
+
+        roomy = start_view > dp(70)           # the players have room to give (not on the smallest phone)
+        tap()
+        yield 0.5
+        check(game.feed_share > 0.7 and (card.height > start_card + dp(30) or not roomy),
+              f"a tap did not make the feed bigger ({start_card / dp(1):.0f} -> {card.height / dp(1):.0f}dp)")
+        yield from self.look("feed-big")
+        tap()
+        yield 0.5
+        everyone = view.height >= game.ids.players.minimum_height - 1    # all in view: the rest is the feed's
+        check(game.feed_share < 0.05 and (card.height <= dp(100) or everyone) and view.height >= start_view,
+              f"a tap did not close the feed ({card.height / dp(1):.0f}dp, players {view.height / dp(1):.0f}dp)")
+        yield from self.look("feed-closed")
+        target = (handle.center_x, card.y + game.feed_room * 0.55 - dp(9))     # halfway up its room
+        if self._touch(handle.center_x, handle.center_y, to=target) is None:
+            game.drag_feed(target[1])
+            game.save_feed()
+        yield 0.3
+        check(0.2 < game.feed_share < 0.95, f"a drag left the feed at {game.feed_share:.2f}")
+        check(abs(float(self.app.settings["feed_share"]) - game.feed_share) < 0.01, "the feed's size is not kept")
+        game.feed_share = 0.3
+        self.app.set_setting("feed_share", 0.3)
+        yield 0.2
 
     def scenario_profile(self):
         """The profile, and a recorded game watched again (the table
@@ -461,6 +515,7 @@ class SelfCheck:
             if e.enabled:
                 e.copies = 2 if e.class_name not in ("SonnyBoy",) else 1
         app.set_setting("step_delay", 0.0)
+        app.set_setting("feed_share", 0.3)               # the feed as it starts
         app.start_game(human=True)
         game = app.sm.get_screen("game")
         check(len(game.session.bots) == 12, f"{len(game.session.bots)} at the table, not 12")
@@ -480,6 +535,8 @@ class SelfCheck:
             check(panel.height <= dp(120), f"the out panel takes {panel.height / dp(1):.0f}dp")
             rows = game.ids.players
             view = rows.parent                              # the players' ScrollView
+            self.log(f"  out: room {game.feed_room / dp(1):.0f}dp, middle {game.ids.middle.height / dp(1):.0f}dp, "
+                     f"players {view.height / dp(1):.0f}dp, feed {game.ids.feed_card.height / dp(1):.0f}dp")
             check(view.height >= dp(150), f"only {view.height / dp(1):.0f}dp for the players")
         yield Until(lambda: game._sheet is not None, 240, "the end of the game")
         yield 0.5
