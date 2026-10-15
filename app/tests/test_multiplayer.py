@@ -263,6 +263,34 @@ def test_the_host_leaving_closes_the_lobby_for_guests():
     assert "host left" in ben.error
 
 
+def test_the_bots_learn_on_both_sides_of_a_lobby(tmp_path):
+    """The host's bots learn about the guests, a guest's bots (on the
+    guest's phone) about the host and the others -- and keep it, by id."""
+    from perudo_app.core import BotMemory
+    host_memory, ben_memory = BotMemory(str(tmp_path / "anna")), BotMemory(str(tmp_path / "ben"))
+    host = LobbyHost("Anna", registry(), ip="127.0.0.1", memory=host_memory, player_id="anna-id")
+    reg_ben = registry()
+    ben = LobbyClient("Ben", reg_ben, host.code, local_ips=LOCAL, player_id="ben-id", memory=ben_memory)
+    try:
+        assert wait(lambda: len(host.state()["members"]) == 2)
+        host.add_bot(key(host.registry, "CarlosBot"), "Carlos")
+        ben.add_bot(key(reg_ben, "PokerfaceBot"), "Pokerface")
+        assert wait(lambda: len(host.state()["seats"]) == 2)
+        session = host.start_game(delay=0.0)
+        assert wait(lambda: ben.session is not None)
+        _play_people(host, [ben], until=lambda: session.snapshot().finished)
+        # the host's Carlos: about Ben, and about Ben's bot
+        assert wait(lambda: host_memory.who_remembers("ben-id") == ["Carlos"])
+        # Ben's Pokerface, on Ben's phone: about Anna (and kept under its own name)
+        assert wait(lambda: ben_memory.who_remembers("anna-id") == ["Pokerface"])
+        saved = list((tmp_path / "ben").glob("*.json"))
+        assert len(saved) == 1 and saved[0].name.endswith("_Pokerface.json")   # the same memory as at home
+        host.end_game()
+    finally:
+        ben.close()
+        host.close()
+
+
 def test_people_bring_who_they_are_to_the_table(tmp_path):
     from perudo_app.core import BotMemory
     memory = BotMemory(str(tmp_path / "host-memory"))

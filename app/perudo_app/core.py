@@ -342,7 +342,8 @@ class BotMemory:
         known = dict(getattr(bot, "_memory_people", None) or {})
         known.update(people or {})
         try:
-            text = json.dumps({**bot_memory.save(bot), "bot": bot.name, "people": known})
+            text = json.dumps({**bot_memory.save(bot), "bot": getattr(bot, "memory_name", None) or bot.name,
+                               "people": known})
         except Exception:                 # something it keeps is not plain data
             return False
         path = self._file(bot)
