@@ -21,6 +21,7 @@ contents.
 from __future__ import annotations
 
 import os
+import re
 import sys
 import threading
 import time
@@ -30,6 +31,7 @@ from typing import Callable, List, Optional
 
 from kivy.app import App
 from kivy.clock import Clock
+from kivy.metrics import dp
 from kivy.core.window import Window
 from kivy.uix.label import Label
 from kivy.uix.layout import Layout
@@ -39,7 +41,11 @@ from kivy.uix.scrollview import ScrollView
 
 from perudo.models import Dudo
 
-SCENARIOS = ["home", "settings", "players", "table", "profile", "watch", "together", "speech", "online"]
+SCENARIOS = ["home", "settings", "players", "table", "profile", "crowd", "watch", "together", "speech", "online"]
+
+
+def _ordinal_text(n: int) -> str:
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
 
 
 class Until:
@@ -444,6 +450,50 @@ class SelfCheck:
         game.leave()
         yield 0.5
         check(app.sm.current == "profile", f"leaving a replay went to {app.sm.current}")
+
+    def scenario_crowd(self):
+        """Twelve at the table: out early, the game still has the screen
+        (the panel is a strip, several players in view); at the end every
+        place is on the sheet."""
+        app = self.app
+        self.seat("RandomBot", "MinRaiseBot", "ExampleBot", "SniperBot", "SonnyBoy", "OppaStyleBot")
+        for e in app.registry.entries:
+            if e.enabled:
+                e.copies = 2 if e.class_name not in ("SonnyBoy",) else 1
+        app.set_setting("step_delay", 0.0)
+        app.start_game(human=True)
+        game = app.sm.get_screen("game")
+        check(len(game.session.bots) == 12, f"{len(game.session.bots)} at the table, not 12")
+
+        def next_round():
+            if game.session is not None and game.session.snapshot().awaiting_next_round:
+                game.session.next_round()
+
+        self.every(0.1, next_round)
+        self.every(0.05, lambda: self.play_turn(game.session))
+        yield Until(lambda: game.out or game.session.snapshot().finished, 240, "being out")
+        yield 0.6
+        if game.out:
+            yield from self.look("out")
+            panel = next(w for w in game.walk() if getattr(w, "shown", None) is True
+                         and getattr(w, "full_height", 0) >= dp(100) and hasattr(w, "border"))
+            check(panel.height <= dp(120), f"the out panel takes {panel.height / dp(1):.0f}dp")
+            rows = game.ids.players
+            view = rows.parent                              # the players' ScrollView
+            check(view.height >= dp(150), f"only {view.height / dp(1):.0f}dp for the players")
+        yield Until(lambda: game._sheet is not None, 240, "the end of the game")
+        yield 0.5
+        yield from self.look("game-over")
+        names = {w.text.replace("  (you)", "") for w in game._sheet.walk() if isinstance(w, Label)}
+        snap = game.session.snapshot()
+        me = next(p.name for p in snap.players if p.is_human)
+        plain = re.sub(r"\[[^\]]*\]", "", game.out_text)
+        check(f"{_ordinal_text(snap.standings.index(me) + 1)} place" in plain or not game.out,
+              f"the strip says {game.out_text!r}, the game {snap.standings.index(me) + 1}")
+        missing = [b.name for b in game.session.bots if b.name not in names]
+        check(not missing, f"the game-over sheet leaves out {missing}")
+        game.leave()
+        yield 0.5
 
     def scenario_watch(self):
         app = self.app

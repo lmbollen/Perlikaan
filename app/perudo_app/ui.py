@@ -27,6 +27,7 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.filechooser import FileChooserListView
 from kivy.uix.label import Label
 from kivy.uix.modalview import ModalView
+from kivy.uix.scrollview import ScrollView
 from kivy.uix.screenmanager import Screen, ScreenManager, SlideTransition
 from kivy.uix.widget import Widget
 
@@ -635,9 +636,11 @@ KV = """
         Collapsible:
             orientation: "vertical"
             shown: root.human_playing
-            full_height: dp(248) + (root.out_extra if root.out else 0)
+            # out: a strip (where you finished, your way out), the game keeps the screen
+            full_height: dp(114) if root.out else dp(248)
             padding: dp(16), dp(12), dp(16), dp(16)
-            spacing: dp(12)
+            # out: the folded composer still takes its spacing, so less of it
+            spacing: dp(4) if root.out else dp(12)
             radius: dp(24)
             bg: T.SURFACE
             border: T.GOLD if root.my_turn else T.CLEAR
@@ -666,35 +669,29 @@ KV = """
                     valign: "middle"
                     shorten: True
             Collapsible:
-                orientation: "vertical"
                 shown: root.out
-                full_height: dp(166) + root.out_extra
+                full_height: dp(56)
                 bg: T.CLEAR
                 radius: 0
-                spacing: dp(8)
+                spacing: dp(12)
                 Label:
-                    text: "You're out"
-                    bold: True
-                    font_size: sp(20)
+                    markup: True
+                    text: root.out_text
+                    font_size: sp(14.5)
                     color: T.TEXT
-                    size_hint_y: None
-                    height: dp(30)
                     halign: "left"
                     valign: "middle"
                     text_size: self.size
-                Body:
-                    text: root.out_text
-                Body:
-                    text: root.out_bots
-                    color: T.TEXT
-                    opacity: 1 if root.out_bots else 0
-                Widget:
+                    max_lines: 2
+                    shorten: True
+                    shorten_from: "right"
                 Btn:
                     kind: root.out_button_kind
                     text: root.out_button
-                    font_size: sp(16)
-                    size_hint_y: None
-                    height: dp(48)
+                    font_size: sp(15)
+                    size_hint: None, None
+                    size: dp(156), dp(48)
+                    pos_hint: {"center_y": 0.5}
                     on_release: root.leave()
             Collapsible:
                 orientation: "vertical"
@@ -1571,8 +1568,6 @@ class GameScreen(Screen):
     out_text = StringProperty("")
     out_button = StringProperty("Menu")
     out_button_kind = StringProperty("primary")
-    out_bots = StringProperty("")               # your bots, one per line, and how they are doing
-    out_extra = NumericProperty(0)              # the panel's extra height for that list
 
     def __init__(self, **kw):
         super().__init__(**kw)
@@ -1628,7 +1623,6 @@ class GameScreen(Screen):
         self._close_sheet()
         self._sheet_shown = False
         self.out = False
-        self.out_bots, self.out_extra = "", 0
         self.awaiting_next_round = False
         # Watching starts paused (Play or Step starts it); at the table the bots play by themselves.
         self.auto = human
@@ -1767,6 +1761,7 @@ class GameScreen(Screen):
         scores = {}
         if App.get_running_app().settings["hand_score"] and reveal:
             scores = {h.name: h for h in snap.hands if h.round == reveal.get("round")}
+        mine_bots = set(App.get_running_app().my_bots()) if self.multiplayer else set()
         mine = next((scores[p.name] for p in snap.players if p.is_human and p.name in scores), None)
         self.hand_caption = _score_text(mine.score, full=True) if mine is not None else ""
         for p in snap.players:
@@ -1799,7 +1794,8 @@ class GameScreen(Screen):
                 row.sub = T.color("lost a die", T.HEX["red"]) + (f"  ·  {hand}" if hand else "")
             else:
                 row.sub = (f"{p.dice_count} {'die' if p.dice_count == 1 else 'dice'}"
-                           + ("  ·  you" if p.is_human else "  ·  player" if p.person else ""))
+                           + ("  ·  you" if p.is_human else "  ·  player" if p.person else
+                              "  ·  yours" if p.name in mine_bots else ""))
                 if hand:                         # at a reveal: the dice are in view, the hand's worth instead
                     row.sub = hand
         # totals per face, for watchers with the dice shown (and during a reveal)
@@ -2020,10 +2016,11 @@ class GameScreen(Screen):
         me = next((p for p in snap.players if p.is_human), None)
         if me is None or me.alive:
             return
+        if snap.places.get(me.name):                # where the game says you finished
+            self._out_place = snap.places[me.name]
         if not self.out:
             self.out = True
-            self._out_place = sum(1 for p in snap.players if p.alive) + 1
-            self._out_bots = set()          # my bots seen still playing after I was out
+            self._out_place = snap.places.get(me.name) or sum(1 for p in snap.players if p.alive) + 1
             self._out_left = bool(getattr(self.session, "left", False) or (
                 hasattr(self.session, "has_left") and self.session.has_left(me.name)))
             if hasattr(self.session, "hold_timeout"):
@@ -2034,37 +2031,19 @@ class GameScreen(Screen):
         winner = snap.standings[0] if snap.finished and snap.standings else None
         playing = [b for b in bots if b in players and players[b].alive and not snap.finished
                    and not self._out_left]
-        lines = []
-        dot = T.icon("\u25cf")
-        for b in bots:
-            p = players.get(b)
-            if b == winner:
-                status = T.color("won the game", T.HEX["gold"])
-            elif p is not None and p.alive and not snap.finished and not self._out_left:
-                status = T.color(f"{p.dice_count} {'die' if p.dice_count == 1 else 'dice'}", T.HEX["muted"])
-            else:
-                status = T.color("out", T.HEX["faint"])
-            lines.append(f"{T.color(dot, self._hex(b))}  [b]{T.esc(b)}[/b]   {status}")
+        place = T.color(f"[b]{_ordinal(self._out_place)}[/b]", T.HEX["gold"])
         if self._out_left:
-            text = "You left this game." + (" It is over." if snap.finished else " It goes on above.")
+            text = "You left"
             button, kind = back, "primary"
+        elif playing:
+            n = len(playing)
+            text = f"{place} place  ·  " + ("your bot plays on" if len(bots) == 1 else f"{n} bots play on")
+            button, kind = "Leave anyway", "outline"
         else:
-            text = f"You finished {_ordinal(self._out_place)}."
-            if playing:
-                one = len(playing) == 1
-                text += (f" {'One of your bots is' if one and len(bots) > 1 else 'Your bot is' if one else 'Your bots are'}"
-                         f" still playing: stay and see how {'it does' if one else 'they do'}.")
-                button, kind = "Leave anyway", "outline"
-            else:
-                if bots and winner not in bots:
-                    text += f" Your {'bot is' if len(bots) == 1 else 'bots are'} out too."
-                text += " The game is over." if snap.finished else " The game goes on above."
-                button, kind = back, "primary"
-        listing = "\n".join(lines)
-        if (text, button, kind, listing) != (self.out_text, self.out_button, self.out_button_kind, self.out_bots):
+            text = f"{place} place"
+            button, kind = back, "primary"
+        if (text, button, kind) != (self.out_text, self.out_button, self.out_button_kind):
             self.out_text, self.out_button, self.out_button_kind = text, button, kind
-            self.out_bots = listing
-            self.out_extra = dp(22) * len(lines) + (dp(8) if lines else 0)
 
     # -- the human's decision -----------------------------------------------
 
@@ -2162,31 +2141,45 @@ class GameScreen(Screen):
         summaries = hand_summaries(snap.hands) if App.get_running_app().settings["hand_score"] else {}
         about = human if human in summaries else (standings[0] if standings and standings[0] in summaries else None)
         conclusion = _hand_conclusion(summaries, about, about == human, standings) if about else ""
-        sheet = ModalView(size_hint=(0.88, None),
-                          height=dp(150 + 46 * min(len(standings), 7) + (78 if conclusion else 0)),
+        # Everyone's place: the list scrolls inside the sheet when the table is
+        # big, and ours is marked (and scrolled to).
+        row_h, fixed = dp(40), dp(150) + (dp(78) if conclusion else 0)
+        list_h = min(row_h * len(standings), max(row_h * 3, Window.height * 0.8 - fixed))   # clear of the bars
+        sheet = ModalView(size_hint=(0.88, None), height=fixed + list_h,
                           background="", background_color=T.CLEAR, overlay_color=T.BG[:3] + [0.75],
                           auto_dismiss=True)
         card = Surface(orientation="vertical", padding=(dp(20), dp(18), dp(20), dp(18)), spacing=dp(8),
                        radius=dp(24), border=T.GOLD, border_width=dp(1.5))
         card.add_widget(Label(text=T.color(T.icon("★"), T.HEX["gold"]) + "  " + T.esc(title), markup=True,
                               bold=True, font_size=sp(21), color=T.TEXT, size_hint_y=None, height=dp(40)))
-        for i, name in enumerate(standings[:7]):
-            row = BoxLayout(size_hint_y=None, height=dp(38), spacing=dp(12))
-            row.add_widget(Label(text=str(i + 1), bold=True, font_size=sp(15), size_hint_x=None, width=dp(20),
-                                 color=T.GOLD if i == 0 else T.FAINT))
+        rows = BoxLayout(orientation="vertical", size_hint_y=None, height=row_h * len(standings))
+        scroller = ScrollView(size_hint_y=None, height=list_h, do_scroll_x=False, bar_width=dp(3),
+                              bar_color=T.FAINT, bar_inactive_color=T.LINE)
+        scroller.add_widget(rows)
+        ours = None
+        for i, name in enumerate(standings):
+            me = name == human
+            row = BoxLayout(size_hint_y=None, height=row_h, spacing=dp(12))
+            row.add_widget(Label(text=str(i + 1), bold=True, font_size=sp(15), size_hint_x=None, width=dp(24),
+                                 color=T.GOLD if i == 0 or me else T.FAINT))
             row.add_widget(Avatar(name=name, bg=T.seat_color(self._seat.get(name, i)), size=(dp(28), dp(28)),
                                   pos_hint={"center_y": 0.5}))
-            label = Label(text=name + ("  (you)" if name == human else ""), font_size=sp(15),
-                          color=T.TEXT if i == 0 else T.MUTED, bold=i == 0, halign="left",
-                          valign="middle", shorten=True)
+            label = Label(text=name + ("  (you)" if me and name.lower() != "you" else ""), font_size=sp(15),
+                          color=T.GOLD if me else T.TEXT if i == 0 else T.MUTED, bold=i == 0 or me,
+                          halign="left", valign="middle", shorten=True)
             label.bind(size=lambda w, size: setattr(w, "text_size", size))   # as wide as the sheet allows
             row.add_widget(label)
             if name in summaries:                          # their average hand over the game
                 hs = summaries[name]
                 row.add_widget(Label(text="hands " + _score_text(hs.average, bare=True), markup=True,
                                      font_size=sp(13), color=T.MUTED, size_hint_x=None, width=dp(84),
-                                     halign="right", valign="middle", text_size=(dp(84), dp(38))))
-            card.add_widget(row)
+                                     halign="right", valign="middle", text_size=(dp(84), row_h)))
+            rows.add_widget(row)
+            if me:
+                ours = row
+        card.add_widget(scroller)
+        if ours is not None and list_h < rows.height:
+            Clock.schedule_once(lambda _dt: scroller.scroll_to(ours, padding=row_h, animate=False), 0.05)
         if conclusion:
             text = Label(text=conclusion, markup=True, font_size=sp(13), color=T.MUTED, size_hint_y=None,
                          height=dp(70), halign="left", valign="middle")

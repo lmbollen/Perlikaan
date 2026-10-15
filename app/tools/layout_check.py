@@ -34,7 +34,7 @@ PHONES = {
     "pixel-7": ((412, 915), (0, 32, 0, 24)),
 }
 DENSITY = 2          # pixels per point in the window (the layout is the same at any density)
-DEFAULT_SCENARIOS = "home,settings,players,table,profile,watch,together"
+DEFAULT_SCENARIOS = "home,settings,players,table,profile,crowd,watch,together"
 
 
 def run_phone(name: str, out: Path, scenarios: str, timeout: float) -> tuple:
