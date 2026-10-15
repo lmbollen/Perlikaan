@@ -892,7 +892,8 @@ class CarlosBot(SharedMemory):
             if self.TUNED_DEFAULTS:
                 self.DUDO_A, self.DUDO_B = self.TUNED_DUDO
                 self.DEFAULT_RAISE_P = self.TUNED_RAISE_P
-                self._beta_table[:] = self.TUNED_RAISE_PRIOR
+                if not getattr(self, "_memory_restored", False):    # learned: the host gave it back
+                    self._beta_table[:] = self.TUNED_RAISE_PRIOR
                 self.profiler.PRIOR_CALZA = self.TUNED_CALZA
                 self.profiler.PRIOR_CHALLENGE = self.TUNED_CHALLENGE
         SharedMemory._ensure_memory(self)

@@ -290,6 +290,7 @@ class BluffoBoyyo:
 
     # Learned state, shared by every instance of this class (per bot name).
     _MEMORY = {}
+    _LEARNED = ("learned",)          # what the host keeps for us between games
 
     @classmethod
     def reset_memory(cls):
