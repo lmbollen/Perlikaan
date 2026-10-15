@@ -156,10 +156,12 @@ class LobbyHost:
 
     def __init__(self, name: str, registry: BotRegistry, allow_guest_bots: bool = True,
                  guest_bot_limit: int = 2, ip: Optional[str] = None, slots=range(net.SLOTS),
-                 relay=None):
+                 relay=None, memory=None):
         """`relay`: a perudo_app.relay backend to host over the internet;
-        None hosts on the local network."""
+        None hosts on the local network. `memory`: a core.BotMemory, so its
+        bots remember earlier games."""
         self.registry = registry
+        self.memory = memory
         self._lock = threading.RLock()
         self.members: Dict[int, Member] = {0: Member(0, clean_name(name, "Host"))}
         self.seats: List[LobbySeat] = []
@@ -304,10 +306,13 @@ class LobbyHost:
                 if isinstance(b, tuple):
                     cls, name = b
                     bot = cls()
-                    bot.name = name
+                    bot.memory_name, bot.name = bot.name, name
+                    if self.memory is not None:
+                        self.memory.load(bot)
                     bots[i] = bot
             self.phase = "game"
-            session = GameSession(bots, step=False, delay=delay, hold_reveals=True, speech_idle=speech_idle)
+            session = GameSession(bots, step=False, delay=delay, hold_reveals=True, speech_idle=speech_idle,
+                                  memory=self.memory)
             self.session = session
             order = [b.name for b in bots]
             for m in guests:
@@ -662,10 +667,13 @@ class LobbyClient:
 
     def __init__(self, name: str, registry: BotRegistry, code: str, local_ips: Optional[List[str]] = None,
                  speak: Optional[Callable[[str, str, str], None]] = None, timeout: float = 5.0,
-                 relay=None):
+                 relay=None, memory=None):
         """`relay`: a perudo_app.relay backend to join over the internet;
-        None joins on the local network."""
+        None joins on the local network. `memory`: a core.BotMemory for the
+        bots this guest brings."""
         self.registry = registry
+        self.memory = memory
+        self._saved = None                     # the game whose bots' learning is saved
         self.code = net.normalise_code(code)
         self.name = clean_name(name)
         self.speak = speak
@@ -759,6 +767,9 @@ class LobbyClient:
             session = self.session
             if session is not None and msg.get("game") == session.game_id:
                 new = session.apply(msg)
+                if msg.get("finished") and self.memory is not None and self._saved != session.game_id:
+                    self._saved = session.game_id          # what our bots learned, for next time
+                    self._jobs.put(lambda bots=list(self._bots.values()): self.memory.save_all(bots))
                 if self.speak is not None:             # the lines the host let through, said here too
                     for item in new:
                         if item.kind == "talk":
@@ -799,7 +810,9 @@ class LobbyClient:
                     continue
                 try:
                     bot = entry.cls()
-                    bot.name = a["name"]
+                    bot.memory_name, bot.name = bot.name, a["name"]
+                    if self.memory is not None:
+                        self.memory.load(bot)
                     bots[a["seat"]] = bot
                 except Exception:
                     pass
@@ -849,12 +862,14 @@ class LobbyClient:
 
 
 def join_lobby(name: str, registry: BotRegistry, code: str, relay=None,
-               local_ips: Optional[List[str]] = None, speak=None, timeout: float = 6.0) -> LobbyClient:
+               local_ips: Optional[List[str]] = None, speak=None, timeout: float = 6.0,
+               memory=None) -> LobbyClient:
     """Join the lobby with this code wherever it is: over the internet (when
     there is a relay) and on the local network at the same time; the first to
     answer wins."""
     if relay is None:
-        return LobbyClient(name, registry, code, local_ips=local_ips, speak=speak, timeout=timeout)
+        return LobbyClient(name, registry, code, local_ips=local_ips, speak=speak, timeout=timeout,
+                           memory=memory)
     done = threading.Event()
     lock = threading.Lock()
     found: Dict[str, Any] = {}
@@ -863,6 +878,7 @@ def join_lobby(name: str, registry: BotRegistry, code: str, relay=None,
     def attempt(kind: str) -> None:
         try:
             client = LobbyClient(name, registry, code, local_ips=local_ips, speak=speak, timeout=timeout,
+                                 memory=memory,
                                  relay=relay if kind == "online" else None)
         except Exception as exc:
             with lock:

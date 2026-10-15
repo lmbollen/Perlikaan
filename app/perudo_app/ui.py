@@ -33,8 +33,8 @@ from perudo import hand_score
 from perudo.models import Bid, Calza, Dudo
 from perudo_app import theme as T
 from perudo_app.core import (
-    FACES, ROUTER, BotRegistry, GameSession, HumanSeat, Settings, Simulation, bar_padding, can, hand_summaries,
-    legal_bids, lowest_legal,
+    FACES, ROUTER, BotMemory, BotRegistry, GameSession, HumanSeat, Settings, Simulation, bar_padding, can,
+    hand_summaries, legal_bids, lowest_legal,
 )
 from perudo_app.picker import AndroidPicker
 from perudo_app.speech import Speaker
@@ -2254,6 +2254,7 @@ class PerudoApp(App):
         data_dir = Path(self.user_data_dir)
         self.settings = Settings(str(data_dir / "settings.json"))
         self.registry = BotRegistry(str(self._user_bots_dir(data_dir)))
+        self.memory = BotMemory(str(data_dir / "memory"))    # what the bots learned, kept between games
         self.registry.scan_bundled()
         self.registry.scan_user()
         # Nobody is seated on the first start; after that the table is as you left it.
@@ -2363,14 +2364,14 @@ class PerudoApp(App):
         return LobbyHost(self.settings["human_name"], self.registry,
                          allow_guest_bots=bool(self.settings["guest_bots"]),
                          guest_bot_limit=int(self.settings["guest_bot_limit"] or 2),
-                         relay=self.relay() if online else None)
+                         relay=self.relay() if online else None, memory=self.memory)
 
     def make_client(self, code: str):
         """Join a lobby, over the internet or nearby (blocking: call from a worker thread)."""
         from perudo_app.multiplayer import join_lobby
         return join_lobby(self.settings["human_name"], self.registry, code, relay=self.relay(),
                           speak=lambda text, lang, seed: self.speaker.say(
-                              text, self.settings["tts_lang"] or lang, seed))
+                              text, self.settings["tts_lang"] or lang, seed), memory=self.memory)
 
     def enter_lobby(self, lobby, host: bool):
         self.leave_lobby(go_back=False)
@@ -2562,7 +2563,7 @@ class PerudoApp(App):
         self.speaker.say(line, lang, random.choice(["Sniper", "Trihard", "Pokerface", "Carlos Dos"]))
 
     def start_game(self, human: bool):
-        bots = self.registry.make(fresh=True)
+        bots = self.registry.make(fresh=True, memory=self.memory)
         if human:
             bots.append(HumanSeat(self.settings["human_name"] or "You"))
         if len(bots) < 2:
@@ -2571,7 +2572,7 @@ class PerudoApp(App):
             return
         session = GameSession(bots, step=not human, delay=self.settings["step_delay"],
                               warmup=int(self.settings["warmup_games"] or 0),
-                              speech_idle=lambda: self.speaker.idle, hold_reveals=human)
+                              speech_idle=lambda: self.speaker.idle, hold_reveals=human, memory=self.memory)
         self.speaker.clear()
         self.go("game")
         self.sm.get_screen("game").begin(session, human)

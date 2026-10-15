@@ -10,7 +10,7 @@ sys.path.insert(0, str(ROOT / "app"))
 
 from perudo.models import Bid, Calza, Dudo                     # noqa: E402
 from perudo_app.core import (                                   # noqa: E402
-    BotRegistry, GameSession, HumanSeat, Settings, Simulation, can, hand_summaries, lowest_legal,
+    BotMemory, BotRegistry, GameSession, HumanSeat, Settings, Simulation, can, hand_summaries, lowest_legal,
 )
 
 
@@ -139,6 +139,30 @@ def test_players_who_are_out_get_a_place_and_no_more_say():
                                               if g.kind == "out" and g.player == f.player)]
     assert out_talk == []                             # nothing said after going out
     assert all(session.inject_talk(name, "Ik ben er nog!") is False for name in rest)
+
+
+def test_bots_remember_earlier_games_and_can_forget(tmp_path):
+    memory = BotMemory(str(tmp_path / "memory"))
+    reg = BotRegistry()
+    reg.scan_bundled()
+    picks = [e for e in reg.entries if e.class_name in ("CarlosBot", "TheDonBot", "MinRaiseBot")]
+    for e in picks:
+        e.copies = 1
+    session = GameSession(reg.make(picks, memory=memory), seed=3, step=False, delay=0.0, memory=memory)
+    session.start()
+    assert wait(lambda: session.snapshot().finished, 60)
+    assert wait(lambda: len(list((tmp_path / "memory").glob("*.json"))) == 2)   # the two that learn
+    assert "Carlos" in memory.who_remembers("MinRaise Bot")
+
+    again = reg.make(picks, memory=memory)                       # a later game, the app restarted
+    learners = [b for b in again if getattr(b, "_LEARNED", ())]
+    assert learners and all(getattr(b, "_memory_restored", False) for b in learners)
+    carlos = next(b for b in again if b.name == "Carlos")
+    assert "MinRaise Bot" in carlos.profiler.profiles             # it knows its opponent already
+
+    memory.forget()
+    assert memory.who_remembers("MinRaise Bot") == []
+    assert not any(getattr(b, "_memory_restored", False) for b in reg.make(picks, memory=memory))
 
 
 def test_feed_tells_the_story_and_a_reveal_stays_until_the_next_bid():

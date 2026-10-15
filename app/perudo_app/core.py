@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from perudo import hand_score
+from perudo import memory as bot_memory
 from perudo.game import Forfeit, Interrupt, PerudoGame
 from perudo.models import (
     PACO,
@@ -258,8 +259,10 @@ class BotRegistry:
     def selected(self) -> List[BotEntry]:
         return [e for e in self.entries if e.enabled]
 
-    def make(self, entries: Optional[Sequence[BotEntry]] = None, fresh: bool = True) -> List[Any]:
-        """Instantiate the selected bots, numbering copies like the loader does."""
+    def make(self, entries: Optional[Sequence[BotEntry]] = None, fresh: bool = True,
+             memory: Optional["BotMemory"] = None) -> List[Any]:
+        """Instantiate the selected bots, numbering copies like the loader does;
+        with `memory`, each gets back what it learned in earlier games."""
         bots: List[Any] = []
         for e in entries if entries is not None else self.selected():
             if fresh:
@@ -271,7 +274,81 @@ class BotRegistry:
                 if i > 1:
                     bot.name = f"{bot.name} {i}"
                 bots.append(bot)
+        if memory is not None:
+            for bot in bots:
+                memory.load(bot)
         return bots
+
+
+class BotMemory:
+    """What the bots learned (perudo.memory), kept in a folder: one JSON
+    file per bot, by its kind and its name at the table (\"Carlos\" and
+    \"Carlos 2\" learn apart). The app reads and writes the files; the bots
+    only keep their learning in the attributes they name."""
+
+    def __init__(self, folder: str):
+        self.folder = Path(folder)
+        self._lock = threading.Lock()
+
+    def _file(self, bot: Any) -> Path:
+        # memory_name: its own name, when the table renamed it ("Carlos (Ben)")
+        name = getattr(bot, "memory_name", None) or bot.name
+        kind = f"{type(bot).__module__}.{type(bot).__qualname__}:{name}"
+        safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in kind)
+        return self.folder / f"{safe}.json"
+
+    def load(self, bot: Any) -> bool:
+        if not bot_memory.learned_names(bot):
+            return False
+        try:
+            data = json.loads(self._file(bot).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        try:
+            return bot_memory.restore(bot, data)
+        except Exception:                 # a newer bot that no longer fits what was saved
+            return False
+
+    def save(self, bot: Any) -> bool:
+        if not bot_memory.learned_names(bot):
+            return False
+        try:
+            text = json.dumps({**bot_memory.save(bot), "bot": bot.name})
+        except Exception:                 # something it keeps is not plain data
+            return False
+        path = self._file(bot)
+        with self._lock:
+            self.folder.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(text, encoding="utf-8")
+            tmp.replace(path)             # never half a file
+        return True
+
+    def save_all(self, bots: Sequence[Any]) -> None:
+        for bot in bots:
+            self.save(bot)
+
+    def who_remembers(self, name: str) -> List[str]:
+        """The bots whose memory mentions this player (by name)."""
+        needle = json.dumps(name)
+        out = []
+        for path in sorted(self.folder.glob("*.json")):
+            try:
+                text = path.read_text(encoding="utf-8")
+                if needle in json.dumps(json.loads(text).get("learned")):
+                    out.append(json.loads(text).get("bot") or path.stem)
+            except (OSError, ValueError, AttributeError):
+                pass
+        return out
+
+    def forget(self) -> None:
+        """Every bot starts from scratch again."""
+        with self._lock:
+            for path in self.folder.glob("*.json"):
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
 
 
 # ---------------------------------------------------------------------------
@@ -479,8 +556,9 @@ class GameSession:
     def __init__(self, bots: Sequence[Any], seed: Optional[int] = None, step: bool = True,
                  delay: float = 1.0, log_limit: int = 400, warmup: int = 0,
                  speech_idle: Optional[Callable[[], bool]] = None, speech_timeout: float = 20.0,
-                 hold_reveals: bool = False):
+                 hold_reveals: bool = False, memory: Optional[BotMemory] = None):
         self.bots = list(bots)
+        self.memory = memory                    # where the bots' learning is kept when the game ends
         self.seed = seed if seed is not None else random.SystemRandom().randrange(2**63)
         self.step = step
         self.delay = delay
@@ -834,6 +912,8 @@ class GameSession:
                 self._snap.error = f"{type(exc).__name__}: {exc}"
         finally:
             ROUTER.detach(self._on_talk)
+            if self.memory is not None:         # what they learned, for next time
+                self.memory.save_all(self.bots)
 
 
 # ---------------------------------------------------------------------------
