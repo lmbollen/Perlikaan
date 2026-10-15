@@ -156,12 +156,14 @@ class LobbyHost:
 
     def __init__(self, name: str, registry: BotRegistry, allow_guest_bots: bool = True,
                  guest_bot_limit: int = 2, ip: Optional[str] = None, slots=range(net.SLOTS),
-                 relay=None, memory=None):
+                 relay=None, memory=None, replays=None):
         """`relay`: a perudo_app.relay backend to host over the internet;
         None hosts on the local network. `memory`: a core.BotMemory, so its
-        bots remember earlier games."""
+        bots remember earlier games. `replays`: a perudo_app.replay.ReplayStore
+        to record the games in (the host sees every cup)."""
         self.registry = registry
         self.memory = memory
+        self.replays = replays
         self._lock = threading.RLock()
         self.members: Dict[int, Member] = {0: Member(0, clean_name(name, "Host"))}
         self.seats: List[LobbySeat] = []
@@ -312,7 +314,7 @@ class LobbyHost:
                     bots[i] = bot
             self.phase = "game"
             session = GameSession(bots, step=False, delay=delay, hold_reveals=True, speech_idle=speech_idle,
-                                  memory=self.memory)
+                                  memory=self.memory, replays=self.replays)
             self.session = session
             order = [b.name for b in bots]
             for m in guests:

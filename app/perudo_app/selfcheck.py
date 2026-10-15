@@ -39,7 +39,7 @@ from kivy.uix.scrollview import ScrollView
 
 from perudo.models import Dudo
 
-SCENARIOS = ["home", "settings", "players", "table", "watch", "together", "speech", "online"]
+SCENARIOS = ["home", "settings", "players", "table", "profile", "watch", "together", "speech", "online"]
 
 
 class Until:
@@ -413,6 +413,37 @@ class SelfCheck:
             game.leave()
             yield 0.5
             check(App.get_running_app().sm.current == "home", "leaving did not go back to the menu")
+
+    def scenario_profile(self):
+        """The profile, and a recorded game watched again (the table
+        scenario, before it, recorded one; on its own one is played)."""
+        app = self.app
+        if not app.replays.games():
+            self.seat("RandomBot", "MinRaiseBot")
+            app.set_setting("step_delay", 0.05)
+            app.start_game(human=True)
+            game = app.sm.get_screen("game")
+            self.every(0.1, lambda: self.play_turn(game.session))
+            yield Until(lambda: game.session.snapshot().finished or game.out, 240, "a game")
+            game.leave()
+            yield 0.5
+        self.go("profile")
+        yield 0.3
+        screen = app.sm.get_screen("profile")
+        rows = list(screen.ids.matches.children)
+        check(rows, "no recorded game on the profile")
+        yield from self.look("profile")
+        rows[-1].dispatch("on_release")                 # the newest: listed first
+        game = app.sm.get_screen("game")
+        yield Until(lambda: app.sm.current == "game" and game.replay is not None, 10, "the replay")
+        game.set_auto(True)
+        yield Until(lambda: len(game.session.snapshot().feed) >= 6, 60, "the replay playing")
+        check(game.show_dice and all(len(p.dice) == p.dice_count for p in game.session.snapshot().players
+                                     if p.alive), "the replay hides dice")
+        yield from self.look("replay")
+        game.leave()
+        yield 0.5
+        check(app.sm.current == "profile", f"leaving a replay went to {app.sm.current}")
 
     def scenario_watch(self):
         app = self.app

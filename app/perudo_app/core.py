@@ -42,6 +42,7 @@ from perudo.models import (
     RoundEndedEvent,
 )
 from perudo.rules import count_matches
+from perudo_app.replay import Recorder, ReplayEnded, ReplayGame, ReplayStore, Script, ScriptedSeat
 
 FACES = (1, 2, 3, 4, 5, 6)
 
@@ -534,6 +535,7 @@ class Snapshot:
     awaiting_next_round: bool = False                     # a reveal is up; next_round() goes on
     hands: List["HandResult"] = field(default_factory=list)  # every revealed hand, scored (see revealed_hands)
     places: Dict[str, int] = field(default_factory=dict)  # the players who are out: where they finished
+    note: Optional[str] = None                            # why a game ended without a winner (a replay's end)
 
     def totals(self) -> Dict[int, int]:
         """Count per face over every alive player's dice (Pacos wild unless Palifico)."""
@@ -556,9 +558,12 @@ class GameSession:
     def __init__(self, bots: Sequence[Any], seed: Optional[int] = None, step: bool = True,
                  delay: float = 1.0, log_limit: int = 400, warmup: int = 0,
                  speech_idle: Optional[Callable[[], bool]] = None, speech_timeout: float = 20.0,
-                 hold_reveals: bool = False, memory: Optional[BotMemory] = None):
+                 hold_reveals: bool = False, memory: Optional[BotMemory] = None,
+                 replays: Optional[ReplayStore] = None):
         self.bots = list(bots)
         self.memory = memory                    # where the bots' learning is kept when the game ends
+        self.replays = replays                  # where the game is recorded (with a person at the table)
+        self._recorder: Optional[Recorder] = None
         self.seed = seed if seed is not None else random.SystemRandom().randrange(2**63)
         self.step = step
         self.delay = delay
@@ -741,6 +746,8 @@ class GameSession:
             if obs.round_number != s.round_number:
                 starter = obs.players[obs.my_id].name
                 self._starter = starter
+                if self._recorder is not None and game is not None:
+                    self._recorder.round(game)
                 self._feed(FeedItem("round", starter, f"Round {obs.round_number}" + (" \u00b7 Palifico" if obs.palifico else "")))
             s.round_number = obs.round_number
             s.palifico = obs.palifico
@@ -765,6 +772,10 @@ class GameSession:
         self._wait_turn()
 
     def _on_event(self, event) -> None:
+        if self._recorder is not None:
+            self._recorder.event(event)
+            if isinstance(event, PlayerEliminatedEvent) and event.player in self._left:
+                self._recorder.left([event.player])
         if isinstance(event, BidEvent):
             self._log(f"{event.player} bids {fmt_bid(event.bid)}")
             with self._lock:
@@ -825,6 +836,8 @@ class GameSession:
         if self._talk_rng.random() >= self.TALK_CHANCE:
             return False
         self._spoke.add(speaker)
+        if self._recorder is not None:
+            self._recorder.talk(speaker, text)
         with self._lock:
             self._snap.commentary.append(f"{speaker}: {text}")
             del self._snap.commentary[:-self.log_limit]
@@ -893,14 +906,15 @@ class GameSession:
             self._warm_up()
             if self._stop:
                 raise SessionStopped()
-            game = PerudoGame(bots=self.bots, seed=self.seed, before_turn=self._before_turn,
-                              before_reveal=self._before_reveal, listeners=[self._on_event])
+            if self.replays is not None and self.human is not None:
+                self._recorder = Recorder(self.seed, self.bots, self.human.name)
+            game = self._make_game()
             with self._lock:
                 self._game = game
                 left = set(self._left)
             for name in left:                   # left during the warm-up
                 game.forfeit(name)
-            self.result = game.play()
+            self._play(game)
         except SessionStopped:
             with self._lock:
                 self._snap.finished = True
@@ -914,6 +928,56 @@ class GameSession:
             ROUTER.detach(self._on_talk)
             if self.memory is not None:         # what they learned, for next time
                 self.memory.save_all(self.bots)
+            if self._recorder is not None:      # the game, to watch again
+                try:
+                    self.replays.save(self._recorder, self.snapshot())
+                except Exception:
+                    pass
+
+    def _make_game(self) -> PerudoGame:
+        return PerudoGame(bots=self.bots, seed=self.seed, before_turn=self._before_turn,
+                          before_reveal=self._before_reveal, listeners=[self._on_event])
+
+    def _play(self, game: PerudoGame) -> None:
+        self.result = game.play()
+
+
+class ReplaySession(GameSession):
+    """A recorded game (perudo_app.replay), played again move by move with
+    every cup in view: the game screen watches it like any game."""
+
+    def __init__(self, data: dict, delay: float = 1.0):
+        self.script = Script(data)
+        people = set(data.get("people", ()))
+        seats = [ScriptedSeat(name, name in people, self.script) for name in data["order"]]
+        super().__init__(seats, seed=data["seed"], step=True, delay=delay)
+        self.recording = data
+        self.script.say = self._say_again
+        self.script.leave = lambda name: self.forfeit([name])    # "left the game", as it was
+
+    def _make_game(self) -> PerudoGame:
+        game = ReplayGame(bots=self.bots, seed=self.seed, before_turn=self._before_turn,
+                          before_reveal=self._before_reveal, listeners=[self._on_event])
+        game.script = self.script
+        self.script.game = game
+        return game
+
+    def _play(self, game: PerudoGame) -> None:
+        try:
+            self.result = game.play()
+            self.script.catch_up()              # what was said after the last move
+        except ReplayEnded:                     # the recording stops here (they left the game)
+            with self._lock:
+                self._snap.finished = True
+                self._snap.pending = None
+                self._snap.to_act = None
+                self._snap.note = "End of the recording"
+
+    def _say_again(self, speaker: str, text: str) -> None:
+        """A line as it was said (no chance involved: it was said)."""
+        with self._lock:
+            self._snap.commentary.append(f"{speaker}: {text}")
+            self._feed(FeedItem("talk", speaker, text))
 
 
 # ---------------------------------------------------------------------------

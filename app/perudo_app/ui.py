@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import random
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -33,10 +34,12 @@ from perudo import hand_score
 from perudo.models import Bid, Calza, Dudo
 from perudo_app import theme as T
 from perudo_app.core import (
-    FACES, ROUTER, BotMemory, BotRegistry, GameSession, HumanSeat, Settings, Simulation, bar_padding, can,
+    FACES, ROUTER, BotMemory, BotRegistry, GameSession, HumanSeat, ReplaySession, Settings, Simulation,
+    bar_padding, can,
     hand_summaries, legal_bids, lowest_legal,
 )
 from perudo_app.picker import AndroidPicker
+from perudo_app.replay import ReplayStore
 from perudo_app.speech import Speaker
 from perudo_app.widgets import (  # noqa: F401  (registers the widget classes for the KV rules)
     Avatar, Body, Btn, Caption, Chip, Collapsible, Die, FaceButton, IconBtn, Meter, Segmented, Surface, TextField, Toggle,
@@ -203,6 +206,11 @@ KV = """
                 title: "Simulation"
                 subtitle: "Many games, live leaderboard"
                 on_release: app.go("sim")
+            ActionCard:
+                glyph: "\\u2605"
+                title: "Your profile"
+                subtitle: "Your games, replays, what the bots know"
+                on_release: app.go("profile")
             Surface:
                 orientation: "vertical"
                 size_hint_y: None
@@ -903,6 +911,147 @@ KV = """
 
 # ---------------------------------------------------------------- settings
 
+<StatTile@BoxLayout>:
+    orientation: "vertical"
+    value: ""
+    label: ""
+    Label:
+        markup: True
+        text: root.value
+        bold: True
+        font_size: sp(22)
+        color: T.TEXT
+    Label:
+        text: root.label
+        font_size: sp(12)
+        color: T.MUTED
+
+<MatchRow>:
+    size_hint_y: None
+    height: dp(70)
+    padding: dp(14), dp(10)
+    spacing: dp(12)
+    radius: dp(18)
+    Label:
+        markup: True
+        text: root.place_text
+        bold: True
+        font_size: sp(17)
+        size_hint_x: None
+        width: dp(48)
+        color: T.GOLD if root.won else T.TEXT
+    BoxLayout:
+        orientation: "vertical"
+        spacing: dp(2)
+        Label:
+            markup: True
+            text: root.title
+            font_size: sp(15)
+            color: T.TEXT
+            halign: "left"
+            valign: "bottom"
+            text_size: self.size
+            shorten: True
+        Label:
+            markup: True
+            text: root.sub
+            font_size: sp(12.5)
+            color: T.MUTED
+            halign: "left"
+            valign: "top"
+            text_size: self.size
+            shorten: True
+    Label:
+        text: "\\u203a"
+        font_size: sp(26)
+        size_hint_x: None
+        width: dp(14)
+        color: T.FAINT
+
+<ProfileScreen>:
+    BoxLayout:
+        orientation: "vertical"
+        TopBar:
+            title: "Your profile"
+            on_back: app.back()
+        ScrollView:
+            do_scroll_x: False
+            BoxLayout:
+                orientation: "vertical"
+                size_hint_y: None
+                height: self.minimum_height
+                padding: dp(16), dp(4), dp(16), dp(28)
+                spacing: dp(10)
+                Surface:
+                    orientation: "vertical"
+                    size_hint_y: None
+                    height: dp(150)
+                    padding: dp(16), dp(14)
+                    spacing: dp(8)
+                    BoxLayout:
+                        size_hint_y: None
+                        height: dp(44)
+                        spacing: dp(12)
+                        Avatar:
+                            name: root.player
+                            bg: T.GOLD
+                            size_hint: None, None
+                            size: dp(40), dp(40)
+                            pos_hint: {"center_y": 0.5}
+                        Label:
+                            text: root.player
+                            bold: True
+                            font_size: sp(20)
+                            color: T.TEXT
+                            halign: "left"
+                            valign: "middle"
+                            text_size: self.size
+                            shorten: True
+                    BoxLayout:
+                        StatTile:
+                            value: root.games_text
+                            label: "games"
+                        StatTile:
+                            value: root.wins_text
+                            label: "wins"
+                        StatTile:
+                            value: root.place_text
+                            label: "average place"
+                        StatTile:
+                            value: root.hands_text
+                            label: "hands beat"
+                Caption:
+                    text: "What the bots know about you"
+                Surface:
+                    orientation: "vertical"
+                    size_hint_y: None
+                    height: self.minimum_height
+                    padding: dp(16), dp(12), dp(16), dp(14)
+                    spacing: dp(10)
+                    Body:
+                        text: root.known_text
+                        color: T.MUTED
+                    Btn:
+                        kind: "outline"
+                        text: "Make them forget"
+                        size_hint_y: None
+                        height: dp(44) if root.known else 0
+                        opacity: 1 if root.known else 0
+                        disabled: not root.known
+                        on_release: root.forget()
+                Caption:
+                    text: "Your games  \\u00b7  tap one to watch it again"
+                BoxLayout:
+                    id: matches
+                    orientation: "vertical"
+                    size_hint_y: None
+                    height: self.minimum_height
+                    spacing: dp(8)
+                Sub:
+                    text: "Games you play at the table or host are kept here (the last 100)."
+                    opacity: 1 if root.empty else 0
+                    height: self.texture_size[1] if root.empty else 0
+
 <SettingsScreen>:
     BoxLayout:
         orientation: "vertical"
@@ -1428,6 +1577,7 @@ class GameScreen(Screen):
         self._poll = None
         self._pending = None
         self._sheet = None
+        self.replay = None
 
     def on_kv_post(self, *_):
         self._feed_pool = [FeedLine() for _ in range(self.FEED_KEEP)]
@@ -1452,15 +1602,16 @@ class GameScreen(Screen):
 
     # -- lifecycle -----------------------------------------------------------
 
-    def begin(self, session, human: bool, multiplayer: bool = False, title: str = ""):
+    def begin(self, session, human: bool, multiplayer: bool = False, title: str = "", replay=None):
         app = App.get_running_app()
         self.session = session
+        self.replay = replay                    # the recording being watched again, if this is one
         self.human_playing = human
         self.multiplayer = multiplayer
         self.can_continue = getattr(session, "can_continue", True)
         self.host_name = getattr(session, "host_name", "") or "the host"
         self.title = title or ("At the table" if human else "Watching")
-        self.show_dice = (not human) and app.settings["show_dice"]
+        self.show_dice = replay is not None or ((not human) and app.settings["show_dice"])
         self.finished = False
         self._pending = None
         self._seat = {b.name: i for i, b in enumerate(session.bots)}
@@ -1509,7 +1660,7 @@ class GameScreen(Screen):
         self._close_sheet()
         app = App.get_running_app()
         app.speaker.clear()
-        app.go("home", back=True)
+        app.go("profile" if self.replay is not None else "home", back=True)
 
     def restart(self):
         if self.multiplayer:
@@ -1517,6 +1668,9 @@ class GameScreen(Screen):
             return
         if self.session is not None:
             self.session.stop()
+        if self.replay is not None:
+            App.get_running_app().open_replay(self.replay["meta"]["id"])
+            return
         App.get_running_app().start_game(human=self.human_playing)
 
     def next_turn(self):
@@ -1693,7 +1847,7 @@ class GameScreen(Screen):
                             f"{self._verb(snap.standings[0], 'wins', 'win')}"),
                         next=f"{len(snap.standings)} players")
         elif snap.finished:
-            card.update(caption="Stopped")
+            card.update(caption=snap.note or "Stopped")
         elif reveal:
             dudo = reveal["type"] == "dudo"
             tone = T.RED if dudo else T.TEAL
@@ -1993,6 +2147,8 @@ class GameScreen(Screen):
         if self.session is None or self.manager is None or self.manager.current != self.name:
             return
         human = next((p.name for p in snap.players if p.is_human), None)
+        if human is None and self.replay is not None:
+            human = self.replay.get("human")      # watching your own game again
         standings = list(snap.standings)
         if human is not None:
             place = standings.index(human) + 1 if human in standings else None
@@ -2033,11 +2189,12 @@ class GameScreen(Screen):
             text.bind(size=lambda w, size: setattr(w, "text_size", size))
             card.add_widget(text)
         buttons = BoxLayout(size_hint_y=None, height=dp(50), spacing=dp(10), padding=(0, dp(8), 0, 0))
-        home = Btn(text="Lobby" if self.multiplayer else "Home", kind="outline")
+        home = Btn(text="Lobby" if self.multiplayer else "Profile" if self.replay is not None else "Home",
+                   kind="outline")
         home.bind(on_release=lambda _b: (self._close_sheet(), self.leave()))
         buttons.add_widget(home)
         if not self.multiplayer or self.can_continue:       # a guest waits for the host to deal again
-            again = Btn(text="Play again", kind="primary")
+            again = Btn(text="Watch again" if self.replay is not None else "Play again", kind="primary")
             again.bind(on_release=lambda _b: (self._close_sheet(), self.restart()))
             buttons.add_widget(again)
         card.add_widget(buttons)
@@ -2197,6 +2354,83 @@ class SimScreen(Screen):
 # settings
 # ---------------------------------------------------------------------------
 
+class MatchRow(TouchBox):
+    place_text = StringProperty("")
+    title = StringProperty("")
+    sub = StringProperty("")
+    won = BooleanProperty(False)
+    game_id = StringProperty("")
+
+
+class ProfileScreen(Screen):
+    """The person's page: how their games went, what the bots learned
+    about them, and every recorded game to watch again."""
+    player = StringProperty("")
+    games_text = StringProperty("0")
+    wins_text = StringProperty("0")
+    place_text = StringProperty("\u2013")
+    hands_text = StringProperty("\u2013")
+    known_text = StringProperty("")
+    known = BooleanProperty(False)
+    empty = BooleanProperty(True)
+
+    def on_pre_enter(self, *_):
+        self.refresh()
+
+    def refresh(self):
+        app = App.get_running_app()
+        self.player = app.settings["human_name"] or "You"
+        games = [g for g in app.replays.games()]
+        self.empty = not games
+        placed = [g for g in games if g.get("place")]
+        wins = sum(1 for g in games if g.get("place") == 1)
+        self.games_text = str(len(games))
+        self.wins_text = f"{wins}" + (f" [size={int(sp(12))}][color={T.HEX['muted']}]{wins / len(games):.0%}[/color][/size]"
+                                      if games else "")
+        self.place_text = f"{sum(g['place'] for g in placed) / len(placed):.1f}" if placed else "\u2013"
+        hands = [g["hand"] for g in games if g.get("hand") is not None]
+        self.hands_text = f"{round(sum(hands) / len(hands))}%" if hands else "\u2013"
+        knowing = app.memory.who_remembers(self.player)
+        self.known = bool(knowing)
+        self.known_text = (f"{', '.join(knowing)} learned how you play, from the games you played "
+                           f"together. They remember it next time." if knowing
+                           else "No bot has learned anything about you yet: play them at the table.")
+        box = self.ids.matches
+        box.clear_widgets()
+        for g in games:
+            box.add_widget(self._row(g))
+
+    def _row(self, g):
+        place, players = g.get("place"), g.get("players", 0)
+        when = time.strftime("%d %b %H:%M", time.localtime(g.get("time", 0)))
+        winner = g.get("winner")
+        if place == 1:
+            title = "You won"
+        elif winner:
+            title = f"{T.esc(winner)} won"
+        else:
+            title = "Not played to the end"
+        sub = f"{when}  \u00b7  {g.get('rounds', 0)} rounds"
+        if g.get("hand") is not None:
+            sub += f"  \u00b7  hands {g['hand']}%"
+        row = MatchRow(place_text=f"{_ordinal(place)}" if place else "\u2013", won=place == 1,
+                       title=f"{title}  [color={T.HEX['muted']}]\u00b7 {players} players[/color]",
+                       sub=sub, game_id=g["id"])
+        row.bind(on_release=lambda r: App.get_running_app().open_replay(r.game_id))
+        return row
+
+    def forget(self):
+        from perudo_app.lobby_ui import choose
+
+        def forget():
+            App.get_running_app().memory.forget()
+            self.refresh()
+            App.get_running_app().toast("The bots start from scratch")
+
+        choose("Make them forget?", "Every bot forgets what it learned, about you and about each other.",
+               [("Forget", "danger", forget)], cancel="Keep")
+
+
 class SettingsScreen(Screen):
     speech_status = StringProperty("")
     speech_color = ListProperty(T.RED)
@@ -2255,6 +2489,7 @@ class PerudoApp(App):
         self.settings = Settings(str(data_dir / "settings.json"))
         self.registry = BotRegistry(str(self._user_bots_dir(data_dir)))
         self.memory = BotMemory(str(data_dir / "memory"))    # what the bots learned, kept between games
+        self.replays = ReplayStore(str(data_dir / "replays"))  # the games played here, to watch again
         self.registry.scan_bundled()
         self.registry.scan_user()
         # Nobody is seated on the first start; after that the table is as you left it.
@@ -2273,7 +2508,7 @@ class PerudoApp(App):
         self.lobby_host = False
         for cls, name in ((HomeScreen, "home"), (BotsScreen, "bots"), (GameScreen, "game"),
                           (SimScreen, "sim"), (SettingsScreen, "settings"),
-                          (PlayTogetherScreen, "together"), (LobbyScreen, "lobby")):
+                          (PlayTogetherScreen, "together"), (LobbyScreen, "lobby"), (ProfileScreen, "profile")):
             sm.add_widget(cls(name=name))
         self.sm = sm
         # The screens sit in a frame padded clear of the phone's status and
@@ -2364,7 +2599,7 @@ class PerudoApp(App):
         return LobbyHost(self.settings["human_name"], self.registry,
                          allow_guest_bots=bool(self.settings["guest_bots"]),
                          guest_bot_limit=int(self.settings["guest_bot_limit"] or 2),
-                         relay=self.relay() if online else None, memory=self.memory)
+                         relay=self.relay() if online else None, memory=self.memory, replays=self.replays)
 
     def make_client(self, code: str):
         """Join a lobby, over the internet or nearby (blocking: call from a worker thread)."""
@@ -2572,10 +2807,22 @@ class PerudoApp(App):
             return
         session = GameSession(bots, step=not human, delay=self.settings["step_delay"],
                               warmup=int(self.settings["warmup_games"] or 0),
-                              speech_idle=lambda: self.speaker.idle, hold_reveals=human, memory=self.memory)
+                              speech_idle=lambda: self.speaker.idle, hold_reveals=human, memory=self.memory,
+                              replays=self.replays)
         self.speaker.clear()
         self.go("game")
         self.sm.get_screen("game").begin(session, human)
+
+    def open_replay(self, game_id: str):
+        """Watch a recorded game again, every cup in view."""
+        data = self.replays.load(game_id)
+        if data is None:
+            self.toast("That game could not be read")
+            return
+        session = ReplaySession(data, delay=self.settings["step_delay"])
+        self.speaker.clear()
+        self.go("game")
+        self.sm.get_screen("game").begin(session, False, title="Replay", replay=data)
 
     def _play_mp3(self, path: str):
         """Called from the speech thread; play on the UI thread and wait."""
