@@ -38,7 +38,7 @@ from perudo_app import theme as T
 from perudo_app.core import (
     FACES, ROUTER, BotMemory, BotRegistry, GameSession, HumanSeat, ReplaySession, Settings, Simulation,
     bar_padding, can,
-    hand_summaries, legal_bids, lowest_legal,
+    hand_summaries, legal_bids,
 )
 from perudo_app.picker import AndroidPicker
 from perudo_app.replay import ReplayStore
@@ -647,10 +647,10 @@ KV = """
             orientation: "vertical"
             shown: root.human_playing
             # out: a strip (where you finished, your way out), the game keeps the screen
-            full_height: dp(114) if root.out else dp(248)
-            padding: dp(16), dp(12), dp(16), dp(16)
+            full_height: dp(104) if root.out else dp(196)
+            padding: dp(18), dp(8), dp(18), dp(10)
             # out: the folded composer still takes its spacing, so less of it
-            spacing: dp(4) if root.out else dp(12)
+            spacing: dp(4) if root.out else dp(8)
             radius: dp(24)
             bg: T.SURFACE
             border: T.GOLD if root.my_turn else T.CLEAR
@@ -706,20 +706,20 @@ KV = """
             Collapsible:
                 orientation: "vertical"
                 shown: not root.out
-                full_height: dp(166) if not root.awaiting_next_round else dp(106)
+                full_height: dp(142) if not root.awaiting_next_round else dp(92)
                 bg: T.CLEAR
                 radius: 0
                 # at a reveal the Dudo/Calza row folds away, but still takes
-                # its spacing: closer together then, to fit in the 106
-                spacing: dp(12) if not root.awaiting_next_round else dp(6)
+                # its spacing: closer together then, to fit in the 92
+                spacing: dp(8) if not root.awaiting_next_round else dp(4)
                 BoxLayout:
                     id: faces
                     size_hint_y: None
-                    height: dp(44)
+                    height: dp(40)
                     spacing: dp(10)
                 BoxLayout:
                     size_hint_y: None
-                    height: dp(50)
+                    height: dp(44)
                     spacing: dp(8)
                     Btn:
                         text: "\\u2212"
@@ -750,7 +750,7 @@ KV = """
                         on_release: root.submit_bid()
                 Collapsible:
                     shown: not root.awaiting_next_round
-                    full_height: dp(48)
+                    full_height: dp(42)
                     bg: T.CLEAR
                     radius: 0
                     spacing: dp(10)
@@ -768,7 +768,7 @@ KV = """
                         on_release: root.submit(root.CALZA)
             Collapsible:
                 shown: root.awaiting_next_round and not root.out
-                full_height: dp(48)
+                full_height: dp(44)
                 bg: T.CLEAR
                 radius: 0
                 Btn:
@@ -1650,7 +1650,7 @@ class GameScreen(Screen):
         self._feed_pool = [FeedLine() for _ in range(self.FEED_KEEP)]
         self._faces = []
         for f in FACES:
-            b = FaceButton(value=f, size=(dp(40), dp(40)), pos_hint={"center_y": 0.5})
+            b = FaceButton(value=f, size=(dp(36), dp(36)), pos_hint={"center_y": 0.5})
             b.bind(on_release=lambda _b, face=f: self._pick_face(face))
             self._faces.append(b)
         self.ids.faces.add_widget(Label())
@@ -2184,17 +2184,25 @@ class GameScreen(Screen):
         first = current.face if current and current.face in legal_faces else (legal_faces[0] if legal_faces else 2)
         self.can_dudo = can(state, Dudo)
         self.can_calza = can(state, Calza)
-        self._pick_face(first, state)
+        self._pick_face(first, state, keep=False)
 
-    def _pick_face(self, face: int, state=None):
+    def _pick_face(self, face: int, state=None, keep: bool = True):
+        """Choose the face to bid on. The quantity stays what you had set,
+        unless that is too low for this face: then the lowest you may bid
+        on it (a new turn, keep=False, starts at that lowest)."""
         state = state or (self.session.snapshot().pending if self.session else None)
         if state is None:
             return
         self._face = face
         for b in self._faces:
             b.selected = b.value == face
-        low = lowest_legal(state, face)
-        self._quantity = low.quantity if low else 1
+        legal = sorted(b.quantity for b in legal_bids(state) if b.face == face)
+        if not legal:
+            self._quantity = 1
+        elif keep:
+            self._quantity = min(max(self._quantity, legal[0]), legal[-1])
+        else:
+            self._quantity = legal[0]
         self._show_bid()
 
     def change_quantity(self, delta: int):

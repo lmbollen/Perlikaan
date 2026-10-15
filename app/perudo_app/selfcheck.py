@@ -391,6 +391,20 @@ class SelfCheck:
         yield Until(lambda: game.session.snapshot().pending is not None, 60, "the first turn")
         yield from self.look("table")
         yield from self.feed_sizes(game)
+        # Another face keeps the quantity you set (or the lowest you may bid on it, if more).
+        from perudo_app.core import legal_bids
+        state = game.session.snapshot().pending
+        faces = [b for b in game._faces if not b.disabled]
+        faces[0].dispatch("on_release")
+        game.change_quantity(1)
+        game.change_quantity(1)
+        chosen = game._quantity
+        other = next(b for b in faces[1:] if b.value != 1)
+        other.dispatch("on_release")
+        low = min(b.quantity for b in legal_bids(state) if b.face == other.value)
+        check(game._quantity == max(chosen, low),
+              f"{chosen} on face {faces[0].value}, then face {other.value} (lowest {low}): {game._quantity}")
+        yield 0.1
         # During a round nobody's hand is scored: that would tell more than the dice do.
         check(not game.hand_caption and not scored_rows(), "a hand score is shown during the round")
         game.open_settings()
@@ -448,7 +462,8 @@ class SelfCheck:
                  f"players {view.height / dp(1):.0f}dp, feed {card.height / dp(1):.0f}dp")
 
         def tap():
-            if self._touch(handle.center_x, handle.center_y) is None:
+            x, y = handle.to_window(*handle.center)          # the screen is a layout of its own
+            if self._touch(x, y) is None:
                 handle.dispatch("on_tap")
 
         roomy = start_view > dp(70)           # the players have room to give (not on the smallest phone)
@@ -464,7 +479,8 @@ class SelfCheck:
               f"a tap did not close the feed ({card.height / dp(1):.0f}dp, players {view.height / dp(1):.0f}dp)")
         yield from self.look("feed-closed")
         target = (handle.center_x, card.y + game.feed_room * 0.55 - dp(9))     # halfway up its room
-        if self._touch(handle.center_x, handle.center_y, to=target) is None:
+        start, to = handle.to_window(*handle.center), handle.to_window(*target)
+        if self._touch(*start, to=to) is None:
             game.drag_feed(target[1])
             game.save_feed()
         yield 0.3
