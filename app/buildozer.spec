@@ -24,7 +24,7 @@ requirements = python3,hostpython3,sqlite3,kivy==2.3.1,edge-tts,aiohttp,aiosigna
 
 orientation = portrait
 fullscreen = 0
-android.permissions = INTERNET,READ_EXTERNAL_STORAGE
+android.permissions = INTERNET
 android.api = 35
 android.minapi = 24
 android.archs = arm64-v8a

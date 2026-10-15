@@ -36,6 +36,7 @@ from perudo_app.core import (
     FACES, ROUTER, BotRegistry, GameSession, HumanSeat, Settings, Simulation, bar_padding, can, hand_summaries,
     legal_bids, lowest_legal,
 )
+from perudo_app.picker import AndroidPicker
 from perudo_app.speech import Speaker
 from perudo_app.widgets import (  # noqa: F401  (registers the widget classes for the KV rules)
     Avatar, Body, Btn, Caption, Chip, Collapsible, Die, FaceButton, IconBtn, Meter, Segmented, Surface, TextField, Toggle,
@@ -1258,6 +1259,10 @@ class BotsScreen(Screen):
 
     def pick_file(self):
         app = App.get_running_app()
+        if app.picker is not None:                      # Android: its own document picker
+            app.picker.pick(lambda path, error: Clock.schedule_once(
+                lambda _dt: self._picked(path, error), 0))
+            return
         chooser = FileChooserListView(path=app.bots_dir, filters=["*.py"])
         box = BoxLayout(orientation="vertical", spacing=dp(10), padding=(0, dp(8), 0, 0))
         box.add_widget(Body(text="A single .py file with a bot class (a class with a play() method).",
@@ -1273,12 +1278,7 @@ class BotsScreen(Screen):
 
         def load(_):
             if chooser.selection:
-                added = app.registry.import_file(chooser.selection[0])
-                self.refresh()
-                if added:
-                    app.toast(f"Added {T.esc(', '.join(e.display_name for e in added))}, kept in the app")
-                else:
-                    app.toast("No bot found in that file")
+                self._picked(chooser.selection[0], None)
             popup.dismiss()
 
         cancel = Btn(text="Cancel", kind="outline")
@@ -1289,6 +1289,23 @@ class BotsScreen(Screen):
         buttons.add_widget(ok)
         box.add_widget(buttons)
         popup.open()
+
+    def _picked(self, path, error):
+        """A file was picked (or not): import it and say how that went."""
+        app = App.get_running_app()
+        if error:
+            app.toast(f"Could not read that file: {T.esc(error)}")
+            return
+        if not path:
+            return                                      # cancelled
+        before = len(app.registry.errors)
+        added = app.registry.import_file(path)
+        self.refresh()
+        if added:
+            app.toast(f"Added {T.esc(', '.join(e.display_name for e in added))}, kept in the app")
+        else:
+            why = app.registry.errors[before:] or ["no class with a play() method"]
+            app.toast(f"No bot in that file: {T.esc(why[-1])}")
 
 
 # ---------------------------------------------------------------------------
@@ -2243,6 +2260,7 @@ class PerudoApp(App):
         self.registry.clear_table()
         self.registry.apply_selection(self.settings["table"])
         self.bots_dir = self._bots_dir()
+        self.picker = AndroidPicker.create()            # None off Android: the file browser then
         self.speaker = Speaker(str(data_dir / "edge-tts"), play=self._play_mp3, enabled=self.settings["tts"],
                                engine=self.settings["tts_engine"])
         ROUTER.install()
@@ -2297,13 +2315,9 @@ class PerudoApp(App):
         self.settings["table"] = self.registry.selection()
 
     def _bots_dir(self) -> str:
-        try:
-            from android.storage import primary_external_storage_path   # type: ignore
-            from android.permissions import Permission, request_permissions   # type: ignore
-            request_permissions([Permission.READ_EXTERNAL_STORAGE])
-            return primary_external_storage_path()
-        except Exception:
-            return str(Path.home())
+        """Where the file browser starts (off Android): the home folder, on
+        an iPhone the app's own folder (the Files app shows it)."""
+        return str(Path.home())
 
     # -- navigation ----------------------------------------------------------
 
