@@ -152,7 +152,7 @@ def test_bots_remember_earlier_games_and_can_forget(tmp_path):
     session.start()
     assert wait(lambda: session.snapshot().finished, 60)
     assert wait(lambda: len(list((tmp_path / "memory").glob("*.json"))) == 2)   # the two that learn
-    assert "Carlos" in memory.who_remembers("MinRaise Bot")
+    assert "Carlos" in memory.who_remembers("no id", "MinRaise Bot")      # by name: no people here
 
     again = reg.make(picks, memory=memory)                       # a later game, the app restarted
     learners = [b for b in again if getattr(b, "_LEARNED", ())]
@@ -161,8 +161,58 @@ def test_bots_remember_earlier_games_and_can_forget(tmp_path):
     assert "MinRaise Bot" in carlos.profiler.profiles             # it knows its opponent already
 
     memory.forget()
-    assert memory.who_remembers("MinRaise Bot") == []
+    assert memory.who_remembers("no id", "MinRaise Bot") == []
     assert not any(getattr(b, "_memory_restored", False) for b in reg.make(picks, memory=memory))
+
+
+class Watcher:
+    """A bot that learns how often each player calls Dudo, by name."""
+    _LEARNED = ("calls", "seen")
+
+    def __init__(self):
+        self.name = "Watcher"
+        self.calls = {}
+        self.seen = {}
+
+    def note(self, player, dudo):
+        self.seen[player] = self.seen.get(player, 0) + 1
+        self.calls[(player, "dudo")] = self.calls.get((player, "dudo"), 0) + dudo
+
+    def play(self, state):
+        return state.legal_actions[0]
+
+
+def test_people_are_known_by_who_they_are_not_by_their_name(tmp_path):
+    memory = BotMemory(str(tmp_path / "memory"))
+    ann, bob = "id-ann-0001", "id-bob-0002"
+
+    w = Watcher()
+    memory.load(w, {ann: "Ann"})
+    w.note("Ann", 1)
+    w.note("Ann", 1)
+    memory.save(w, {ann: "Ann"})
+
+    w = Watcher()                                  # Ann calls herself Annie now
+    memory.load(w, {ann: "Annie"})
+    assert w.seen == {"Annie": 2} and w.calls == {("Annie", "dudo"): 2}
+    assert memory.who_remembers(ann) == ["Watcher"]
+    w.note("Annie", 0)
+    memory.save(w, {ann: "Annie"})
+
+    w = Watcher()                                  # Bob takes the name Annie: a stranger to it
+    memory.load(w, {bob: "Annie"})
+    assert "Annie" not in w.seen and w.seen == {"Annie~id-ann": 3}
+    assert memory.who_remembers(bob) == []
+    w.note("Annie", 0)
+    memory.save(w, {bob: "Annie"})
+
+    w = Watcher()                                  # Ann is back, as Ann again: all hers, Bob's apart
+    memory.load(w, {ann: "Ann"})
+    assert w.seen == {"Ann": 3, "Annie": 1}
+    assert w.calls[("Ann", "dudo")] == 2
+    w = Watcher()                                  # and both at one table
+    memory.load(w, {ann: "Ann", bob: "Bob"})
+    assert w.seen == {"Ann": 3, "Bob": 1}
 
 
 def test_feed_tells_the_story_and_a_reveal_stays_until_the_next_bid():

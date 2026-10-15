@@ -2390,7 +2390,7 @@ class ProfileScreen(Screen):
         self.place_text = f"{sum(g['place'] for g in placed) / len(placed):.1f}" if placed else "\u2013"
         hands = [g["hand"] for g in games if g.get("hand") is not None]
         self.hands_text = f"{round(sum(hands) / len(hands))}%" if hands else "\u2013"
-        knowing = app.memory.who_remembers(self.player)
+        knowing = app.memory.who_remembers(app.settings["player_id"], self.player)
         self.known = bool(knowing)
         self.known_text = (f"{', '.join(knowing)} learned how you play, from the games you played "
                            f"together. They remember it next time." if knowing
@@ -2489,6 +2489,9 @@ class PerudoApp(App):
         self.settings = Settings(str(data_dir / "settings.json"))
         self.registry = BotRegistry(str(self._user_bots_dir(data_dir)))
         self.memory = BotMemory(str(data_dir / "memory"))    # what the bots learned, kept between games
+        if not self.settings["player_id"]:                   # who you are to the bots, for good
+            import uuid
+            self.settings["player_id"] = uuid.uuid4().hex
         self.replays = ReplayStore(str(data_dir / "replays"))  # the games played here, to watch again
         self.registry.scan_bundled()
         self.registry.scan_user()
@@ -2599,14 +2602,16 @@ class PerudoApp(App):
         return LobbyHost(self.settings["human_name"], self.registry,
                          allow_guest_bots=bool(self.settings["guest_bots"]),
                          guest_bot_limit=int(self.settings["guest_bot_limit"] or 2),
-                         relay=self.relay() if online else None, memory=self.memory, replays=self.replays)
+                         relay=self.relay() if online else None, memory=self.memory, replays=self.replays,
+                         player_id=self.settings["player_id"])
 
     def make_client(self, code: str):
         """Join a lobby, over the internet or nearby (blocking: call from a worker thread)."""
         from perudo_app.multiplayer import join_lobby
         return join_lobby(self.settings["human_name"], self.registry, code, relay=self.relay(),
                           speak=lambda text, lang, seed: self.speaker.say(
-                              text, self.settings["tts_lang"] or lang, seed), memory=self.memory)
+                              text, self.settings["tts_lang"] or lang, seed), memory=self.memory,
+                          player_id=self.settings["player_id"])
 
     def enter_lobby(self, lobby, host: bool):
         self.leave_lobby(go_back=False)
@@ -2798,9 +2803,11 @@ class PerudoApp(App):
         self.speaker.say(line, lang, random.choice(["Sniper", "Trihard", "Pokerface", "Carlos Dos"]))
 
     def start_game(self, human: bool):
-        bots = self.registry.make(fresh=True, memory=self.memory)
+        me = self.settings["human_name"] or "You"
+        people = {self.settings["player_id"]: me} if human else {}
+        bots = self.registry.make(fresh=True, memory=self.memory, people=people)
         if human:
-            bots.append(HumanSeat(self.settings["human_name"] or "You"))
+            bots.append(HumanSeat(me))
         if len(bots) < 2:
             self.toast("Seat at least one bot to play against" if human else "Seat at least two bots to watch")
             self.go("bots")
@@ -2808,7 +2815,7 @@ class PerudoApp(App):
         session = GameSession(bots, step=not human, delay=self.settings["step_delay"],
                               warmup=int(self.settings["warmup_games"] or 0),
                               speech_idle=lambda: self.speaker.idle, hold_reveals=human, memory=self.memory,
-                              replays=self.replays)
+                              replays=self.replays, people=people)
         self.speaker.clear()
         self.go("game")
         self.sm.get_screen("game").begin(session, human)

@@ -261,7 +261,7 @@ class BotRegistry:
         return [e for e in self.entries if e.enabled]
 
     def make(self, entries: Optional[Sequence[BotEntry]] = None, fresh: bool = True,
-             memory: Optional["BotMemory"] = None) -> List[Any]:
+             memory: Optional["BotMemory"] = None, people: Optional[Dict[str, str]] = None) -> List[Any]:
         """Instantiate the selected bots, numbering copies like the loader does;
         with `memory`, each gets back what it learned in earlier games."""
         bots: List[Any] = []
@@ -277,7 +277,7 @@ class BotRegistry:
                 bots.append(bot)
         if memory is not None:
             for bot in bots:
-                memory.load(bot)
+                memory.load(bot, people)
         return bots
 
 
@@ -298,23 +298,51 @@ class BotMemory:
         safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in kind)
         return self.folder / f"{safe}.json"
 
-    def load(self, bot: Any) -> bool:
+    def load(self, bot: Any, people: Optional[Dict[str, str]] = None) -> bool:
+        """Give the bot back what it learned. `people`: player id -> name of
+        the people at this table: the bots learned about people by name, so
+        what they learned is renamed to the names the people use now."""
         if not bot_memory.learned_names(bot):
             return False
         try:
             data = json.loads(self._file(bot).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return False
+        data, known = self._rename(data, people or {})
+        bot._memory_people = known
         try:
             return bot_memory.restore(bot, data)
         except Exception:                 # a newer bot that no longer fits what was saved
             return False
 
-    def save(self, bot: Any) -> bool:
+    @staticmethod
+    def _rename(data: dict, people: Dict[str, str]):
+        """(the saved learning under today's names, id -> name it uses now).
+        Someone who changed their name keeps what was learned about them; a
+        person not here whose name someone else uses now is set aside under
+        a name of their own (back again when they return)."""
+        saved = dict(data.get("people") or {})
+        taken = {name: pid for pid, name in people.items()}
+        renames, known = {}, {}
+        for pid, old in saved.items():
+            if pid in people:
+                new = people[pid]
+            elif old in taken and taken[old] != pid:
+                new = f"{old}~{pid[:6]}"
+            else:
+                new = old
+            renames[old] = new
+            known[pid] = new
+        known.update(people)
+        return bot_memory.rename(data, renames), known
+
+    def save(self, bot: Any, people: Optional[Dict[str, str]] = None) -> bool:
         if not bot_memory.learned_names(bot):
             return False
+        known = dict(getattr(bot, "_memory_people", None) or {})
+        known.update(people or {})
         try:
-            text = json.dumps({**bot_memory.save(bot), "bot": bot.name})
+            text = json.dumps({**bot_memory.save(bot), "bot": bot.name, "people": known})
         except Exception:                 # something it keeps is not plain data
             return False
         path = self._file(bot)
@@ -325,21 +353,23 @@ class BotMemory:
             tmp.replace(path)             # never half a file
         return True
 
-    def save_all(self, bots: Sequence[Any]) -> None:
+    def save_all(self, bots: Sequence[Any], people: Optional[Dict[str, str]] = None) -> None:
         for bot in bots:
-            self.save(bot)
+            self.save(bot, people)
 
-    def who_remembers(self, name: str) -> List[str]:
-        """The bots whose memory mentions this player (by name)."""
-        needle = json.dumps(name)
+    def who_remembers(self, player_id: str, name: Optional[str] = None) -> List[str]:
+        """The bots that learned about this player (by their id; or, for
+        memory from before ids, by name)."""
         out = []
         for path in sorted(self.folder.glob("*.json")):
             try:
-                text = path.read_text(encoding="utf-8")
-                if needle in json.dumps(json.loads(text).get("learned")):
-                    out.append(json.loads(text).get("bot") or path.stem)
-            except (OSError, ValueError, AttributeError):
-                pass
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            known = (data.get("people") or {}).get(player_id) or (name if not data.get("people") else None)
+            # it mentions them where renaming them changes something
+            if known and bot_memory.rename(data, {known: "\x00"}) != data:
+                out.append(data.get("bot") or path.stem)
         return out
 
     def forget(self) -> None:
@@ -559,9 +589,10 @@ class GameSession:
                  delay: float = 1.0, log_limit: int = 400, warmup: int = 0,
                  speech_idle: Optional[Callable[[], bool]] = None, speech_timeout: float = 20.0,
                  hold_reveals: bool = False, memory: Optional[BotMemory] = None,
-                 replays: Optional[ReplayStore] = None):
+                 replays: Optional[ReplayStore] = None, people: Optional[Dict[str, str]] = None):
         self.bots = list(bots)
         self.memory = memory                    # where the bots' learning is kept when the game ends
+        self.people = dict(people or {})        # player id -> name of the people at the table
         self.replays = replays                  # where the game is recorded (with a person at the table)
         self._recorder: Optional[Recorder] = None
         self.seed = seed if seed is not None else random.SystemRandom().randrange(2**63)
@@ -927,7 +958,7 @@ class GameSession:
         finally:
             ROUTER.detach(self._on_talk)
             if self.memory is not None:         # what they learned, for next time
-                self.memory.save_all(self.bots)
+                self.memory.save_all(self.bots, self.people)
             if self._recorder is not None:      # the game, to watch again
                 try:
                     self.replays.save(self._recorder, self.snapshot())
@@ -1095,6 +1126,7 @@ DEFAULT_SETTINGS = {
     "sim_games": 200,
     "step_delay": 1.0,
     "human_name": "You",
+    "player_id": "",           # who you are to the bots, whatever your name (made once: see player_id())
     "warmup_games": 0,         # bot-only games before a watched or joined game
     "name_confirmed": False,   # asked for the name once (playing together)
     "guest_bots": True,        # hosting: guests may bring bots

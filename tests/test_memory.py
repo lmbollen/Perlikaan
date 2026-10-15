@@ -95,3 +95,30 @@ def test_learning_bots_play_on_the_same_after_a_restore():
     for b in fresh:
         memory.restore(b, saved[b.name])
     assert _play(fresh, [21]) == went_on
+
+
+def test_a_renamed_player_is_the_same_player_to_a_learning_bot():
+    classes = discover_bot_classes_by_name()
+    for cls in classes.values():
+        if hasattr(cls, "reset_memory"):
+            cls.reset_memory()
+
+    def table(name):
+        carlos, ann, other = classes["CarlosBot"](), classes["MinRaiseBot"](), classes["SniperBot"]()
+        ann.name = name
+        return [carlos, ann, other]
+
+    bots = table("Ann")
+    _play(bots, [31, 32])                                   # Carlos gets to know Ann
+    saved = json.loads(json.dumps(memory.save(bots[0])))
+    as_ann = _play(bots, [41])                              # ... and plays on with her
+
+    for cls in classes.values():
+        if hasattr(cls, "reset_memory"):
+            cls.reset_memory()
+    bots = table("Annie")                                   # she calls herself Annie now
+    memory.restore(bots[0], memory.rename(saved, {"Ann": "Annie"}))
+    profile = bots[0].profiler.profiles["Annie"]
+    assert "Ann" not in bots[0].profiler.profiles and profile.name == "Annie"
+    as_annie = _play(bots, [41])
+    assert [m.replace("'Annie'", "'Ann'") for m in as_annie] == as_ann     # the same game, but her name

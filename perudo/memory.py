@@ -17,6 +17,12 @@ never read or write files themselves: they only keep their learning in
 those attributes, of plain data -- numbers, strings, lists, tuples, dicts
 (any keys) and objects of their own classes holding the same.
 
+Bots learn about other players by their names. A host that knows who a
+person is beyond their name (an id that stays when they rename) passes the
+saved learning through rename() first, so a player who changed their name
+is still the player the bot knows -- and a new player who took an old name
+is not.
+
 restore() marks the bot with `_memory_restored = True`: a bot that sets
 its starting values late (at its first move) must leave the learned
 attributes alone then.
@@ -75,6 +81,47 @@ def _home(bot: Any) -> Optional[dict]:
     without registering it as a module has its classes only there)."""
     init = getattr(type(bot), "__init__", None)
     return getattr(init, "__globals__", None)
+
+
+def rename(data: Mapping[str, Any], names: Mapping[str, str]) -> Dict[str, Any]:
+    """Saved learning with players renamed (old name -> new name, all at
+    once, so two names can swap): wherever a name is a dict key, part of a
+    key (a tuple), or a value. A bot that learned about "Ann" knows the same
+    about her as "Annie" then."""
+    names = {old: new for old, new in names.items() if old != new}
+    if not names or not isinstance(data, Mapping):
+        return dict(data)
+    out = dict(data)
+    out["learned"] = {attr: _rename(v, names) for attr, v in (data.get("learned") or {}).items()}
+    return out
+
+
+def _rename(value: Any, names: Mapping[str, str]) -> Any:
+    if isinstance(value, str):
+        return names.get(value, value)
+    if isinstance(value, list):
+        return [_rename(v, names) for v in value]
+    if not isinstance(value, dict):
+        return value
+    if "map" in value:
+        out = []
+        for text, item in value["map"]:
+            try:
+                key = ast.literal_eval(text)
+            except (ValueError, SyntaxError):
+                out.append([text, _rename(item, names)])
+                continue
+            out.append([repr(_rename_key(key, names)), _rename(item, names)])
+        return {**value, "map": out}
+    return {k: (_rename(v, names) if k != "class" else v) for k, v in value.items()}
+
+
+def _rename_key(key: Any, names: Mapping[str, str]) -> Any:
+    if isinstance(key, str):
+        return names.get(key, key)
+    if isinstance(key, tuple):
+        return tuple(_rename_key(k, names) for k in key)
+    return key
 
 
 # ---------------------------------------------------------------------------

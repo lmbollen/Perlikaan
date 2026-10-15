@@ -261,3 +261,26 @@ def test_the_host_leaving_closes_the_lobby_for_guests():
     h.close()
     assert wait(lambda: ben.closed and ben.error is not None)
     assert "host left" in ben.error
+
+
+def test_people_bring_who_they_are_to_the_table(tmp_path):
+    from perudo_app.core import BotMemory
+    memory = BotMemory(str(tmp_path / "host-memory"))
+    host = LobbyHost("Anna", registry(), ip="127.0.0.1", memory=memory, player_id="anna-id")
+    ben = LobbyClient("Ben", registry(), host.code, local_ips=LOCAL, player_id="ben-id",
+                      memory=BotMemory(str(tmp_path / "ben-memory")))
+    old = LobbyClient("Old", registry(), host.code, local_ips=LOCAL)           # an app without ids
+    try:
+        assert wait(lambda: len(host.state()["members"]) == 3)
+        host.add_bot(key(host.registry, "CarlosBot"), "Carlos")
+        assert wait(lambda: len(host.state()["seats"]) == 1)
+        session = host.start_game(delay=0.0)
+        assert session.people == {"anna-id": "Anna", "ben-id": "Ben"}
+        assert wait(lambda: ben.session is not None and ben._people == session.people)
+        _play_people(host, [ben, old], until=lambda: session.snapshot().finished)
+        assert wait(lambda: memory.who_remembers("ben-id") == ["Carlos"])  # by who he is
+        host.end_game()
+    finally:
+        ben.close()
+        old.close()
+        host.close()
