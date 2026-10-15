@@ -163,6 +163,10 @@ KV = """
                 height: dp(44)
                 Widget:
                 IconBtn:
+                    text: T.icon("\\u2605")
+                    color: T.GOLD
+                    on_release: app.go("profile")
+                IconBtn:
                     text: T.icon("\\u2699")
                     color: T.MUTED
                     on_release: app.go("settings")
@@ -209,7 +213,7 @@ KV = """
             ActionCard:
                 glyph: "\\u2605"
                 title: "Your profile"
-                subtitle: "Your games, replays, what the bots know"
+                subtitle: "Your games and replays"
                 on_release: app.go("profile")
             Surface:
                 orientation: "vertical"
